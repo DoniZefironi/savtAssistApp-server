@@ -12,6 +12,8 @@ def _normalize_phone(phone: str) -> str:
 
 class RegisterStartIn(BaseModel):
     phone: str
+    password: str = Field(..., min_length=8, max_length=100)
+    full_name: str | None = Field(None, max_length=200)
 
     @field_validator("phone")
     @classmethod
@@ -27,8 +29,6 @@ class RegisterStartOut(BaseModel):
 class RegisterCompleteIn(BaseModel):
     phone: str
     code: str = Field(..., min_length=6, max_length=6)
-    password: str = Field(..., min_length=8, max_length=100)
-    full_name: str | None = Field(None, max_length=200)
 
     @field_validator("phone")
     @classmethod

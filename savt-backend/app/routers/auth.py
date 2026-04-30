@@ -32,7 +32,11 @@ async def register_start(
     session: AsyncSession = Depends(get_session),
 ):
     service = AuthService(session)
-    cooldown = await service.register_start(payload.phone)
+    cooldown = await service.register_start(
+        phone=payload.phone,
+        password=payload.password,
+        full_name=payload.full_name,
+    )
     return RegisterStartOut(resend_after_seconds=cooldown)
 
 
@@ -47,8 +51,6 @@ async def register_complete(
     access, refresh = await service.register_complete(
         phone=payload.phone,
         code=payload.code,
-        password=payload.password,
-        full_name=payload.full_name,
         user_agent=user_agent,
         ip_address=ip,
     )

@@ -37,8 +37,15 @@ class AuthService:
         self.code_repo = PhoneCodeRepository(session)
         self.token_repo = RefreshTokenRepository(session)
 
-    async def register_start(self, phone: str) -> int:
+    async def register_start(
+        self,
+        phone: str,
+        password: str,
+        full_name: str | None,
+    ) -> int:
+
         existing_user = await self.user_repo.find_by_phone(phone)
+
         if existing_user is not None and existing_user.is_phone_verified:
             raise AlreadyExistsError(
                 "Пользователь с таким телефоном уже зарегистрирован"
@@ -52,6 +59,19 @@ class AuthService:
                 raise RateLimitError(
                     f"Повторная отправка возможна через {int(cooldown - elapsed)} сек."
                 )
+
+        if existing_user is None:
+            await self.user_repo.create(
+                phone=phone,
+                full_name=full_name,
+                hashed_password=hash_password(password),
+                role_id=_DEFAULT_USER_ROLE_ID,
+                is_phone_verified=False,
+                is_active=True,
+            )
+        else:
+            existing_user.hashed_password = hash_password(password)
+            existing_user.full_name = full_name
 
         code = generate_sms_code()
         expires_at = datetime.now(timezone.utc) + timedelta(
@@ -75,11 +95,15 @@ class AuthService:
         self,
         phone: str,
         code: str,
-        password: str,
-        full_name: str | None,
         user_agent: str | None,
         ip_address: str | None,
     ) -> tuple[str, str]:
+        user = await self.user_repo.find_by_phone(phone)
+        if user is None:
+            raise NotFoundError("Сначала запросите код регистрации")
+
+        if user.is_phone_verified:
+            raise AlreadyExistsError("Пользователь уже подтверждён, используйте логин")
 
         active_code = await self.code_repo.find_active(phone, PURPOSE_REGISTRATION)
         if active_code is None:
@@ -94,22 +118,7 @@ class AuthService:
             raise InvalidCodeError("Неверный код")
 
         await self.code_repo.mark_used(active_code)
-
-        user = await self.user_repo.find_by_phone(phone)
-        if user is None:
-            user = await self.user_repo.create(
-                phone=phone,
-                full_name=full_name,
-                hashed_password=hash_password(password),
-                role_id=_DEFAULT_USER_ROLE_ID,
-                is_phone_verified=True,
-                is_active=True,
-            )
-        else:
-            user.hashed_password = hash_password(password)
-            if full_name is not None:
-                user.full_name = full_name
-            user.is_phone_verified = True
+        user.is_phone_verified = True
 
         access, refresh = await self._issue_tokens(user, user_agent, ip_address)
         await self.session.commit()
@@ -167,7 +176,6 @@ class AuthService:
         if user is None or not user.is_active:
             raise AuthenticationError("Пользователь недоступен")
 
-        # Rotation: выпускаем новый refresh, старый отзываем со ссылкой на новый
         new_access, new_refresh, new_refresh_obj = await self._issue_tokens_internal(
             user, user_agent, ip_address
         )
