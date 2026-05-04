@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, field_validator
 
-
+# Нормализируем телефон
 def _normalize_phone(phone: str) -> str:
     cleaned = "".join(ch for ch in phone if ch.isdigit() or ch == "+")
     if not cleaned.startswith("+"):
@@ -9,7 +9,8 @@ def _normalize_phone(phone: str) -> str:
         raise ValueError("Некорректная длина телефона")
     return cleaned
 
-
+# Валидация
+# Регистрация
 class RegisterStartIn(BaseModel):
     phone: str
     password: str = Field(..., min_length=8, max_length=100)
@@ -35,7 +36,7 @@ class RegisterCompleteIn(BaseModel):
     def validate_phone(cls, v: str) -> str:
         return _normalize_phone(v)
 
-
+# Аутентификация
 class LoginIn(BaseModel):
     phone: str
     password: str
@@ -45,7 +46,7 @@ class LoginIn(BaseModel):
     def validate_phone(cls, v: str) -> str:
         return _normalize_phone(v)
 
-
+# Токены
 class RefreshIn(BaseModel):
     refresh_token: str
 
@@ -59,7 +60,7 @@ class TokenPairOut(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
 
-
+# Профиль пользователя
 class UserMeOut(BaseModel):
     id: int
     phone: str
@@ -69,7 +70,7 @@ class UserMeOut(BaseModel):
 
     model_config = {"from_attributes": True}
 
-
+# Сброс пароля
 class PasswordResetStartIn(BaseModel):
     phone: str
 
@@ -80,7 +81,7 @@ class PasswordResetStartIn(BaseModel):
 
 
 class PasswordResetStartOut(BaseModel):
-    message: str = "Если такой пользователь существует, на телефон отправлен код"
+    message: str = "На телефон отправлен код"
     resend_after_seconds: int
 
 

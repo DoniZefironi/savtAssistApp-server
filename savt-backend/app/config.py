@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     sms_code_max_attempts: int = 5
     sms_code_resend_cooldown_seconds: int = 60
 
+    # SMS сервис для кодиков
     sms_provider: str = "mock"  # "mock" | "sms_by"
     sms_by_token: str = ""
     sms_by_alphaname: str = ""

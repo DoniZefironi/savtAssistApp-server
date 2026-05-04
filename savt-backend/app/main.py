@@ -16,7 +16,7 @@ from app.database import engine
 from app.routers import auth as auth_router
 from app.services.sms_service import SmsSendError
 
-
+# Управление жизненным циклом приложения, проверяет подключение к бд и закрывает соединение с бд
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.connect() as conn:
@@ -24,39 +24,42 @@ async def lifespan(app: FastAPI):
     yield
     await engine.dispose()
 
-
+# Создание приложения с названием SAVT Assist API и привязка к lifespan
 app = FastAPI(title="SAVT Assist API", lifespan=lifespan)
 
+# Обработка исключений
 
+# 404 - не нашлось
 @app.exception_handler(NotFoundError)
 async def not_found_handler(_: Request, exc: NotFoundError):
     return JSONResponse(status_code=404, content={"detail": str(exc)})
 
-
+# 409 - конфлик, уже сущестует что-та
 @app.exception_handler(AlreadyExistsError)
 async def already_exists_handler(_: Request, exc: AlreadyExistsError):
     return JSONResponse(status_code=409, content={"detail": str(exc)})
 
-
+# 403 - доступ запрещен
 @app.exception_handler(PermissionDeniedError)
 async def permission_denied_handler(_: Request, exc: PermissionDeniedError):
     return JSONResponse(status_code=403, content={"detail": str(exc)})
 
-
+# 401 - не авторизован
 @app.exception_handler(AuthenticationError)
 async def authentication_error_handler(_: Request, exc: AuthenticationError):
     return JSONResponse(status_code=401, content={"detail": str(exc)})
 
-
+# 400 - неверный код или запрос
 @app.exception_handler(InvalidCodeError)
 async def invalid_code_handler(_: Request, exc: InvalidCodeError):
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
-
+# 429 - слишком много запросов, овер
 @app.exception_handler(RateLimitError)
 async def rate_limit_handler(_: Request, exc: RateLimitError):
     return JSONResponse(status_code=429, content={"detail": str(exc)})
 
+# 503 - сервис смс недоступен, мб баланс минус
 @app.exception_handler(SmsSendError)
 async def sms_send_error_handler(_: Request, exc: SmsSendError):
     return JSONResponse(
@@ -64,10 +67,10 @@ async def sms_send_error_handler(_: Request, exc: SmsSendError):
         content={"detail": "SMS-сервис временно недоступен. Попробуйте позже."},
     )
 
-
+# Подключение роутеров
 app.include_router(auth_router.router)
 
-
+# Бэзик эндпоинты
 @app.get("/")
 async def root():
     return {"service": "savt-assist", "status": "ok"}
