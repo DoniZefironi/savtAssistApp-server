@@ -14,6 +14,7 @@ from app.core.exceptions import (
 )
 from app.database import engine
 from app.routers import auth as auth_router
+from app.services.sms_service import SmsSendError
 
 
 @asynccontextmanager
@@ -55,6 +56,13 @@ async def invalid_code_handler(_: Request, exc: InvalidCodeError):
 @app.exception_handler(RateLimitError)
 async def rate_limit_handler(_: Request, exc: RateLimitError):
     return JSONResponse(status_code=429, content={"detail": str(exc)})
+
+@app.exception_handler(SmsSendError)
+async def sms_send_error_handler(_: Request, exc: SmsSendError):
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "SMS-сервис временно недоступен. Попробуйте позже."},
+    )
 
 
 app.include_router(auth_router.router)

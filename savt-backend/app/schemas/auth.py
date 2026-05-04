@@ -68,3 +68,28 @@ class UserMeOut(BaseModel):
     is_phone_verified: bool
 
     model_config = {"from_attributes": True}
+
+
+class PasswordResetStartIn(BaseModel):
+    phone: str
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v: str) -> str:
+        return _normalize_phone(v)
+
+
+class PasswordResetStartOut(BaseModel):
+    message: str = "Если такой пользователь существует, на телефон отправлен код"
+    resend_after_seconds: int
+
+
+class PasswordResetCompleteIn(BaseModel):
+    phone: str
+    code: str = Field(..., min_length=6, max_length=6)
+    new_password: str = Field(..., min_length=8, max_length=100)
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v: str) -> str:
+        return _normalize_phone(v)

@@ -13,6 +13,9 @@ from app.schemas.auth import (
     RegisterStartOut,
     TokenPairOut,
     UserMeOut,
+    PasswordResetCompleteIn,
+    PasswordResetStartIn,
+    PasswordResetStartOut,
 )
 from app.services.auth_service import AuthService
 
@@ -113,3 +116,34 @@ async def me(
         role=role.name if role else "user",
         is_phone_verified=user.is_phone_verified,
     )
+
+@router.post("/password-reset/start", response_model=PasswordResetStartOut)
+async def password_reset_start(
+    payload: PasswordResetStartIn,
+    session: AsyncSession = Depends(get_session),
+):
+    service = AuthService(session)
+    cooldown = await service.password_reset_start(payload.phone)
+    return PasswordResetStartOut(resend_after_seconds=cooldown)
+
+
+@router.post("/password-reset/complete", status_code=status.HTTP_204_NO_CONTENT)
+async def password_reset_complete(
+    payload: PasswordResetCompleteIn,
+    session: AsyncSession = Depends(get_session),
+):
+    service = AuthService(session)
+    await service.password_reset_complete(
+        phone=payload.phone,
+        code=payload.code,
+        new_password=payload.new_password,
+    )
+
+@router.post("/register/resend", response_model=RegisterStartOut)
+async def register_resend(
+    payload: RegisterStartIn,  
+    session: AsyncSession = Depends(get_session),
+):
+    service = AuthService(session)
+    cooldown = await service.register_resend_code(payload.phone)
+    return RegisterStartOut(resend_after_seconds=cooldown)

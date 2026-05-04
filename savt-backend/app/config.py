@@ -18,5 +18,10 @@ class Settings(BaseSettings):
     sms_code_max_attempts: int = 5
     sms_code_resend_cooldown_seconds: int = 60
 
+    sms_provider: str = "mock"  # "mock" | "sms_by"
+    sms_by_token: str = ""
+    sms_by_alphaname: str = ""
+    sms_by_base_url: str = "https://app.sms.by/api/v1"
+
 
 settings = Settings()

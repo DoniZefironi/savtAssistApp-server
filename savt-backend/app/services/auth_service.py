@@ -28,6 +28,7 @@ from app.services.sms_service import sms_service
 _DEFAULT_USER_ROLE_ID = 1
 
 PURPOSE_REGISTRATION = "registration"
+PURPOSE_PASSWORD_RESET = "password_reset"
 
 
 class AuthService:
@@ -227,3 +228,99 @@ class AuthService:
             ip_address=ip_address,
         )
         return access_token, refresh_token, refresh_obj
+
+
+    async def password_reset_start(self, phone: str) -> int:
+
+        cooldown = settings.sms_code_resend_cooldown_seconds
+
+        user = await self.user_repo.find_by_phone(phone)
+
+        if user is None or not user.is_active or not user.is_phone_verified:
+            return cooldown
+
+        latest = await self.code_repo.find_latest(phone, PURPOSE_PASSWORD_RESET)
+        if latest is not None:
+            elapsed = (datetime.now(timezone.utc) - latest.created_at).total_seconds()
+            if elapsed < cooldown:
+
+                return cooldown
+
+        code = generate_sms_code()
+        expires_at = datetime.now(timezone.utc) + timedelta(
+            minutes=settings.sms_code_ttl_minutes
+        )
+        await self.code_repo.create(
+            phone=phone,
+            code_hash=hash_token(code),
+            purpose=PURPOSE_PASSWORD_RESET,
+            expires_at=expires_at,
+            max_attempts=settings.sms_code_max_attempts,
+        )
+        await sms_service.send_verification_code(phone, code)
+        await self.session.commit()
+        return cooldown
+
+
+    async def password_reset_complete(
+        self,
+        phone: str,
+        code: str,
+        new_password: str,
+    ) -> None:
+        user = await self.user_repo.find_by_phone(phone)
+        if user is None or not user.is_active or not user.is_phone_verified:
+            raise InvalidCodeError("Код не найден или истёк")
+
+        active_code = await self.code_repo.find_active(phone, PURPOSE_PASSWORD_RESET)
+        if active_code is None:
+            raise InvalidCodeError("Код не найден или истёк")
+
+        if active_code.attempts >= active_code.max_attempts:
+            raise InvalidCodeError("Превышено число попыток. Запросите новый код")
+
+        if hash_token(code) != active_code.code_hash:
+            await self.code_repo.increment_attempts(active_code)
+            await self.session.commit()
+            raise InvalidCodeError("Неверный код")
+
+        await self.code_repo.mark_used(active_code)
+        user.hashed_password = hash_password(new_password)
+
+        await self.token_repo.revoke_all_for_user(user.id)
+
+        await self.session.commit()
+
+
+    async def register_resend_code(self, phone: str) -> int:
+
+        user = await self.user_repo.find_by_phone(phone)
+        if user is None:
+            raise NotFoundError("Сначала запустите регистрацию")
+
+        if user.is_phone_verified:
+            raise AlreadyExistsError("Пользователь уже подтверждён")
+
+        latest = await self.code_repo.find_latest(phone, PURPOSE_REGISTRATION)
+        cooldown = settings.sms_code_resend_cooldown_seconds
+        if latest is not None:
+            elapsed = (datetime.now(timezone.utc) - latest.created_at).total_seconds()
+            if elapsed < cooldown:
+                raise RateLimitError(
+                    f"Повторная отправка возможна через {int(cooldown - elapsed)} сек."
+                )
+
+        code = generate_sms_code()
+        expires_at = datetime.now(timezone.utc) + timedelta(
+            minutes=settings.sms_code_ttl_minutes
+        )
+        await self.code_repo.create(
+            phone=phone,
+            code_hash=hash_token(code),
+            purpose=PURPOSE_REGISTRATION,
+            expires_at=expires_at,
+            max_attempts=settings.sms_code_max_attempts,
+        )
+        await sms_service.send_verification_code(phone, code)
+        await self.session.commit()
+        return cooldown
