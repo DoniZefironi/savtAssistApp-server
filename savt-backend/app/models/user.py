@@ -9,10 +9,16 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    # номер телефона
-    phone: Mapped[str] = mapped_column(String(20), unique=True, index=True)
+    # номер телефона (только для пользователей)
+    phone: Mapped[str | None] = mapped_column(String(20), unique=True, index=True)
+    # логин (только для операторов/администраторов)
+    login: Mapped[str | None] = mapped_column(String(100), unique=True, index=True)
     # ФИО
-    full_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    full_name: Mapped[str | None] = mapped_column(String(200))
+    # Тип учётной записи (только для пользователя)
+    user_type: Mapped[str | None] = mapped_column(String(20), comment="Значения: individual or organization")
+    # Название организации (если выбрат тип организация)
+    organization_name: Mapped[str | None] = mapped_column(String(255))
     # пароль
     hashed_password: Mapped[str] = mapped_column(String(255))
     # роль
