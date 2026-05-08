@@ -14,21 +14,26 @@ class DocumentRequest(Base):
     # ссылка на ШУ
     cabinet_id: Mapped[int] = mapped_column(ForeignKey("cabinets.id"), index=True)
     # ссылка на документ
-    document_id: Mapped[int | None] = mapped_column(ForeignKey("documents.id"), index=True)
+    # null если документ ещё не существует — админ должен его создать при одобрении
+    document_id: Mapped[int | None] = mapped_column(
+        ForeignKey("documents.id"), index=True
+    )
     # тип запрашиваемого документа
     doc_type: Mapped[str] = mapped_column(String(50))
     # статус
-    status: Mapped[str] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(
+        String(20), server_default="pending", index=True
+    )
     # сообщение пользователя
     user_message: Mapped[str | None] = mapped_column(Text)
     # ответ администратора
-    admin_message: Mapped[str | None] = mapped_column(Text)
+    admin_response: Mapped[str | None] = mapped_column(Text)
     # кто обработал
     resolved_by_admin_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     # дата создания
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     # дата обработки
-    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     def __repr__(self) -> str:
-        return f"<DocumentRequest id={self.id}>"
+        return f"<DocumentRequest id={self.id} user_id={self.user_id} status={self.status}>"

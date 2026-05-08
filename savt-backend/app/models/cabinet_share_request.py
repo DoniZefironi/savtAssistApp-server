@@ -16,7 +16,7 @@ class CabinetShareRequest(Base):
     # комментарий пользователя
     user_comment: Mapped[str| None] = mapped_column(Text)
     # статус заявки
-    status: Mapped[str] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(20), server_default="pending", index=True)
     # ответ администратора
     admin_response: Mapped[str | None] = mapped_column(Text)
     # кто обработал
@@ -24,7 +24,7 @@ class CabinetShareRequest(Base):
     # дата создания
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     # дата обработки
-    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     def __repr__(self) -> str:
-        return f"<CabinetAdditionRequest id={self.id}>"
+        return f"<CabinetShareRequest id={self.id} user_id={self.user_id} status={self.status}>"

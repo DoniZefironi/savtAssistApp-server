@@ -10,7 +10,7 @@ class Cabinet(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     # секретный кур-код
-    unique_code: Mapped[str] = mapped_column(String(100), unique=True)
+    unique_code: Mapped[str] = mapped_column(String(100), unique=True, index=True)
     # модель ШУ
     type: Mapped[str] = mapped_column(String(100))
     # номер объекта
@@ -24,13 +24,19 @@ class Cabinet(Base):
     # рабочее название
     admin_internal_name: Mapped[str | None] = mapped_column(String(200))
     # комментарий администратора
-    admim_comment: Mapped[str | None] = mapped_column(Text)
+    admin_comment: Mapped[str | None] = mapped_column(Text)
 
     # дата создания
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
     )
+    # дата обработки
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
 
     def __repr__(self) -> str:
-        return f"<User id={self.id}>"
+        return f"<Cabinet id={self.id} object_number={self.object_number}>"

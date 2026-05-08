@@ -7,13 +7,21 @@ from app.database import Base
 class NotificationSettings(Base):
     __tablename__ = "notification_settings"
 
-    user_id: Mapped[int] = mapped_column(Integer,ForeignKey("users.id"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
     # уведомления о сообщениях
-    chat_messages: Mapped[bool] = mapped_column(Boolean, default=True)
+    chat_messages: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true"
+    )
     # рекламные уведомления
-    promotional: Mapped[bool] = mapped_column(Boolean, default=False)
+    promotional: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
+    )
     # уведомление о гарантии
-    warranty_expiring: Mapped[bool] = mapped_column(Boolean, default=True)
+    warranty_expiring: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true"
+    )
 
     def __repr__(self) -> str:
-        return f"<NotificationSettings id={self.id}>"
+        return f"<NotificationSettings user_id={self.user_id}>"

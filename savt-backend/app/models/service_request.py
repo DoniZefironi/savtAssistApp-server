@@ -14,15 +14,17 @@ class ServiceRequest(Base):
     # ссылка на ШУ
     cabinet_id: Mapped[int] = mapped_column(ForeignKey("cabinets.id"), index=True)
     # тип заявки
-    request_type: Mapped[str] = mapped_column(String(20))
+    request_type: Mapped[str] = mapped_column(String(20), index=True)
     # описание проблемы
     description: Mapped[str] = mapped_column(Text)
     # статус
-    status: Mapped[str] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(
+        String(20), server_default="open", index=True
+    )
     # дата создания
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     # дата обработки
-    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     def __repr__(self) -> str:
-        return f"<ServiceRequest id={self.id}>"
+        return f"<ServiceRequest id={self.id} type={self.request_type} status={self.status}>"

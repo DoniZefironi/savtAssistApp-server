@@ -1,4 +1,5 @@
-from sqlalchemy import String, ForeignKey, BigInteger, Integer
+from sqlalchemy import String, ForeignKey, BigInteger, Integer, DateTime, func
+from datetime import datetime
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -9,9 +10,11 @@ class MessageAttachment(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     # ссылка на сообщение
-    message_id: Mapped[int] = mapped_column(ForeignKey("messages.id"), index=True)
+    message_id: Mapped[int] = mapped_column(
+        ForeignKey("messages.id", ondelete="CASCADE"), index=True
+    )
     # тип вложения
-    attachment_type: Mapped[str] = mapped_column(String(20))
+    attachment_type: Mapped[str] = mapped_column(String(20), index=True)
     # юрл файла
     file_url: Mapped[str] = mapped_column(String(500))
     # имя файла
@@ -22,6 +25,10 @@ class MessageAttachment(Base):
     mime_type: Mapped[str] = mapped_column(String(100))
     # длительность
     duration_seconds: Mapped[int | None] = mapped_column(Integer)
+    # дата создания
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
     def __repr__(self) -> str:
-        return f"<MessageAttachment id={self.id}>"
+        return f"<MessageAttachment id={self.id} type={self.attachment_type} message_id={self.message_id}>"

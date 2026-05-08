@@ -9,7 +9,7 @@ class Tag(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     # Название тега
-    name: Mapped[str] = mapped_column(String(100), unique=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
 
     def __repr__(self) -> str:
-        return f"<Tag id={self.id}>"
+        return f"<Tag id={self.id} name={self.name}>"

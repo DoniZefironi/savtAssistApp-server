@@ -16,9 +16,9 @@ class PhoneVerificationCode(Base):
     # Назвачение кода (registration or password_reset)
     purpose: Mapped[str] = mapped_column(String(30), index=True)
     # кол-во попыток ввода
-    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     # лимит попыток
-    max_attempts: Mapped[int] = mapped_column(Integer, default=5)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=5, server_default="5")
     # время истечения
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     # время использования

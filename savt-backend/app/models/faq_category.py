@@ -9,11 +9,15 @@ class FaqCategory(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     # Родительская категория
-    parent_id: Mapped[int | None] = mapped_column(ForeignKey("faq_categories.id"))
+    parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("faq_categories.id"), index=True
+    )
     # Название
     name: Mapped[str] = mapped_column(String(200))
     # Порядок
-    sort_order: Mapped[int] = mapped_column(Integer)
+    sort_order: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0"
+    )
 
     def __repr__(self) -> str:
-        return f"<FaqCategory id={self.id}>"
+        return f"<FaqCategory id={self.id} name={self.name}>"

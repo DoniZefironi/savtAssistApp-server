@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import String, Boolean, DateTime, ForeignKey, func
+from sqlalchemy import String, Boolean, DateTime, ForeignKey, func, CheckConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -24,9 +24,13 @@ class User(Base):
     # роль
     role_id: Mapped[int] = mapped_column(ForeignKey("roles.id"), index=True)
     # валидирован ли пароль
-    is_phone_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_phone_verified: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
+    )
     # бан или актив?
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true"
+    )
     
     # для логов
     created_at: Mapped[datetime] = mapped_column(
@@ -41,3 +45,18 @@ class User(Base):
 
     def __repr__(self) -> str:
         return f"<User id={self.id} phone={self.phone} role_id={self.role_id}>"
+    
+    __table_args__ = (
+        CheckConstraint(
+            "phone IS NOT NULL OR login IS NOT NULL",
+            name="ck_users_phone_or_login",
+        ),
+        CheckConstraint(
+            "user_type != 'organization' OR organization_name IS NOT NULL",
+            name="ck_users_organization_name",
+        ),
+        CheckConstraint(
+            "user_type IS NULL OR user_type IN ('individual', 'organization')",
+            name="ck_users_user_type",
+        ),
+    )
