@@ -11,13 +11,16 @@ from app.schemas.auth import (
     RegisterCompleteIn,
     RegisterStartIn,
     RegisterStartOut,
+    ResendCodeIn,
     TokenPairOut,
     UserMeOut,
     PasswordResetCompleteIn,
     PasswordResetStartIn,
     PasswordResetStartOut,
+    PasswordChange
 )
 from app.services.auth_service import AuthService
+from app.models.role import Role
 
 # Все эндпоинты будут доступны по префиксу
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -39,6 +42,8 @@ async def register_start(
         phone=payload.phone,
         password=payload.password,
         full_name=payload.full_name,
+        user_type=payload.user_type,
+        organization_name=payload.organization_name
     )
     return RegisterStartOut(resend_after_seconds=cooldown)
 
@@ -62,7 +67,7 @@ async def register_complete(
 # Переотправка кода
 @router.post("/register/resend", response_model=RegisterStartOut)
 async def register_resend(
-    payload: RegisterStartIn,  
+    payload: ResendCodeIn,  
     session: AsyncSession = Depends(get_session),
 ):
     service = AuthService(session)
@@ -117,7 +122,6 @@ async def me(
     user: User = Depends(get_current_user), # проверка токена
     session: AsyncSession = Depends(get_session),
 ):
-    from app.models.roles import Role
     role = await session.get(Role, user.role_id)
     return UserMeOut(
         id=user.id,
@@ -125,6 +129,9 @@ async def me(
         full_name=user.full_name,
         role=role.name if role else "user",
         is_phone_verified=user.is_phone_verified,
+        email=user.email,
+        user_type=user.user_type,
+        organization_name=user.organization_name
     )
 
 # Восстановление пароля: запрос кода
@@ -148,4 +155,20 @@ async def password_reset_complete(
         phone=payload.phone,
         code=payload.code,
         new_password=payload.new_password,
+        new_password_confirm=payload.new_password_confirm
     )
+
+@router.post('/password-change', status_code=status.HTTP_200_OK)
+async def change_password(
+    payload: PasswordChange,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    service = AuthService(session)
+    await service.change_password(
+        user = current_user,
+        old_password = payload.password,
+        new_password = payload.new_password,
+        new_password_confirm = payload.new_password_confirm
+    )
+    return {"message": "Пароль успешно сохранен"}

@@ -4,7 +4,7 @@ import sys
 from app.core.constants import RoleName
 from app.core.security import hash_password
 from app.database import AsyncSessionLocal
-from app.models.roles import Role
+from app.models.role import Role
 from app.models.user import User
 from app.repositories.user import UserRepository
 from sqlalchemy import select

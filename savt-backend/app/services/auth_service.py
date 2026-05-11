@@ -23,7 +23,7 @@ from app.models.user import User
 from app.repositories.auth import PhoneCodeRepository, RefreshTokenRepository
 from app.repositories.user import UserRepository
 from app.services.sms_service import sms_service
-from app.models.roles import Role
+from app.models.role import Role
 
 
 _DEFAULT_USER_ROLE_ID = 1
@@ -45,6 +45,8 @@ class AuthService:
         phone: str,
         password: str,
         full_name: str | None,
+        user_type: str,
+        organization_name: str | None
     ) -> int:
 
         # Проверяем, может уже есть такой телефончек
@@ -74,11 +76,15 @@ class AuthService:
                 role_id=_DEFAULT_USER_ROLE_ID,
                 is_phone_verified=False,
                 is_active=True,
+                user_type=user_type,
+                organization_name=organization_name
             )
         else:
             # Если есть такой пользователь, но телефон не подтвержден - задаем новые значения полей
             existing_user.hashed_password = hash_password(password)
             existing_user.full_name = full_name
+            existing_user.user_type = user_type
+            existing_user.organization_name = organization_name
 
         # Генерируем и создаем кодик
         code = generate_sms_code()
@@ -293,7 +299,11 @@ class AuthService:
         phone: str,
         code: str,
         new_password: str,
+        new_password_confirm: str
     ) -> None:
+        if new_password != new_password_confirm:
+            raise ValueError("Новые пароли не совпадают")
+
         user = await self.user_repo.find_by_phone(phone)
         if user is None or not user.is_active or not user.is_phone_verified:
             raise InvalidCodeError("Код не найден или истёк")
@@ -351,3 +361,26 @@ class AuthService:
         await sms_service.send_verification_code(phone, code)
         await self.session.commit()
         return cooldown
+    
+    async def change_password(
+            self, 
+            user: User, 
+            old_password: str, 
+            new_password: str, 
+            new_password_confirm: str
+            ) -> None:
+        
+        if not verify_password(old_password, user.hashed_password):
+            raise AuthenticationError("Неверный текущий пароль")
+        
+        if old_password == new_password:
+            raise ValueError("Новый пароль должен отличаться от предыдущего")
+        
+        if new_password != new_password_confirm:
+            raise ValueError("Новый пароль и подтверждение не совпадают")
+        
+        user.hashed_password = hash_password(new_password)
+
+        await self.token_repo.revoke_all_for_user(user.id)
+
+        await self.session.commit()

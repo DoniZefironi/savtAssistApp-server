@@ -12,7 +12,7 @@ class Cabinet(Base):
     # секретный кур-код
     unique_code: Mapped[str] = mapped_column(String(100), unique=True, index=True)
     # модель ШУ
-    type: Mapped[str] = mapped_column(String(100))
+    type: Mapped[str] = mapped_column(String(100), index=True)
     # номер объекта
     object_number: Mapped[str] = mapped_column(String(100))
     # описание 
@@ -20,12 +20,13 @@ class Cabinet(Base):
     # начало гарантии
     warranty_starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     # окончание гарантии
-    warranty_ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    warranty_ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     # рабочее название
     admin_internal_name: Mapped[str | None] = mapped_column(String(200))
     # комментарий администратора
     admin_comment: Mapped[str | None] = mapped_column(Text)
-
+    #
+    purpose: Mapped[str | None] = mapped_column(String(200))
     # дата создания
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

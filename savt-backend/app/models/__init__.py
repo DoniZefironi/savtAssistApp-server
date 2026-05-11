@@ -24,6 +24,7 @@ from app.models.faq_entry import FaqEntry
 from app.models.device_token import DeviceToken
 from app.models.notification_settings import NotificationSettings
 from app.models.audit_log import AuditLog
+from app.models.notification import Notification
 
 __all__ = [
     "Role", "User", "RefreshToken", "PhoneVerificationCode",
@@ -32,5 +33,5 @@ __all__ = [
     "Document", "DocumentRequest", "DocumentAccess", "ServiceRequest",
     "Chat", "Message", "MessageAttachment", "MessageReaction",
     "Tag", "KbCategory", "KbArticle", "FaqCategory", "FaqEntry",
-    "DeviceToken", "NotificationSettings", "AuditLog",
+    "DeviceToken", "NotificationSettings", "AuditLog", "Notification",
 ]

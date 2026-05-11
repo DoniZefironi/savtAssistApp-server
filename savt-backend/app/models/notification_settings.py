@@ -22,6 +22,10 @@ class NotificationSettings(Base):
     warranty_expiring: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="true"
     )
+    # уведомление о изменении статуса
+    request_status_change: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true"
+    )
 
     def __repr__(self) -> str:
         return f"<NotificationSettings user_id={self.user_id}>"

@@ -13,6 +13,8 @@ class User(Base):
     phone: Mapped[str | None] = mapped_column(String(20), unique=True, index=True)
     # логин (только для операторов/администраторов)
     login: Mapped[str | None] = mapped_column(String(100), unique=True, index=True)
+    # емаил
+    email: Mapped[str | None] = mapped_column(String(100), unique=True)
     # ФИО
     full_name: Mapped[str | None] = mapped_column(String(200))
     # Тип учётной записи (только для пользователя)

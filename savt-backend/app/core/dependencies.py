@@ -9,6 +9,7 @@ from app.core.security import decode_access_token
 from app.database import AsyncSessionLocal
 from app.models.user import User
 from app.repositories.user import UserRepository
+from app.models.role import Role
 
 
 _security = HTTPBearer(auto_error=False)
@@ -69,7 +70,6 @@ def require_role(*allowed_roles: RoleName):
         user: User = Depends(get_current_user),
         session: AsyncSession = Depends(get_session),
     ) -> User:
-        from app.models.roles import Role
         role = await session.get(Role, user.role_id)
         if role is None or role.name not in {r.value for r in allowed_roles}:
             raise HTTPException(status_code=403, detail="Недостаточно прав")
