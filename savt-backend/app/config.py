@@ -4,8 +4,25 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # База данных
     database_url: str
     app_env: str = "dev"
+
+    # JWT
+    jwt_secret_key: str
+    jwt_access_token_ttl_minutes: int = 30
+    jwt_refresh_token_ttl_days: int = 60
+
+    # SMS-коды
+    sms_code_ttl_minutes: int = 10
+    sms_code_max_attempts: int = 5
+    sms_code_resend_cooldown_seconds: int = 60
+
+    # SMS сервис для кодиков
+    sms_provider: str = "mock"  # "mock" | "sms_by"
+    sms_by_token: str = ""
+    sms_by_alphaname: str = ""
+    sms_by_base_url: str = "https://app.sms.by/api/v1"
 
 
 settings = Settings()

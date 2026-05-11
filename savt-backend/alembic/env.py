@@ -12,7 +12,7 @@ from app.database import Base
 
 # Импортируем все модели, чтобы Alembic их "увидел".
 # При добавлении новой модели — добавляйте импорт сюда же.
-from app.models import user  
+from app import models 
 
 
 # Объект конфигурации Alembic, читает alembic.ini
