@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from app.core.exceptions import (
@@ -14,6 +15,11 @@ from app.core.exceptions import (
 )
 from app.database import engine
 from app.routers import auth as auth_router
+from app.routers import admin_cabinets as admin_cabinets_router
+from app.routers import admin_cabinet_requests as admin_cabinet_requests_router
+from app.routers import admin_users as admin_users_router
+from app.routers import cabinets as cabinets_router
+from app.routers import upload as upload_router
 from app.services.sms_service import SmsSendError
 
 # Управление жизненным циклом приложения, проверяет подключение к бд и закрывает соединение с бд
@@ -69,6 +75,12 @@ async def sms_send_error_handler(_: Request, exc: SmsSendError):
 
 # Подключение роутеров
 app.include_router(auth_router.router)
+app.include_router(admin_cabinets_router.router)
+app.include_router(admin_cabinet_requests_router.router)
+app.include_router(admin_users_router.router)
+app.include_router(cabinets_router.router)
+app.include_router(upload_router.router)
+app.mount("/static", StaticFiles(directory="/code/uploads"), name="static")
 
 # Бэзик эндпоинты
 @app.get("/")

@@ -10,14 +10,14 @@ from app.repositories.user import UserRepository
 from sqlalchemy import select
 
 # Создаем админа через терминал
-async def create_admin(phone: str, password: str, full_name: str | None = None) -> None:
+async def create_admin(login: str, password: str, full_name: str | None = None) -> None:
     # Создаем сессию
     async with AsyncSessionLocal() as session:
         # Проверяем, нет ли уже такого пользователя
         user_repo = UserRepository(session)
-        existing = await user_repo.find_by_phone(phone)
+        existing = await user_repo.find_by_phone(login)
         if existing is not None:
-            print(f"Пользователь с телефоном {phone} уже существует")
+            print(f"Пользователь с телефоном {login} уже существует")
             return
 
         # Ищем роль админа
@@ -29,21 +29,20 @@ async def create_admin(phone: str, password: str, full_name: str | None = None) 
 
         # Создаем пользователя с ролью "админ"
         await user_repo.create(
-            phone=phone,
+            login=login,
             full_name=full_name,
             hashed_password=hash_password(password),
             role_id=admin_role.id,
-            is_phone_verified=True,
             is_active=True,
         )
         await session.commit()
-        print(f"Админ создан: {phone}")
+        print(f"Админ создан: {login}")
 
 # Точка входа и парсинг
 def main():
     if len(sys.argv) < 4 or sys.argv[1] != "create-admin":
-        print("Копируй и пиши строку справа, только замени <phone> на телефон, без скобок, с паролем так же, " \
-        "и имя без этих квадратов, а с норм кавычками по бочкам: python -m app.cli create-admin <phone> <password> [full_name]")
+        print("Копируй и пиши строку справа, только замени <login> на логин, без скобок, с паролем так же, " \
+        "и имя без этих квадратов, а с норм кавычками по бочкам: python -m app.cli create-admin <login> <password> [full_name]")
         sys.exit(1)
 
     phone = sys.argv[2]

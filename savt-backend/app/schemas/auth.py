@@ -150,6 +150,7 @@ class PasswordResetCompleteIn(BaseModel):
             raise ValueError('Пароли не совпадают')
         return self
     
+# смена пароля
 class PasswordChange(BaseModel):
     password: str = Field(..., min_length=8, max_length=100)
     new_password: str = Field(..., min_length=8, max_length=100)
