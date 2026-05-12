@@ -27,6 +27,7 @@ services:
       - ./app:/code/app
       - ./alembic:/code/alembic
       - ./alembic.ini:/code/alembic.ini
+      - ./uploads:/code/uploads
     depends_on:
       db:
         condition: service_healthy

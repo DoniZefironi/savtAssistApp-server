@@ -172,6 +172,29 @@ class AuthService:
         access, refresh = await self._issue_tokens(user, user_agent, ip_address)
         await self.session.commit()
         return access, refresh
+    
+    # Вход для админа
+    async def loginAdmin(
+        self,
+        login: str,
+        password: str,
+        user_agent: str | None,
+        ip_address: str | None,
+    ) -> tuple[str, str]:
+        user = await self.user_repo.find_by_login(login)
+
+        # Проверяем пароль, сравниваем хэши
+        if user is None or not verify_password(password, user.hashed_password):
+            raise AuthenticationError("Неверный логин или пароль")
+
+        # Проверяем актиивность аккаунта, может в бане школьник
+        if not user.is_active:
+            raise AuthenticationError("Аккаунт заблокирован")
+
+        # Выдаем токен
+        access, refresh = await self._issue_tokens(user, user_agent, ip_address)
+        await self.session.commit()
+        return access, refresh
 
     # Обновление токена (как же не понятно по названию)
     async def refresh_tokens(
@@ -327,7 +350,6 @@ class AuthService:
 
         await self.session.commit()
 
-
     # Повторно код запросить
     async def register_resend_code(self, phone: str) -> int:
 
@@ -362,6 +384,7 @@ class AuthService:
         await self.session.commit()
         return cooldown
     
+    # смена пароля
     async def change_password(
             self, 
             user: User, 

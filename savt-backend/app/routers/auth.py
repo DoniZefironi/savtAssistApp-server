@@ -17,7 +17,8 @@ from app.schemas.auth import (
     PasswordResetCompleteIn,
     PasswordResetStartIn,
     PasswordResetStartOut,
-    PasswordChange
+    PasswordChange,
+    AdminLoginIn
 )
 from app.services.auth_service import AuthService
 from app.models.role import Role
@@ -91,6 +92,23 @@ async def login(
     )
     return TokenPairOut(access_token=access, refresh_token=refresh)
 
+# Вход админа
+@router.post("/admin/login", response_model=TokenPairOut)
+async def loginAdmin(
+    payload: AdminLoginIn,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    user_agent, ip = _client_info(request)
+    service = AuthService(session)
+    access, refresh = await service.loginAdmin(
+        login=payload.login,
+        password=payload.password,
+        user_agent=user_agent,
+        ip_address=ip,
+    )
+    return TokenPairOut(access_token=access, refresh_token=refresh)
+
 # Обновление токенов
 @router.post("/refresh", response_model=TokenPairOut)
 async def refresh(
@@ -157,7 +175,8 @@ async def password_reset_complete(
         new_password=payload.new_password,
         new_password_confirm=payload.new_password_confirm
     )
-
+    
+# Смена пароля
 @router.post('/password-change', status_code=status.HTTP_200_OK)
 async def change_password(
     payload: PasswordChange,
