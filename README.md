@@ -1,7 +1,22 @@
 # savtAssistApp-server
-# docker compose up -d --build
-# docker compose exec api alembic upgrade head
-# docker compose exec api python -m app.cli create-admin admin "123qweASDZXC" "Admin Admen"
+
+## Тестовые пользователи
+
+| Роль  | Логин              | Пароль           |
+|-------|--------------------|------------------|
+| admin | admin              | 123qweASDZXC     |
+| user  | +375291002030      | qweasdzxc        |
+
+---
+
+## Работа с Docker
+
+### Сборка и запуск контейнеров
+```bash
+docker compose up -d --build
+
+# docker compose exec api alembic upgrade head    - миграции
+# docker compose exec api python -m app.cli create-admin admin "123qweASDZXC" "Admin Admen"   - создание админа
 
 # docker compose logs api --tail=10 - логи
 
