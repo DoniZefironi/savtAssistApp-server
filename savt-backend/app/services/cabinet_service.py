@@ -65,6 +65,6 @@ class CabinetService:
     # Генерация уникального кода(хранится в кур-коде)
     async def _generate_unique_code(self) -> str:
         while True:
-            code = secrets.token_hex(6).upper()
+            code = secrets.token_hex(8).upper()
             if await self.repo.find_by_code(code) is None:
                 return code

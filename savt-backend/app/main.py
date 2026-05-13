@@ -18,6 +18,7 @@ from app.routers import auth as auth_router
 from app.routers import admin_cabinets as admin_cabinets_router
 from app.routers import admin_cabinet_requests as admin_cabinet_requests_router
 from app.routers import admin_users as admin_users_router
+from app.routers import qr as qr_router
 from app.routers import cabinets as cabinets_router
 from app.routers import upload as upload_router
 from app.services.sms_service import SmsSendError
@@ -78,6 +79,7 @@ app.include_router(auth_router.router)
 app.include_router(admin_cabinets_router.router)
 app.include_router(admin_cabinet_requests_router.router)
 app.include_router(admin_users_router.router)
+app.include_router(qr_router.router)
 app.include_router(cabinets_router.router)
 app.include_router(upload_router.router)
 app.mount("/static", StaticFiles(directory="/code/uploads"), name="static")
