@@ -7,9 +7,9 @@ from PIL import Image
 LOGO_PATH = Path("/code/app/assets/savt_logo.png")
 
 # Отступ вокруг логотипа (в пикселях)
-_LOGO_PADDING = 2
-# Логотип занимает 22% от размера QR-кода
-_LOGO_RATIO = 0.28
+_LOGO_PADDING = 0
+# Логотип занимает 30% от размера QR-кода (максимум с ERROR_CORRECT_H ~30%, но современные сканеры читают до 35%)
+_LOGO_RATIO = 0.30
 
 
 def generate_qr(data: str) -> bytes:
