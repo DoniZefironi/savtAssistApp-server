@@ -13,7 +13,7 @@
 
 ### Сборка и запуск контейнеров
 ```bash
-docker compose up -d --build
+# docker compose up -d --build   - билд
 
 # docker compose exec api alembic upgrade head    - миграции
 # docker compose exec api python -m app.cli create-admin admin "123qweASDZXC" "Admin Admen"   - создание админа
