@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(.venv/Scripts/alembic current *)",
-      "Bash(docker compose *)",
-      "Bash(docker exec *)"
-    ]
-  }
-}
