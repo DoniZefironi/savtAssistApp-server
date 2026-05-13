@@ -90,7 +90,13 @@ class UserCabinetPatchIn(BaseModel):
 
 
 class AddByQrIn(BaseModel):
-    unique_code: str = Field(..., min_length=1, max_length=100)
+    qr_data: str = Field(..., min_length=1, max_length=200)
+
+    def parse_unique_code(self) -> str:
+        prefix = "savt://cabinet/"
+        if self.qr_data.startswith(prefix):
+            return self.qr_data[len(prefix):]
+        return self.qr_data
 
 
 class AddByQrOut(BaseModel):

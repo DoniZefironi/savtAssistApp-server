@@ -64,7 +64,7 @@ async def add_by_qr(
     session: AsyncSession = Depends(get_session),
 ):
     service = UserCabinetService(session)
-    result = await service.add_by_qr(user_id=current_user.id, unique_code=payload.unique_code)
+    result = await service.add_by_qr(user_id=current_user.id, unique_code=payload.parse_unique_code())
     return AddByQrOut(**result)
 
 # Добавить ШУ по фото(пользователь)
