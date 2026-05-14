@@ -5,7 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import NotFoundError
 from app.models.cabinets import Cabinet
 from app.repositories.cabinet import CabinetRepository
-from app.schemas.cabinet import CabinetCreateIn, CabinetUpdateIn
+from app.schemas.cabinet import CabinetCreateIn, CabinetListOut, CabinetUpdateIn
+from app.schemas.pagination import PageOut, make_page
 
 
 class CabinetService:
@@ -59,8 +60,15 @@ class CabinetService:
         query: str | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
-    ) -> list[Cabinet]:
-        return await self.repo.search(query=query, sort_by=sort_by, sort_order=sort_order)
+        page: int = 1,
+        size: int = 20,
+    ) -> PageOut[CabinetListOut]:
+        offset = (page - 1) * size
+        items, total = await self.repo.search(
+            query=query, sort_by=sort_by, sort_order=sort_order,
+            offset=offset, limit=size,
+        )
+        return make_page(items, total, page, size)
 
     # Генерация уникального кода(хранится в кур-коде)
     async def _generate_unique_code(self) -> str:

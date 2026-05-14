@@ -5,6 +5,7 @@ from app.core.constants import RoleName
 from app.core.dependencies import get_session, require_role
 from app.models.user import User
 from app.schemas.cabinet import CabinetCreateIn, CabinetListOut, CabinetOut, CabinetUpdateIn
+from app.schemas.pagination import PageOut
 from app.services.cabinet_service import CabinetService
 
 router = APIRouter(prefix="/admin/cabinets", tags=["admin: cabinets"])
@@ -20,16 +21,18 @@ async def create_cabinet(
     return await service.create(payload)
 
 # Все ШУ
-@router.get("", response_model=list[CabinetListOut])
+@router.get("", response_model=PageOut[CabinetListOut])
 async def list_cabinets(
     search: str | None = Query(None),
     sort_by: str = Query("created_at", pattern="^(type|warranty_ends_at|object_number|created_at)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
     _: User = Depends(require_role(RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
     service = CabinetService(session)
-    return await service.list_all(query=search, sort_by=sort_by, sort_order=sort_order)
+    return await service.list_all(query=search, sort_by=sort_by, sort_order=sort_order, page=page, size=size)
 
 # Подробнее о ШУ
 @router.get("/{cabinet_id}", response_model=CabinetOut)

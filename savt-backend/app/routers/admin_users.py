@@ -11,20 +11,23 @@ from app.schemas.admin_users import (
     CabinetUserOut,
     RemoveUserFromCabinetIn,
 )
+from app.schemas.pagination import PageOut
 from app.services.admin_user_service import AdminUserService
 
 router = APIRouter(tags=["admin: users"])
 
 # Все пользователи
-@router.get("/admin/users", response_model=list[AdminUserListOut])
+@router.get("/admin/users", response_model=PageOut[AdminUserListOut])
 async def list_users(
     search: str | None = Query(None),
     is_active: bool | None = Query(None),
-    admin: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
     service = AdminUserService(session)
-    return await service.list_users(query=search, is_active=is_active)
+    return await service.list_users(query=search, is_active=is_active, page=page, size=size)
 
 # Подробнее о пользователе
 @router.get("/admin/users/{user_id}", response_model=AdminUserDetailOut)

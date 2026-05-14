@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.constants import RoleName
 from app.core.dependencies import get_session, require_role
 from app.models.user import User
+from app.schemas.pagination import PageOut
 from app.schemas.requests import (
     AdditionRequestOut,
     ApproveAdditionIn,
@@ -16,14 +17,16 @@ from app.services.cabinet_request_service import CabinetRequestService
 router = APIRouter(prefix="/admin/cabinet-requests", tags=["admin: cabinet requests"])
 
 # Список заявок по добавлению по фото
-@router.get("/additions", response_model=list[AdditionRequestOut])
+@router.get("/additions", response_model=PageOut[AdditionRequestOut])
 async def list_additions(
     status: str | None = Query(None, pattern="^(pending|approved|rejected)$"),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
     admin: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
     service = CabinetRequestService(session)
-    return await service.list_additions(status)
+    return await service.list_additions(status, page=page, size=size)
 
 # Апрувнуть заявку
 @router.post("/additions/{request_id}/approve", status_code=status.HTTP_204_NO_CONTENT)
@@ -48,14 +51,16 @@ async def reject_addition(
     await service.reject_addition(request_id, payload, admin.id)
 
 # Все заявки по добавлению к уже подвязанному ШУ
-@router.get("/shares", response_model=list[ShareRequestOut])
+@router.get("/shares", response_model=PageOut[ShareRequestOut])
 async def list_shares(
     status: str | None = Query(None, pattern="^(pending|approved|rejected)$"),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
     admin: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
     service = CabinetRequestService(session)
-    return await service.list_shares(status)
+    return await service.list_shares(status, page=page, size=size)
 
 # Апрувнуть добавление
 @router.post("/shares/{request_id}/approve", status_code=status.HTTP_204_NO_CONTENT)

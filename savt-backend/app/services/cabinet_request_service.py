@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AlreadyExistsError, NotFoundError
 from app.repositories.cabinet import CabinetRepository, CabinetRequestRepository, UserCabinetRepository
+from app.schemas.pagination import PageOut, make_page
 from app.schemas.requests import (
     AdditionRequestOut,
     ApproveAdditionIn,
@@ -21,9 +22,13 @@ class CabinetRequestService:
         self.user_cabinet_repo = UserCabinetRepository(session)
 
     # Все заявки на добавление по фото
-    async def list_additions(self, status: str | None = None) -> list[AdditionRequestOut]:
-        rows = await self.request_repo.list_additions(status)
-        return [
+    async def list_additions(
+        self, status: str | None = None, page: int = 1, size: int = 20
+    ) -> PageOut[AdditionRequestOut]:
+        rows, total = await self.request_repo.list_additions(
+            status=status, offset=(page - 1) * size, limit=size
+        )
+        items = [
             AdditionRequestOut(
                 id=req.id,
                 user_id=req.user_id,
@@ -39,6 +44,7 @@ class CabinetRequestService:
             )
             for req, user in rows
         ]
+        return make_page(items, total, page, size)
 
     # Апрув заявки
     async def approve_addition(
@@ -90,9 +96,13 @@ class CabinetRequestService:
         await self.session.commit()
 
     # Все заявки на добавление
-    async def list_shares(self, status: str | None = None) -> list[ShareRequestOut]:
-        rows = await self.request_repo.list_shares(status)
-        return [
+    async def list_shares(
+        self, status: str | None = None, page: int = 1, size: int = 20
+    ) -> PageOut[ShareRequestOut]:
+        rows, total = await self.request_repo.list_shares(
+            status=status, offset=(page - 1) * size, limit=size
+        )
+        items = [
             ShareRequestOut(
                 id=req.id,
                 user_id=req.user_id,
@@ -109,6 +119,7 @@ class CabinetRequestService:
             )
             for req, user, cabinet in rows
         ]
+        return make_page(items, total, page, size)
 
     # Апрув заявки
     async def approve_share(
