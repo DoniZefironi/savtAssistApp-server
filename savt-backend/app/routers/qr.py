@@ -16,7 +16,7 @@ router = APIRouter(tags=["qr"])
 class QrGenerateIn(BaseModel):
     data: str
 
-
+# Генерация кур кода(не по шкафу)
 @router.post("/qr/generate")
 async def generate_custom_qr(
     payload: QrGenerateIn,
@@ -25,7 +25,7 @@ async def generate_custom_qr(
     image_bytes = generate_qr(payload.data)
     return Response(content=image_bytes, media_type="image/png")
 
-
+# Получение кур кода по существующему шкафу
 @router.get("/admin/cabinets/{cabinet_id}/qr")
 async def get_cabinet_qr(
     cabinet_id: int,

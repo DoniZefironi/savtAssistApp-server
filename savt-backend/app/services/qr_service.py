@@ -11,7 +11,7 @@ _LOGO_PADDING = 0
 # Логотип занимает 30% от размера QR-кода (максимум с ERROR_CORRECT_H ~30%, но современные сканеры читают до 35%)
 _LOGO_RATIO = 0.30
 
-
+# Генерация кода
 def generate_qr(data: str) -> bytes:
     qr = qrcode.QRCode(
         # ERROR_CORRECT_H — 30% избыточность, позволяет перекрыть до 30% логотипом
@@ -31,7 +31,7 @@ def generate_qr(data: str) -> bytes:
     img.convert("RGB").save(buf, format="PNG", optimize=True)
     return buf.getvalue()
 
-
+# Отвечает за добавление лого в код
 def _overlay_logo(qr_img: Image.Image) -> None:
     logo = Image.open(LOGO_PATH).convert("RGBA")
 
