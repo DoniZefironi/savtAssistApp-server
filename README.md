@@ -11,512 +11,584 @@
 
 ## Работа с Docker
 
-### Сборка и запуск контейнеров
 ```bash
-# docker compose up -d --build   - билд
+# Сборка и запуск
+docker compose up -d --build
 
-# docker compose exec api alembic upgrade head    - миграции
-# docker compose exec api python -m app.cli create-admin admin "123qweASDZXC" "Admin Admen"   - создание админа
+# Миграции
+docker exec savt-backend-api-1 alembic upgrade head
 
-# docker compose logs api --tail=10 - логи
+# Создание новой миграции (после изменения моделей)
+docker exec savt-backend-api-1 alembic revision --autogenerate -m "описание"
 
-# БД действия
-# docker ps - посмотреть все контейнеры
-# docker exec -it savt-backer-db-1 psql -U postges - все свои данные
-# \l - выводит все бдшки, ищем свою savt
-# \c savt - подключаемся к сааавт
-# \dt - все таблички бдшки
-# \d <название таблички> - посмотреть структуру таблички
-# ну и кнтр z чтобы ливнуть с этого
+# Логи
+docker compose logs api --tail=20
+
+# Подключение к БД
+docker exec -it savt-backend-db-1 psql -U postgres -d savt
+# \dt — все таблицы
+# \d <таблица> — структура таблицы
+# Ctrl+Z — выход
 ```
 
-# Добро пожаловать в savtAssistApp-server - сервер для мобильного приложения поддержки-SAVT.
+---
 
-С помощью этой API вы сможете создавать манипулировать пользователями, шкафами, документацией, qr-кодами, 
-чатами, сервисными заявками, уведомлениями, базой знаний и FAQ-разделом.
+# savtAssistApp — сервер мобильного приложения поддержки SAVT
 
-Есть 3 роли пользователя:
-1. Пользователь - может добавлять шкаф, пользоваться чатом-поддержки, просматривать/запрашивать документацию, создавать сервисные заявки.
-2. Оператор - отвечает пользователю в чат-поддержке.
-3. Администратор - может управлять всеми данными, бог системы.
+API для управления пользователями, шкафами управления (ШУ), документацией, QR-кодами, чатами, сервисными заявками, уведомлениями, базой знаний и FAQ.
 
-Далее будут предметно описаны эндпоинты приложения:
+**Роли:**
+1. **Пользователь** — добавляет ШУ, пользуется чатом поддержки, просматривает/запрашивает документацию, создаёт сервисные заявки.
+2. **Оператор** — отвечает в чате, обрабатывает заявки.
+3. **Администратор** — полное управление всеми данными.
 
-## Рут auth:
+---
 
-Используется для авторизации/ренгистрации пользователя в систему:
+## Рут `auth` — авторизация и аккаунт
 
-- ### Post запрос /auth/register/start 
-  Начало регистрации пользователя, вводит все свои данные:
-```bash
-  {
-  "phone": "string",
-  "password": "string",
-  "password_confirm": "string",
-  "full_name": "string",
-  "user_type": "string",
-  "organization_name": "string"
+### POST `/auth/register/start`
+Начало регистрации. Пользователь вводит данные, на телефон отправляется SMS-код.
+```json
+{
+  "phone": "+375291234567",
+  "password": "minLength8",
+  "password_confirm": "minLength8",
+  "full_name": "Иванов Иван Иванович",
+  "user_type": "individual",
+  "organization_name": null
 }
 ```
-  phone - номер телефона, с проверкой на корректность
-  password - пароль, минимум 8 символов
-  password-confirm - подтверждение пароля, должен совпадать с паролем
-  full_name - полное имя пользователя
-  user_type - тип пользователя, частное или организационное лицо, проверка на тип, частное - individual, организационное - organization
-  organization_name - необходимо если тип пользователя - organization
-  После вернет:
-```bash
-  {
+- `phone` — номер в международном формате, проверяется на корректность
+- `password` — минимум 8 символов
+- `password_confirm` — должен совпадать с `password`
+- `user_type` — `individual` или `organization`
+- `organization_name` — обязателен если `user_type = organization`
+
+Ответ:
+```json
+{
   "message": "Код подтверждения отправлен",
-  "resend_after_seconds": 0
+  "resend_after_seconds": 60
 }
 ```
-  message - уведомление о том, что код отправлен
-  resend_after_seconds - время действия кода
-  
-- ### Post запрос /auth/register/complete
-  После успешного заполнения всех данных на телефон приходит код подтверждения действующий 60 секунд
-```bash
-  {
-  "phone": "string",
-  "code": "string"
+- `resend_after_seconds` — кулдаун в секундах до возможности повторно запросить код
+
+---
+
+### POST `/auth/register/complete`
+Подтверждение телефона кодом из SMS.
+```json
+{
+  "phone": "+375291234567",
+  "code": "123456"
 }
 ```
-  phone - номер телефона, его нужно передать ещё раз, для сверки
-  code - код пришедший на этот номер телефона
-  После вернет:
-```bash
-  {
-  "access_token": "string",
-  "refresh_token": "string",
+Ответ:
+```json
+{
+  "access_token": "eyJ...",
+  "refresh_token": "abc123...",
   "token_type": "bearer"
 }
 ```
-  access_token - аксес токен
-  refresh_token - рефреш токен
-  token_type - тип токена
 
-- ### Post запрос /auth/register/resend
-  Если же вдруг, пользователь не успел ввести за 60 секунд код, или же не пришел код, то его можно получить ещё раз
-```bash
-  {
-  "phone": "string"
-}
-```
-  phone - номер телефона на который придет код повторно
-  После вернет:
-```bash
-  {
-  "message": "Код подтверждения отправлен",
-  "resend_after_seconds": 0
-}
-```
-  message - уведомление о том, что код отправлен
-  resend_after_seconds - время действия кода
+---
 
-- ### Post запрос /auth/login
-  Авторизация пользователя в систему
-```bash
-  {
-  "phone": "string",
-  "password": "string"
+### POST `/auth/register/resend`
+Повторная отправка кода (если не пришёл или истёк).
+```json
+{
+  "phone": "+375291234567"
 }
 ```
-  phone - номер телефона для логина пользователя
-  password - пароль пользователя
-  После вернет:
-```bash
-  {
-  "message": "Код подтверждения отправлен",
-  "resend_after_seconds": 0
-}
-```
-  message - уведомление о том, что код отправлен
-  resend_after_seconds - время действия кода
+Ответ аналогичен `/register/start`.
 
-- ### Post запрос /auth/admin/login
-  Авторизация администратора в систему
-```bash
-  {
-  "login": "string",
-  "password": "string"
-}
-```
-  login - логин админа
-  password - пароль админа
-  После вернет:
-```bash
-  {
-  "message": "Код подтверждения отправлен",
-  "resend_after_seconds": 0
-}
-```
-  message - уведомление о том, что код отправлен
-  resend_after_seconds - время действия кода
+---
 
-- ### Post запрос /auth/refresh
-  Обновление аксес токена
-```bash
-  {
-  "refresh_token": "string"
+### POST `/auth/login`
+Вход пользователя по телефону и паролю.
+```json
+{
+  "phone": "+375291234567",
+  "password": "myPassword"
 }
 ```
-  refresh_token - текущий рефреш токен
-  После вернет:
-```bash
-  {
-  "access_token": "string",
-  "refresh_token": "string",
+Ответ:
+```json
+{
+  "access_token": "eyJ...",
+  "refresh_token": "abc123...",
   "token_type": "bearer"
 }
 ```
-  access_token - аксес токен для продления сессии
-  refresh_token - рефреш токен
-  token_type - тип токена
 
-- ### Post запрос /auth/logout
-  Выход аккаунта из всех устройств
-```bash
-  {
-  "refresh_token": "string"
+---
+
+### POST `/auth/refresh`
+Обновление access-токена по refresh-токену.
+```json
+{
+  "refresh_token": "abc123..."
 }
 ```
-  refresh_token - текущий рефреш токен
-  После удалит токен
+Ответ: новая пара токенов (аналогично `/login`).
 
-- ### Get запрос /auth/me
-  Если пользователь авторизован - вернет ему данные об аккаунте
+---
 
-- ### Post запрос /auth/password-reset/start
-  Восстановление пароля, при клике пользователь вводит свой номер телефона и на этот номер приходит код
-```bash
-  {
-  "phone": "string"
+### POST `/auth/logout`
+Выход — инвалидирует refresh-токен.
+```json
+{
+  "refresh_token": "abc123..."
 }
 ```
-  phone - номер телефона
-  После вернет:
-```bash
-  {
+Ответ: `204 No Content`
+
+---
+
+### GET `/auth/me`
+Данные текущего авторизованного пользователя (требует Bearer-токен).
+```json
+{
+  "id": 1,
+  "phone": "+375291234567",
+  "email": null,
+  "user_type": "individual",
+  "organization_name": null,
+  "full_name": "Иванов Иван",
+  "role": "user",
+  "is_phone_verified": true
+}
+```
+
+---
+
+### POST `/auth/password-reset/start`
+Запрос SMS-кода для сброса пароля.
+```json
+{ "phone": "+375291234567" }
+```
+Ответ:
+```json
+{
   "message": "На телефон отправлен код",
-  "resend_after_seconds": 0
+  "resend_after_seconds": 60
 }
 ```
-  message - уведомление о том, что код отправлен
-  resend_after_seconds - время действия кода
 
-- ### Post запрос /auth/password-reset/complete
-  После того как код пришел - пользователь его вводит и заполняет данные о новом пароле
-```bash
-  {
-  "phone": "string",
-  "code": "string",
-  "new_password": "stringst",
-  "new_password_confirm": "stringst"
+---
+
+### POST `/auth/password-reset/complete`
+Установка нового пароля после подтверждения кода.
+```json
+{
+  "phone": "+375291234567",
+  "code": "123456",
+  "new_password": "newPassword8",
+  "new_password_confirm": "newPassword8"
 }
 ```
-  phone - номер телефона
-  code - код подтверждения
-  new_password - новый пароль, минимум 8 символов
-  new_password_confirm - подтверждение нового пароля, должен совпадать с новым паролем
-  Если всё успешно - пароль поменяется
+Ответ: `204 No Content`. Все сессии инвалидируются.
 
-- ### Post запрос /auth/password-change
-  Смена пароля
-```bash
-  {
-  "password": "stringst",
-  "new_password": "stringst",
-  "new_password_confirm": "stringst"
+---
+
+### POST `/auth/password-change`
+Смена пароля для авторизованного пользователя (требует Bearer-токен).
+```json
+{
+  "password": "oldPassword",
+  "new_password": "newPassword8",
+  "new_password_confirm": "newPassword8"
 }
 ```
-  password - старый пароль
-  new_password - новый пароль
-  new_password_confirm - подтверждение нового пароля
-  После успешного заполнения пароль поменяется
+Ответ: `200 OK` с сообщением об успехе.
 
+---
 
-## Рут admin: cabinets:
+## Рут `upload` — загрузка файлов
 
-Используется для манипуляции шкафами от лица админа:
+Все эндпоинты требуют Bearer-токен. Принимают `multipart/form-data`.
 
-- ### Post запрос /admin/cabinets
-  Администратор заполняем все ниже перечисленные данные:
-```bash
-  {
-  "type": "string",
-  "object_number": "string",
-  "description": "string",
-  "warranty_starts_at": "2026-05-14T07:07:06.300Z",
-  "warranty_ends_at": "2026-05-14T07:07:06.300Z",
-  "admin_internal_name": "string",
-  "admin_comment": "string",
-  "purpose": "string"
+### POST `/upload/attachment`
+Загрузка вложения (фото, документ, видео).
+
+| Тип | Форматы | Лимит |
+|---|---|---|
+| Изображение | jpg, png, webp | 10 МБ |
+| Документ | pdf, doc, docx, xls, xlsx | 50 МБ |
+| Видео | mp4, mov | 500 МБ |
+
+Ответ:
+```json
+{ "url": "/static/photos/abc123.jpg" }
+```
+
+---
+
+### POST `/upload/voice`
+Загрузка голосового сообщения.
+
+| Форматы | Лимит |
+|---|---|
+| ogg, mp3, m4a, wav | 25 МБ |
+
+Ответ:
+```json
+{ "url": "/static/voices/abc123.ogg" }
+```
+
+---
+
+## Рут `admin: cabinets` — управление ШУ (только админ)
+
+### POST `/admin/cabinets`
+Создание нового ШУ. `unique_code` генерируется автоматически (64-бит случайный код).
+```json
+{
+  "type": "Вентиляционная установка",
+  "object_number": "29_099",
+  "description": "Описание",
+  "warranty_starts_at": "2025-01-01T00:00:00Z",
+  "warranty_ends_at": "2027-01-01T00:00:00Z",
+  "admin_internal_name": "ШУ-18К",
+  "admin_comment": "Комментарий для внутреннего использования",
+  "purpose": "Вентиляция"
 }
 ```
-  type - тип ШУ
-  object_number - номер объекта
-  description - описание ШУ
-  warranty_starts_at - время начала гарантии
-  warranty_ends_at - время окончания гарантии
-  admin_internal_name - название ШУ(отображается у администратора и у пользователя до смены на кастомное название пользователя)
-  admin_comment - комментарий админа по поводу ШУ(только у админа)
-  purpose - назначение ШУ
-  После вернет:
-```bash
-  {
-  "id": 0,
-  "unique_code": "string",
-  "type": "string",
-  "object_number": "string",
-  "description": "string",
-  "warranty_starts_at": "2026-05-14T07:07:06.301Z",
-  "warranty_ends_at": "2026-05-14T07:07:06.301Z",
-  "admin_internal_name": "string",
-  "admin_comment": "string",
-  "purpose": "string",
-  "created_at": "2026-05-14T07:07:06.301Z",
-  "updated_at": "2026-05-14T07:07:06.301Z"
-}
-```
-  id - айдииии
-  unique_code - уникальный код ШУ
-  type - тип ШУ
-  object_number - номер объекта
-  description - описание ШУ
-  warranty_starts_at - время начала гарантии
-  warranty_ends_at - время окончания гарантии
-  admin_internal_name - название ШУ
-  admin_comment - комментарий админа по поводу ШУ
-  purpose - назначение ШУ
-  created_at - время создания ШУ
-  updated_at - время обновления ШУ
+Ответ — полная информация о созданном ШУ включая `unique_code`.
 
-- ### Get запрос /admin/cabinets
-  Можно задавать такие параметры как:
-  search(string(какое-то слово) или null)
-  sort_by(type(тип), warranty_ends_at(дата окончания), object_number(номер объекта), created_at(дата создания))
-  sort_order(asc(по возрастанию), desc(по убыванию))
-  После вернет:
-```bash
+---
+
+### GET `/admin/cabinets`
+Список всех ШУ. Параметры:
+- `search` — поиск по типу, номеру объекта, названию
+- `sort_by` — `type`, `warranty_ends_at`, `object_number`, `created_at`
+- `sort_order` — `asc`, `desc`
+
+---
+
+### GET `/admin/cabinets/{cabinet_id}`
+Детальная информация о ШУ.
+
+---
+
+### GET `/admin/cabinets/{cabinet_id}/qr`
+Генерирует QR-код для ШУ в формате PNG (с логотипом SAVT если есть файл `app/assets/savt_logo.png`).
+
+QR кодирует строку: `savt://cabinet/{unique_code}`
+
+Ответ: бинарный PNG (`image/png`).
+
+---
+
+### PATCH `/admin/cabinets/{cabinet_id}`
+Обновление данных ШУ (все поля опциональны).
+
+---
+
+### DELETE `/admin/cabinets/{cabinet_id}`
+Удаление ШУ. `204 No Content`.
+
+---
+
+### GET `/admin/cabinets/{cabinet_id}/users`
+Список пользователей, привязанных к ШУ. Доступно оператору и админу.
+```json
 [
   {
-    "id": 0,
-    "unique_code": "string",
-    "object_number": "string",
-    "warranty_starts_at": "2026-05-14T07:18:06.435Z",
-    "warranty_ends_at": "2026-05-14T07:18:06.435Z",
-    "admin_internal_name": "string",
-    "created_at": "2026-05-14T07:18:06.435Z"
+    "user_id": 1,
+    "full_name": "Иванов Иван",
+    "phone": "+375291234567",
+    "user_type": "individual",
+    "is_primary": true,
+    "custom_name": "Мой шкаф",
+    "added_at": "2026-05-12T10:00:00Z"
   }
 ]
 ```
-  id - айдиии
-  unique_code - уникальный код ШУ
-  object_number - номер объекта
-  warranty_starts_at - время начала гарантии
-  warranty_ends_at - время окончания гарантии
-  admin_internal_name - название ШУ
-  created_at - время создания ШУ
 
-- ### Get запрос /admin/cabinets/{cabinet_id}
-  Возвращает подробную информацию о ШУ, принимает параметр cabinet_id
-  После вернет:
-```bash
-  {
-  "id": 0,
-  "unique_code": "string",
-  "type": "string",
-  "object_number": "string",
-  "description": "string",
-  "warranty_starts_at": "2026-05-14T07:38:00.130Z",
-  "warranty_ends_at": "2026-05-14T07:38:00.130Z",
-  "admin_internal_name": "string",
-  "admin_comment": "string",
-  "purpose": "string",
-  "created_at": "2026-05-14T07:38:00.130Z",
-  "updated_at": "2026-05-14T07:38:00.130Z"
-}
+---
+
+### DELETE `/admin/cabinets/{cabinet_id}/users/{user_id}`
+Отвязать пользователя от ШУ с указанием причины. Только для админа. Логируется в `audit_log`.
+```json
+{ "reason": "Причина отвязки" }
 ```
-  id - айдиии
-  unique_code - уникальный код ШУ
-  type - тип ШУ
-  object_number - номер объекта
-  description - описание ШУ
-  warranty_starts_at - время начала гарантии
-  warranty_ends_at - время окончания гарантии
-  admin_internal_name - название ШУ
-  admin_comment - комментарий админа
-  purpose - назначение ШУ
-  created_at - время создания ШУ
-  updated_at - время обновления ШУ
+Ответ: `204 No Content`.
 
-- ### Patch запрос /admin/cabinets/{cabinet_id}
-  Обновление данных о ШУ, принимает параметр cabinet_id
-  Данные доступные для обновление
-```bash
-  {
-  "type": "string",
-  "object_number": "string",
-  "description": "string",
-  "warranty_starts_at": "2026-05-14T07:44:59.964Z",
-  "warranty_ends_at": "2026-05-14T07:44:59.964Z",
-  "admin_internal_name": "string",
-  "admin_comment": "string",
-  "purpose": "string"
-}
-```
-  type - тип ШУ
-  object_number - номер объекта
-  descriprion - описание ШУ
-  warranty_starts_at - время начала гарантии
-  warranty_ends_at - время окончания гарантии
-  admin_internal_name - название ШУ
-  admin_comment - комментарий админа
-  purpose - назначение ШУ
-  После вернет:
-```bash
-  {
-  "id": 0,
-  "unique_code": "string",
-  "type": "string",
-  "object_number": "string",
-  "description": "string",
-  "warranty_starts_at": "2026-05-14T07:44:59.970Z",
-  "warranty_ends_at": "2026-05-14T07:44:59.970Z",
-  "admin_internal_name": "string",
-  "admin_comment": "string",
-  "purpose": "string",
-  "created_at": "2026-05-14T07:44:59.970Z",
-  "updated_at": "2026-05-14T07:44:59.970Z"
-}
-```
-  id - айдии
-  unique_code - уникальный код
-  type - тип ШУ
-  object_number - номер объекта
-  description - описание ШУ
-  warranty_starts_at - время начала гарантии
-  warranty_ends_at - время окончания гарантии
-  admin_internal_name - название ШУ
-  admin_comment - комментарий ШУ
-  purpose - назначение ШУ
-  created_at - дата создания ШУ
-  updated_at - дата обновление ШУ
+---
 
-- ### Delete запрос /admin/cabinets/{cabinet_id}
-  Удаления ШУ, принимает параметр cabinet_id
-  После удалит ШУ
+## Рут `admin: cabinet requests` — заявки по ШУ (админ/оператор)
 
+### GET `/admin/cabinet-requests/additions`
+Заявки на добавление ШУ через фото. Фильтр: `?status=pending|approved|rejected`
 
-## Рут admin: cabinets-requests:
-
-Используется для управления запросами по ШУ:
-
-- ### Get запрос /admin/cabinet-requests/additions 
-  Получение всех запросов на добавление ШУ по фото, можно по параметру status(pending(ожидание),approved(апрувнутые),rejected(посланы)):
-  После вернет:
-```bash
+```json
 [
   {
-    "id": 0,
-    "user_id": 0,
-    "user_full_name": "string",
-    "user_phone": "string",
-    "photo_url": "string",
-    "user_comment": "string",
-    "status": "string",
-    "cabinet_id": 0,
-    "admin_response": "string",
-    "created_at": "2026-05-14T07:54:23.954Z",
-    "resolved_at": "2026-05-14T07:54:23.954Z"
+    "id": 1,
+    "user_id": 8,
+    "user_full_name": "Иванов Иван",
+    "user_phone": "+375291234567",
+    "photo_url": "/static/photos/abc.jpg",
+    "user_comment": "Шкаф на заводе",
+    "status": "pending",
+    "cabinet_id": null,
+    "admin_response": null,
+    "created_at": "2026-05-12T08:00:00Z",
+    "resolved_at": null
   }
 ]
 ```
-  id - айди
-  user_id - id(айди) пользователя(от кого поступил запрос)
-  user_full_name - ФИО дурачка
-  user_phone - номер телефона чела
-  photo_utl - ссылка на фото ШУ
-  user_comment - комментарий пользователя
-  status - статус заявки
-  cabinet_id - айди ШУ
-  admin_response - ответ админа по заявке
-  created_at - дата создания заявки
-  resolved_at - дата обработки заявки
+`cabinet_id` — `null` пока заявка не одобрена.
 
-- ### Post запрос /admin/cabinet-requests/additions/{request_id}/approve
-  Апрув заявки, принимает request_id и необходимо ввести данные:
-```bash
-  {
-  "cabinet_id": 0,
-  "admin_response": "string"
+---
+
+### POST `/admin/cabinet-requests/additions/{request_id}/approve`
+Одобрение заявки. Администратор предварительно создаёт ШУ, затем указывает его ID.
+```json
+{
+  "cabinet_id": 5,
+  "admin_response": "Шкаф добавлен"
 }
 ```
-  cabinet_id - айди ШУ(чел же не знает что за ШУ, есть только фото)
-  admin_response - ответ админа
-  После вернет заявка примет статус апрув
+Ответ: `204 No Content`. Создаётся `UserCabinet` с `is_primary=true`.
 
-- ### Post запрос /admin/cabinet-requests/additions/{request_id}/reject
-  Отказ в заявке, принимает request_id и необходимо ввести данные:
-```bash
-  {
-  "admin_response": "string"
-}
+---
+
+### POST `/admin/cabinet-requests/additions/{request_id}/reject`
+Отклонение заявки.
+```json
+{ "admin_response": "Фото нечёткое, повторите попытку" }
 ```
-  admin_response - ответ админа
-  После вернет заявка примет статус отказа
+Ответ: `204 No Content`.
 
-- ### Get запрос /admin/cabinet-requests/shares
-  Получение всех запросов на добавление ШУ пользователю(если уже у кого-то есть этот ШУ), можно по параметру status(pending(ожидание),approved(апрувнутые),rejected(посланы)):
-  После вернет:
-```bash
+---
+
+### GET `/admin/cabinet-requests/shares`
+Заявки на доступ к уже существующему ШУ (сканирован QR, но ШУ уже занят). Фильтр: `?status=pending|approved|rejected`
+
+```json
 [
   {
-    "id": 0,
-    "user_id": 0,
-    "user_full_name": "string",
-    "user_phone": "string",
-    "cabinet_id": 0,
-    "cabinet_type": "string",
-    "cabinet_object_number": "string",
-    "user_comment": "string",
-    "status": "string",
-    "admin_response": "string",
-    "created_at": "2026-05-14T08:07:53.707Z",
-    "resolved_at": "2026-05-14T08:07:53.707Z"
+    "id": 1,
+    "user_id": 10,
+    "user_full_name": "Петров Пётр",
+    "user_phone": "+375291111111",
+    "cabinet_id": 5,
+    "cabinet_type": "Вентиляционная установка",
+    "cabinet_object_number": "29_099",
+    "user_comment": null,
+    "status": "pending",
+    "admin_response": null,
+    "created_at": "2026-05-12T09:00:00Z",
+    "resolved_at": null
   }
 ]
 ```
-  id - айди
-  user_id - id(айди) пользователя(от кого поступил запрос)
-  user_full_name - ФИО дурачка
-  user_phone - номер телефона чела
-  cabinet_id - айди ШУ
-  cabinet_type - тип ШУ
-  cabinet_object_number - номер объекта ШУ
-  user_comment - комментарий пользователя
-  status - статус заявки
-  admin_response - ответ админа по заявке
-  created_at - дата создания заявки
-  resolved_at - дата обработки заявки
 
-- ### Post запрос /admin/cabinet-requests/shares/{request_id}/approve
-  Апрув заявки, принимает request_id и необходимо ввести данные:
-```bash
+---
+
+### POST `/admin/cabinet-requests/shares/{request_id}/approve`
+Одобрение доступа.
+```json
+{ "admin_response": "Доступ предоставлен" }
+```
+Ответ: `204 No Content`. Создаётся `UserCabinet` с `is_primary=false`.
+
+---
+
+### POST `/admin/cabinet-requests/shares/{request_id}/reject`
+Отклонение доступа.
+```json
+{ "admin_response": "Причина отказа" }
+```
+Ответ: `204 No Content`.
+
+---
+
+## Рут `admin: users` — управление пользователями (админ/оператор)
+
+### GET `/admin/users`
+Список всех пользователей. Параметры:
+- `search` — поиск по ФИО, телефону, организации
+- `is_active` — `true` / `false`
+
+```json
+[
   {
-  "admin_response": "string"
+    "id": 1,
+    "phone": "+375291234567",
+    "login": null,
+    "full_name": "Иванов Иван",
+    "user_type": "individual",
+    "organization_name": null,
+    "role": "user",
+    "is_active": true,
+    "is_phone_verified": true,
+    "created_at": "2026-05-01T10:00:00Z"
+  }
+]
+```
+
+---
+
+### GET `/admin/users/{user_id}`
+Детальная информация о пользователе включая список его ШУ с гарантийным статусом.
+
+```json
+{
+  "id": 1,
+  "phone": "+375291234567",
+  "login": null,
+  "full_name": "Иванов Иван",
+  "email": null,
+  "user_type": "individual",
+  "organization_name": null,
+  "role": "user",
+  "is_active": true,
+  "is_phone_verified": true,
+  "created_at": "2026-05-01T10:00:00Z",
+  "cabinets": [
+    {
+      "cabinet_id": 5,
+      "type": "Вентиляционная установка",
+      "object_number": "29_099",
+      "warranty_ends_at": "2027-01-01T00:00:00Z",
+      "warranty_status": "active",
+      "custom_name": "ШУ-18К",
+      "is_primary": true,
+      "added_at": "2026-05-12T10:00:00Z"
+    }
+  ]
 }
 ```
-  admin_response - ответ админа
-  После вернет заявка примет статус апрув
+`warranty_status`: `active`, `expiring_soon` (≤30 дней), `expired`.
 
-- ### Post запрос /admin/cabinet-requests/shares/{request_id}/reject
-  Отказ в заявке, принимает request_id и необходимо ввести данные:
-```bash
-  {
-  "admin_response": "string"
+---
+
+### POST `/admin/users/{user_id}/ban`
+Блокировка пользователя. Только для админа. Логируется в `audit_log`.
+```json
+{ "reason": "Нарушение условий использования" }
+```
+Ответ: `204 No Content`.
+
+---
+
+### POST `/admin/users/{user_id}/unban`
+Разблокировка пользователя. Только для админа. Логируется в `audit_log`.
+
+Ответ: `204 No Content`.
+
+---
+
+## Рут `cabinets` — ШУ пользователя
+
+### POST `/cabinets/add-by-qr`
+Привязка ШУ через QR-код. Приложение сканирует QR и передаёт полное содержимое.
+```json
+{ "qr_data": "savt://cabinet/A3F7BC1254E8D9F0" }
+```
+
+Логика:
+- ШУ не найден → `404`
+- Уже привязан → `409`
+- Нет первичного владельца → мгновенная привязка, `status: "linked"`
+- Есть владелец → заявка на доступ, `status: "request_submitted"`
+- Заявка уже есть → `409`
+
+Ответ:
+```json
+{
+  "status": "linked",
+  "message": "ШУ успешно привязан"
 }
 ```
-  admin_response - ответ админа
-  После вернет заявка примет статус отказа
+
+---
+
+### POST `/cabinets/add-by-photo`
+Заявка на добавление ШУ через фото (предварительно загрузить через `/upload/attachment`).
+```json
+{
+  "photo_url": "/static/photos/abc123.jpg",
+  "user_comment": "Шкаф на заводе, цех 3"
+}
+```
+Ответ:
+```json
+{
+  "request_id": 1,
+  "message": "Заявка отправлена на рассмотрение"
+}
+```
+
+---
+
+### GET `/cabinets`
+Список ШУ текущего пользователя.
+```json
+[
+  {
+    "cabinet_id": 5,
+    "type": "Вентиляционная установка",
+    "object_number": "29_099",
+    "warranty_ends_at": "2027-01-01T00:00:00Z",
+    "warranty_status": "active",
+    "custom_name": "ШУ-18К",
+    "is_primary": true,
+    "unread_count": 3
+  }
+]
+```
+- `custom_name` — пользовательское название; если не задано, возвращается `admin_internal_name`
+- `unread_count` — количество непрочитанных сообщений в чате этого ШУ
+
+---
+
+### GET `/cabinets/{cabinet_id}`
+Детальная информация о ШУ пользователя.
+```json
+{
+  "cabinet_id": 5,
+  "type": "Вентиляционная установка",
+  "object_number": "29_099",
+  "description": "Описание",
+  "purpose": "Вентиляция",
+  "warranty_starts_at": "2025-01-01T00:00:00Z",
+  "warranty_ends_at": "2027-01-01T00:00:00Z",
+  "warranty_status": "active",
+  "custom_name": "Мой шкаф",
+  "custom_comment": "Комментарий",
+  "is_primary": true
+}
+```
+
+---
+
+### PATCH `/cabinets/{cabinet_id}`
+Обновление пользовательского названия и комментария.
+```json
+{
+  "custom_name": "Мой шкаф",
+  "custom_comment": "Заметка"
+}
+```
+Передача `null` сбрасывает значение. Возвращает обновлённую детальную карточку.
+
+---
+
+### DELETE `/cabinets/{cabinet_id}`
+Открепить ШУ от аккаунта. `204 No Content`.
+
+---
+
+## Рут `qr` — генерация QR-кодов
+
+### POST `/qr/generate`
+Генерация QR-кода с произвольными данными. Доступно для админа и оператора.
+```json
+{ "data": "любой текст, URL, JSON-строка" }
+```
+Ответ: PNG-изображение (`image/png`). QR содержит логотип SAVT если файл `app/assets/savt_logo.png` существует.
