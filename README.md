@@ -407,3 +407,116 @@
 - ### Delete запрос /admin/cabinets/{cabinet_id}
   Удаления ШУ, принимает параметр cabinet_id
   После удалит ШУ
+
+
+## Рут admin: cabinets-requests:
+
+Используется для управления запросами по ШУ:
+
+- ### Get запрос /admin/cabinet-requests/additions 
+  Получение всех запросов на добавление ШУ по фото, можно по параметру status(pending(ожидание),approved(апрувнутые),rejected(посланы)):
+  После вернет:
+```bash
+[
+  {
+    "id": 0,
+    "user_id": 0,
+    "user_full_name": "string",
+    "user_phone": "string",
+    "photo_url": "string",
+    "user_comment": "string",
+    "status": "string",
+    "cabinet_id": 0,
+    "admin_response": "string",
+    "created_at": "2026-05-14T07:54:23.954Z",
+    "resolved_at": "2026-05-14T07:54:23.954Z"
+  }
+]
+```
+  id - айди
+  user_id - id(айди) пользователя(от кого поступил запрос)
+  user_full_name - ФИО дурачка
+  user_phone - номер телефона чела
+  photo_utl - ссылка на фото ШУ
+  user_comment - комментарий пользователя
+  status - статус заявки
+  cabinet_id - айди ШУ
+  admin_response - ответ админа по заявке
+  created_at - дата создания заявки
+  resolved_at - дата обработки заявки
+
+- ### Post запрос /admin/cabinet-requests/additions/{request_id}/approve
+  Апрув заявки, принимает request_id и необходимо ввести данные:
+```bash
+  {
+  "cabinet_id": 0,
+  "admin_response": "string"
+}
+```
+  cabinet_id - айди ШУ(чел же не знает что за ШУ, есть только фото)
+  admin_response - ответ админа
+  После вернет заявка примет статус апрув
+
+- ### Post запрос /admin/cabinet-requests/additions/{request_id}/reject
+  Отказ в заявке, принимает request_id и необходимо ввести данные:
+```bash
+  {
+  "admin_response": "string"
+}
+```
+  admin_response - ответ админа
+  После вернет заявка примет статус отказа
+
+- ### Get запрос /admin/cabinet-requests/shares
+  Получение всех запросов на добавление ШУ пользователю(если уже у кого-то есть этот ШУ), можно по параметру status(pending(ожидание),approved(апрувнутые),rejected(посланы)):
+  После вернет:
+```bash
+[
+  {
+    "id": 0,
+    "user_id": 0,
+    "user_full_name": "string",
+    "user_phone": "string",
+    "cabinet_id": 0,
+    "cabinet_type": "string",
+    "cabinet_object_number": "string",
+    "user_comment": "string",
+    "status": "string",
+    "admin_response": "string",
+    "created_at": "2026-05-14T08:07:53.707Z",
+    "resolved_at": "2026-05-14T08:07:53.707Z"
+  }
+]
+```
+  id - айди
+  user_id - id(айди) пользователя(от кого поступил запрос)
+  user_full_name - ФИО дурачка
+  user_phone - номер телефона чела
+  cabinet_id - айди ШУ
+  cabinet_type - тип ШУ
+  cabinet_object_number - номер объекта ШУ
+  user_comment - комментарий пользователя
+  status - статус заявки
+  admin_response - ответ админа по заявке
+  created_at - дата создания заявки
+  resolved_at - дата обработки заявки
+
+- ### Post запрос /admin/cabinet-requests/shares/{request_id}/approve
+  Апрув заявки, принимает request_id и необходимо ввести данные:
+```bash
+  {
+  "admin_response": "string"
+}
+```
+  admin_response - ответ админа
+  После вернет заявка примет статус апрув
+
+- ### Post запрос /admin/cabinet-requests/shares/{request_id}/reject
+  Отказ в заявке, принимает request_id и необходимо ввести данные:
+```bash
+  {
+  "admin_response": "string"
+}
+```
+  admin_response - ответ админа
+  После вернет заявка примет статус отказа
