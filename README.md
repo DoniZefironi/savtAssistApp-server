@@ -200,3 +200,56 @@
   new_password - новый пароль
   new_password_confirm - подтверждение нового пароля
   После успешного заполнения пароль поменяется
+
+
+## Рут admin: cabinets:
+
+Используется для манипуляции шкафами от лица админа:
+
+- ### Post запрос /admin/cabinets
+  Администратор заполняем все ниже перечисленные данные:
+  {
+  "type": "string",
+  "object_number": "string",
+  "description": "string",
+  "warranty_starts_at": "2026-05-14T07:07:06.300Z",
+  "warranty_ends_at": "2026-05-14T07:07:06.300Z",
+  "admin_internal_name": "string",
+  "admin_comment": "string",
+  "purpose": "string"
+}
+  type - тип ШУ
+  object_number - номер объекта
+  description - описание ШУ
+  warranty_starts_at - время начала гарантии
+  warranty_ends_at - время окончания гарантии
+  admin_internal_name - название ШУ(отображается у администратора и у пользователя до смены на кастомное название пользователя)
+  admin_comment - комментарий админа по поводу ШУ(только у админа)
+  purpose - назначение ШУ
+  После вернет:
+  {
+  "id": 0,
+  "unique_code": "string",
+  "type": "string",
+  "object_number": "string",
+  "description": "string",
+  "warranty_starts_at": "2026-05-14T07:07:06.301Z",
+  "warranty_ends_at": "2026-05-14T07:07:06.301Z",
+  "admin_internal_name": "string",
+  "admin_comment": "string",
+  "purpose": "string",
+  "created_at": "2026-05-14T07:07:06.301Z",
+  "updated_at": "2026-05-14T07:07:06.301Z"
+}
+  id - айдииии
+  unique_code - уникальный код ШУ
+  type - тип ШУ
+  object_number - номер объекта
+  description - описание ШУ
+  warranty_starts_at - время начала гарантии
+  warranty_ends_at - время окончания гарантии
+  admin_internal_name - название ШУ
+  admin_comment - комментарий админа по поводу ШУ
+  purpose - назначение ШУ
+  created_at - время создания ШУ
+  updated_at - время обновления ШУ
