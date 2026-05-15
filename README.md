@@ -606,3 +606,205 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 { "data": "любой текст, URL, JSON-строка" }
 ```
 Ответ: PNG-изображение (`image/png`). QR содержит логотип SAVT если файл `app/assets/savt_logo.png` существует.
+
+---
+
+## Рут `admin: documents` — документы и фото ШУ (админ/оператор)
+
+Документы всегда привязаны к конкретному ШУ.
+
+### POST `/admin/documents`
+Загрузка документа к ШУ. `multipart/form-data`.
+
+| Поле | Тип | Обязательно |
+|---|---|---|
+| `file` | файл | ✅ |
+| `cabinet_id` | int | ✅ |
+| `title` | string | нет (берётся имя файла) |
+| `requires_approval` | bool | нет (по умолчанию `false`) |
+
+`doc_type`, `mime_type`, `file_size_bytes` извлекаются автоматически.
+
+---
+
+### GET `/admin/documents`
+Список документов. Параметры: `cabinet_id`, `doc_type`, `requires_approval`, `tag_ids`, `sort_by`, `sort_order`, `page`, `size`.
+
+`sort_by`: `title`, `doc_type`, `file_size_bytes`, `created_at`.
+
+---
+
+### DELETE `/admin/documents/{doc_id}`
+Удалить документ. Только админ. `204 No Content`.
+
+---
+
+### PUT `/admin/documents/{doc_id}/tags`
+Привязать теги к документу (полная замена).
+```json
+{ "tag_ids": [1, 2, 3] }
+```
+Пустой список снимает все теги. `204 No Content`.
+
+---
+
+### POST `/admin/photos`
+Загрузка фото к ШУ. `multipart/form-data`.
+
+| Поле | Тип | Обязательно |
+|---|---|---|
+| `file` | файл (jpg/png/webp) | ✅ |
+| `cabinet_id` | int | ✅ |
+| `caption` | string | нет |
+| `sort_order` | int | нет (по умолчанию `0`) |
+
+---
+
+### GET `/admin/photos`
+Список фото. Параметры: `cabinet_id`, `page`, `size`.
+
+---
+
+### PATCH `/admin/photos/{photo_id}`
+Изменить подпись и порядок фото.
+```json
+{ "caption": "Вид спереди", "sort_order": 1 }
+```
+
+---
+
+### DELETE `/admin/photos/{photo_id}`
+Удалить фото. Только админ. `204 No Content`.
+
+---
+
+### GET `/admin/document-requests`
+Заявки пользователей на доступ к закрытым документам. Параметры: `status=pending|approved|rejected`, `page`, `size`.
+
+---
+
+### POST `/admin/document-requests/{request_id}/approve`
+Одобрить заявку — пользователь получает доступ к документу.
+```json
+{ "admin_response": "Доступ предоставлен" }
+```
+`204 No Content`.
+
+---
+
+### POST `/admin/document-requests/{request_id}/reject`
+Отклонить заявку.
+```json
+{ "admin_response": "Причина отказа" }
+```
+`204 No Content`.
+
+---
+
+## Рут `documents` — документы и фото для пользователя
+
+### GET `/cabinets/{cabinet_id}/documents`
+Список документов ШУ. Параметры: `tag_ids`, `doc_type`, `sort_by`, `sort_order`, `page`, `size`.
+
+```json
+{
+  "items": [
+    {
+      "id": 1,
+      "cabinet_id": 5,
+      "title": "Паспорт ШУ-18К",
+      "doc_type": "pdf",
+      "file_url": "/static/documents/abc.pdf",
+      "file_size_bytes": 204800,
+      "mime_type": "application/pdf",
+      "has_access": true,
+      "tags": [{ "id": 1, "name": "паспорт" }]
+    }
+  ],
+  "total": 10, "page": 1, "size": 20, "pages": 1
+}
+```
+- `file_url` — `null` если `has_access=false` (документ закрыт, доступ не выдан)
+
+---
+
+### GET `/documents/{doc_id}/download`
+Скачать / открыть файл. Проверяет доступ. Возвращает бинарный файл с правильным `Content-Type`.
+
+- `403` — нет доступа
+- `404` — документ не найден
+
+---
+
+### POST `/documents/{doc_id}/request-access`
+Запросить доступ к закрытому документу.
+```json
+{ "user_message": "Нужен для проверки регламента" }
+```
+`user_message` необязателен. Ответ: `{ "request_id": 1, "message": "Заявка отправлена" }`.
+
+---
+
+### GET `/cabinets/{cabinet_id}/photos`
+Список фото ШУ. Параметры: `page`, `size`.
+
+---
+
+## Рут `tags` — теги
+
+### GET `/tags`
+Список всех тегов (все авторизованные пользователи).
+```json
+[{ "id": 1, "name": "паспорт" }, { "id": 2, "name": "схема" }]
+```
+
+---
+
+### POST `/admin/tags`
+Создать тег.
+```json
+{ "name": "паспорт" }
+```
+
+---
+
+### DELETE `/admin/tags/{tag_id}`
+Удалить тег. Только админ. `204 No Content`.
+
+---
+
+### PUT `/admin/kb-articles/{article_id}/tags`
+Привязать теги к статье KB.
+```json
+{ "tag_ids": [1, 3] }
+```
+`204 No Content`.
+
+---
+
+## Рут `favorites` — избранное
+
+### POST `/favorites`
+Добавить в избранное.
+```json
+{ "entity_type": "document", "entity_id": 5 }
+```
+`entity_type`: `document` или `kb_article`. Ответ: объект избранного.
+
+---
+
+### DELETE `/favorites/{entity_type}/{entity_id}`
+Удалить из избранного. `204 No Content`.
+
+---
+
+### GET `/favorites`
+Список избранного. Параметры: `entity_type=document|kb_article`, `page`, `size`.
+```json
+{
+  "items": [
+    { "id": 1, "entity_type": "document", "entity_id": 5, "created_at": "..." }
+  ],
+  "total": 3, "page": 1, "size": 20, "pages": 1
+}
+```
