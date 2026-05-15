@@ -75,7 +75,24 @@ async def register_resend(
     cooldown = await service.register_resend_code(payload.phone)
     return RegisterStartOut(resend_after_seconds=cooldown)
 
-# Вход
+# Вход для администратора / оператора
+@router.post("/admin-login", response_model=TokenPairOut)
+async def admin_login(
+    payload: AdminLoginIn,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    user_agent, ip = _client_info(request)
+    service = AuthService(session)
+    access, refresh = await service.admin_login(
+        login=payload.login,
+        password=payload.password,
+        user_agent=user_agent,
+        ip_address=ip,
+    )
+    return TokenPairOut(access_token=access, refresh_token=refresh)
+
+# Вход пользователя
 @router.post("/login", response_model=TokenPairOut)
 async def login(
     payload: LoginIn,

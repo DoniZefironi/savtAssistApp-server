@@ -8,13 +8,13 @@ class FaqCategory(Base):
     __tablename__ = "faq_categories"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    # Родительская категория
+    # родительская категория
     parent_id: Mapped[int | None] = mapped_column(
         ForeignKey("faq_categories.id"), index=True
     )
-    # Название
+    # название
     name: Mapped[str] = mapped_column(String(200))
-    # Порядок
+    # порядок
     sort_order: Mapped[int] = mapped_column(
         Integer, default=0, server_default="0"
     )

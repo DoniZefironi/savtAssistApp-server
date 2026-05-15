@@ -34,11 +34,12 @@ class User(Base):
         Boolean, default=True, server_default="true"
     )
     
-    # для логов
+    # время создания
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
     )
+    # время обновления
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

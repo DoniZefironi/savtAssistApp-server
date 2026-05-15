@@ -23,6 +23,9 @@ from app.routers import admin_documents as admin_documents_router
 from app.routers import documents as documents_router
 from app.routers import favorites as favorites_router
 from app.routers import tags as tags_router
+from app.routers import chats as chats_router
+from app.routers import operator as operator_router
+from app.routers import service_requests as service_requests_router
 from app.routers import cabinets as cabinets_router
 from app.routers import upload as upload_router
 from app.services.sms_service import SmsSendError
@@ -88,6 +91,9 @@ app.include_router(admin_documents_router.router)
 app.include_router(documents_router.router)
 app.include_router(favorites_router.router)
 app.include_router(tags_router.router)
+app.include_router(chats_router.router)
+app.include_router(operator_router.router)
+app.include_router(service_requests_router.router)
 app.include_router(cabinets_router.router)
 app.include_router(upload_router.router)
 app.mount("/static", StaticFiles(directory="/code/uploads"), name="static")

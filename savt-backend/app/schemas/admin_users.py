@@ -42,7 +42,7 @@ class AdminUserDetailOut(BaseModel):
 
 
 class BanUserIn(BaseModel):
-    reason: str = Field(..., min_length=1)
+    reason: str = Field(..., min_length=1, max_length=1000)
 
 
 class CabinetUserOut(BaseModel):
@@ -56,4 +56,4 @@ class CabinetUserOut(BaseModel):
 
 
 class RemoveUserFromCabinetIn(BaseModel):
-    reason: str = Field(..., min_length=1)
+    reason: str = Field(..., min_length=1, max_length=1000)

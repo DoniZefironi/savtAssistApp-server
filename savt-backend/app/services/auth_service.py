@@ -142,10 +142,38 @@ class AuthService:
         await self.code_repo.mark_used(active_code)
         user.is_phone_verified = True
 
+        # Создаём базовые чаты
+        from app.services.chat_service import ChatService
+        await ChatService(self.session).ensure_support_and_notes(user.id)
+
         # Выдаем токен
         access, refresh = await self._issue_tokens(user, user_agent, ip_address)
         await self.session.commit()
         return access, refresh 
+
+    # Вход для администратора / оператора через логин
+    async def admin_login(
+        self,
+        login: str,
+        password: str,
+        user_agent: str | None,
+        ip_address: str | None,
+    ) -> tuple[str, str]:
+        user = await self.user_repo.find_by_login(login)
+
+        if user is None or not verify_password(password, user.hashed_password):
+            raise AuthenticationError("Неверный логин или пароль")
+
+        if not user.is_active:
+            raise AuthenticationError("Аккаунт заблокирован")
+
+        role = await self.session.get(Role, user.role_id)
+        if role is None or role.name not in (RoleName.ADMIN.value, RoleName.OPERATOR.value):
+            raise AuthenticationError("Недостаточно прав для входа через этот endpoint")
+
+        access, refresh = await self._issue_tokens(user, user_agent, ip_address)
+        await self.session.commit()
+        return access, refresh
 
     # Вход(как неочевидно по названию)
     async def login(

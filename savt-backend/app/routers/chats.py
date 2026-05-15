@@ -1,0 +1,104 @@
+from fastapi import APIRouter, Depends, Query, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.dependencies import get_current_user, get_session
+from app.models.user import User
+from app.schemas.chat import ChatListOut, ChatOut, MessageCreateIn, MessageOut
+from app.services.chat_service import ChatService
+
+router = APIRouter(tags=["chats"])
+
+# Список чатов пользователя
+@router.get("/chats", response_model=list[ChatListOut])
+async def list_chats(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await ChatService(session).list_chats(current_user.id)
+
+# Получить/создать чат ШУ
+@router.get("/cabinets/{cabinet_id}/chat", response_model=ChatOut)
+async def get_cabinet_chat(
+    cabinet_id: int,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await ChatService(session).get_cabinet_chat(current_user.id, cabinet_id)
+
+# История
+@router.get("/chats/{chat_id}/messages", response_model=list[MessageOut])
+async def get_messages(
+    chat_id: int,
+    before_id: int | None = Query(None, gt=0),
+    limit: int = Query(30, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await ChatService(session).get_messages(
+        chat_id, current_user.id, before_id, limit
+    )
+
+# Отправить
+@router.post("/chats/{chat_id}/messages", response_model=MessageOut, status_code=status.HTTP_201_CREATED)
+async def send_message(
+    chat_id: int,
+    payload: MessageCreateIn,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await ChatService(session).send_message(chat_id, current_user.id, payload)
+
+# Прочитать всё
+@router.post("/chats/{chat_id}/read", status_code=status.HTTP_204_NO_CONTENT)
+async def mark_read(
+    chat_id: int,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    await ChatService(session).mark_read(chat_id, current_user.id)
+
+# Редактировать сообщение
+@router.patch("/chats/{chat_id}/messages/{msg_id}", response_model=MessageOut)
+async def edit_message(
+    chat_id: int,
+    msg_id: int,
+    payload: MessageCreateIn,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    if not payload.text:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=422, detail="Текст обязателен при редактировании")
+    return await ChatService(session).edit_message(chat_id, msg_id, current_user.id, payload.text)
+
+# Удалить сообщение
+@router.delete("/chats/{chat_id}/messages/{msg_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_message(
+    chat_id: int,
+    msg_id: int,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    await ChatService(session).delete_message(chat_id, msg_id, current_user.id)
+
+# Поставить реакцию
+@router.post("/chats/{chat_id}/messages/{msg_id}/reactions/{emoji}", status_code=status.HTTP_204_NO_CONTENT)
+async def add_reaction(
+    chat_id: int,
+    msg_id: int,
+    emoji: str,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    await ChatService(session).add_reaction(chat_id, msg_id, current_user.id, emoji)
+
+# Удалить реакцию
+@router.delete("/chats/{chat_id}/messages/{msg_id}/reactions/{emoji}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_reaction(
+    chat_id: int,
+    msg_id: int,
+    emoji: str,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    await ChatService(session).remove_reaction(chat_id, msg_id, current_user.id, emoji)

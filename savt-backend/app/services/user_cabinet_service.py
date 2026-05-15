@@ -107,6 +107,8 @@ class UserCabinetService:
                 cabinet_id=cabinet.id,
                 is_primary=True,
             )
+            from app.services.chat_service import ChatService
+            await ChatService(self.session).ensure_cabinet_chat(user_id, cabinet.id)
             await self.session.commit()
             return {"status": "linked", "message": "ШУ успешно привязан"}
 

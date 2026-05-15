@@ -49,7 +49,7 @@ class RegisterStartIn(BaseModel):
     
     @model_validator(mode='after')
     def validate_organization_name_for_contractor(self) -> 'RegisterStartIn':
-        if self.user_type == "organization" and not self.organization_name:
+        if self.user_type == "organization" and not (self.organization_name or "").strip():
             raise ValueError('Для типа пользователя "организация" необходимо указать наименование организации')
         return self
 
@@ -79,25 +79,25 @@ class RegisterCompleteIn(BaseModel):
 # Аутентификация
 class LoginIn(BaseModel):
     phone: str
-    password: str
+    password: str = Field(..., min_length=8, max_length=100)
 
     @field_validator("phone")
     @classmethod
     def validate_phone(cls, v: str) -> str:
         return _normalize_phone(v)
-    
+
 class AdminLoginIn(BaseModel):
-    login: str
-    password: str
+    login: str = Field(..., min_length=1, max_length=100)
+    password: str = Field(..., min_length=8, max_length=100)
 
 
 # Токены
 class RefreshIn(BaseModel):
-    refresh_token: str
+    refresh_token: str = Field(..., min_length=1)
 
 
 class LogoutIn(BaseModel):
-    refresh_token: str
+    refresh_token: str = Field(..., min_length=1)
 
 
 class TokenPairOut(BaseModel):
