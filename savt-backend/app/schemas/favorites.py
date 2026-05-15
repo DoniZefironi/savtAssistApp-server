@@ -1,0 +1,16 @@
+from datetime import datetime
+from pydantic import BaseModel, Field
+
+
+class FavoriteIn(BaseModel):
+    entity_type: str = Field(..., pattern="^(document|kb_article)$")
+    entity_id: int
+
+
+class FavoriteOut(BaseModel):
+    id: int
+    entity_type: str
+    entity_id: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}

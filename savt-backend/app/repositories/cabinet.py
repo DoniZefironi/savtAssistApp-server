@@ -1,4 +1,4 @@
-from sqlalchemy import select, or_
+from sqlalchemy import func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.cabinet_addition_request import CabinetAdditionRequest
@@ -24,17 +24,21 @@ class CabinetRepository(BaseRepository[Cabinet]):
         query: str | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
-    ) -> list[Cabinet]:
-        stmt = select(Cabinet)
-
+        offset: int = 0,
+        limit: int = 20,
+    ) -> tuple[list[Cabinet], int]:
+        conditions = []
         if query:
-            stmt = stmt.where(
-                or_(
-                    Cabinet.type.ilike(f"%{query}%"),
-                    Cabinet.object_number.ilike(f"%{query}%"),
-                    Cabinet.admin_internal_name.ilike(f"%{query}%"),
-                )
-            )
+            conditions.append(or_(
+                Cabinet.type.ilike(f"%{query}%"),
+                Cabinet.object_number.ilike(f"%{query}%"),
+                Cabinet.admin_internal_name.ilike(f"%{query}%"),
+            ))
+
+        count_stmt = select(func.count(Cabinet.id))
+        if conditions:
+            count_stmt = count_stmt.where(*conditions)
+        total = (await self.session.execute(count_stmt)).scalar() or 0
 
         sort_column = {
             "type": Cabinet.type,
@@ -43,10 +47,14 @@ class CabinetRepository(BaseRepository[Cabinet]):
             "created_at": Cabinet.created_at,
         }.get(sort_by, Cabinet.created_at)
 
+        stmt = select(Cabinet)
+        if conditions:
+            stmt = stmt.where(*conditions)
         stmt = stmt.order_by(sort_column.asc() if sort_order == "asc" else sort_column.desc())
+        stmt = stmt.offset(offset).limit(limit)
 
         result = await self.session.execute(stmt)
-        return list(result.scalars().all())
+        return list(result.scalars().all()), total
 
 
 class UserCabinetRepository(BaseRepository[UserCabinet]):
@@ -160,7 +168,14 @@ class CabinetRequestRepository:
         )
         return result.scalar_one_or_none()
 
-    async def list_additions(self, status: str | None = None) -> list:
+    async def list_additions(
+        self, status: str | None = None, offset: int = 0, limit: int = 20
+    ) -> tuple[list, int]:
+        count_stmt = select(func.count(CabinetAdditionRequest.id))
+        if status:
+            count_stmt = count_stmt.where(CabinetAdditionRequest.status == status)
+        total = (await self.session.execute(count_stmt)).scalar() or 0
+
         stmt = (
             select(CabinetAdditionRequest, User)
             .join(User, User.id == CabinetAdditionRequest.user_id)
@@ -168,10 +183,17 @@ class CabinetRequestRepository:
         )
         if status:
             stmt = stmt.where(CabinetAdditionRequest.status == status)
-        result = await self.session.execute(stmt)
-        return result.all()
+        result = await self.session.execute(stmt.offset(offset).limit(limit))
+        return result.all(), total
 
-    async def list_shares(self, status: str | None = None) -> list:
+    async def list_shares(
+        self, status: str | None = None, offset: int = 0, limit: int = 20
+    ) -> tuple[list, int]:
+        count_stmt = select(func.count(CabinetShareRequest.id))
+        if status:
+            count_stmt = count_stmt.where(CabinetShareRequest.status == status)
+        total = (await self.session.execute(count_stmt)).scalar() or 0
+
         stmt = (
             select(CabinetShareRequest, User, Cabinet)
             .join(User, User.id == CabinetShareRequest.user_id)
@@ -180,5 +202,5 @@ class CabinetRequestRepository:
         )
         if status:
             stmt = stmt.where(CabinetShareRequest.status == status)
-        result = await self.session.execute(stmt)
-        return result.all()
+        result = await self.session.execute(stmt.offset(offset).limit(limit))
+        return result.all(), total

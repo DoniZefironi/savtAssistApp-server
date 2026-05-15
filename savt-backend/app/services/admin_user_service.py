@@ -12,6 +12,7 @@ from app.schemas.admin_users import (
     AdminUserListOut,
     CabinetUserOut,
 )
+from app.schemas.pagination import PageOut, make_page
 
 # Расчет статуса
 def _warranty_status(ends_at: datetime) -> str:
@@ -35,9 +36,13 @@ class AdminUserService:
         self,
         query: str | None = None,
         is_active: bool | None = None,
-    ) -> list[AdminUserListOut]:
-        rows = await self.user_repo.admin_search(query=query, is_active=is_active)
-        return [
+        page: int = 1,
+        size: int = 20,
+    ) -> PageOut[AdminUserListOut]:
+        rows, total = await self.user_repo.admin_search(
+            query=query, is_active=is_active, offset=(page - 1) * size, limit=size
+        )
+        items = [
             AdminUserListOut(
                 id=user.id,
                 phone=user.phone,
@@ -52,6 +57,7 @@ class AdminUserService:
             )
             for user, role in rows
         ]
+        return make_page(items, total, page, size)
 
     # Получение детальной инфы о пользователе
     async def get_user_detail(self, user_id: int) -> AdminUserDetailOut:
@@ -68,7 +74,7 @@ class AdminUserService:
                 object_number=cab.object_number,
                 warranty_ends_at=cab.warranty_ends_at,
                 warranty_status=_warranty_status(cab.warranty_ends_at),
-                custom_name=uc.custom_name or cab.admin_internal_name,
+                custom_name=uc.custom_name or cab.admin_internal_name or cab.object_number,
                 is_primary=uc.is_primary,
                 added_at=uc.added_at,
             )
@@ -121,7 +127,7 @@ class AdminUserService:
                 phone=user.phone,
                 user_type=user.user_type,
                 is_primary=uc.is_primary,
-                custom_name=uc.custom_name or cabinet.admin_internal_name,
+                custom_name=uc.custom_name or cabinet.admin_internal_name or cabinet.object_number,
                 added_at=uc.added_at,
             )
             for uc, user in rows
