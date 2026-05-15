@@ -69,6 +69,8 @@ class CabinetRequestService:
             cabinet_id=data.cabinet_id,
             is_primary=True,
         )
+        from app.services.chat_service import ChatService
+        await ChatService(self.session).ensure_cabinet_chat(req.user_id, data.cabinet_id)
 
         req.status = "approved"
         req.cabinet_id = data.cabinet_id
@@ -140,6 +142,8 @@ class CabinetRequestService:
             cabinet_id=req.cabinet_id,
             is_primary=False,
         )
+        from app.services.chat_service import ChatService
+        await ChatService(self.session).ensure_cabinet_chat(req.user_id, req.cabinet_id)
 
         req.status = "approved"
         req.admin_response = data.admin_response

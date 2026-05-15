@@ -1,55 +1,60 @@
 import asyncio
 import sys
 
+from sqlalchemy import select
+
 from app.core.constants import RoleName
 from app.core.security import hash_password
 from app.database import AsyncSessionLocal
 from app.models.role import Role
-from app.models.user import User
 from app.repositories.user import UserRepository
-from sqlalchemy import select
 
-# Создаем админа через терминал
-async def create_admin(login: str, password: str, full_name: str | None = None) -> None:
-    # Создаем сессию
+
+async def _create_staff(login: str, password: str, full_name: str | None, role_name: str) -> None:
     async with AsyncSessionLocal() as session:
-        # Проверяем, нет ли уже такого пользователя
         user_repo = UserRepository(session)
-        existing = await user_repo.find_by_phone(login)
+
+        existing = await user_repo.find_by_login(login)
         if existing is not None:
-            print(f"Пользователь с телефоном {login} уже существует")
+            print(f"Пользователь с логином '{login}' уже существует")
             return
 
-        # Ищем роль админа
-        result = await session.execute(select(Role).where(Role.name == RoleName.ADMIN.value))
-        admin_role = result.scalar_one_or_none()
-        if admin_role is None:
-            print("Роль 'admin' не найдена в БД")
+        result = await session.execute(select(Role).where(Role.name == role_name))
+        role = result.scalar_one_or_none()
+        if role is None:
+            print(f"Роль '{role_name}' не найдена в БД. Запусти миграции.")
             return
 
-        # Создаем пользователя с ролью "админ"
         await user_repo.create(
             login=login,
             full_name=full_name,
             hashed_password=hash_password(password),
-            role_id=admin_role.id,
+            role_id=role.id,
             is_active=True,
+            is_phone_verified=True,
         )
         await session.commit()
-        print(f"Админ создан: {login}")
+        print(f"{role_name.capitalize()} создан: {login}")
 
-# Точка входа и парсинг
+
 def main():
-    if len(sys.argv) < 4 or sys.argv[1] != "create-admin":
-        print("Копируй и пиши строку справа, только замени <login> на логин, без скобок, с паролем так же, " \
-        "и имя без этих квадратов, а с норм кавычками по бочкам: python -m app.cli create-admin <login> <password> [full_name]")
+    usage = (
+        "Использование:\n"
+        "  python -m app.cli create-admin <login> <password> [full_name]\n"
+        "  python -m app.cli create-operator <login> <password> [full_name]"
+    )
+
+    if len(sys.argv) < 4 or sys.argv[1] not in ("create-admin", "create-operator"):
+        print(usage)
         sys.exit(1)
 
-    phone = sys.argv[2]
+    command = sys.argv[1]
+    login = sys.argv[2]
     password = sys.argv[3]
     full_name = sys.argv[4] if len(sys.argv) > 4 else None
 
-    asyncio.run(create_admin(phone, password, full_name))
+    role_name = RoleName.ADMIN.value if command == "create-admin" else RoleName.OPERATOR.value
+    asyncio.run(_create_staff(login, password, full_name, role_name))
 
 
 if __name__ == "__main__":
