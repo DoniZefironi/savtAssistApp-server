@@ -24,11 +24,12 @@ class FaqEntry(Base):
         Boolean, default=False, server_default="false", index=True
     )
 
-    # для логов
+    # время создания
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
     )
+    # время обновления
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

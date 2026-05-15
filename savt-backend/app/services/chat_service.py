@@ -21,8 +21,6 @@ class ChatService:
         self.chat_repo = ChatRepository(session)
         self.msg_repo = MessageRepository(session)
 
-    # --- Создание чатов ---
-
     async def ensure_support_and_notes(self, user_id: int) -> None:
         """Создаёт support и notes чаты если их нет. Вызывается при регистрации."""
         for chat_type in ("support", "notes"):
@@ -36,8 +34,6 @@ class ChatService:
         if existing is None:
             existing = await self.chat_repo.create(user_id, "cabinet", cabinet_id)
         return existing
-
-    # --- Список чатов ---
 
     async def list_chats(self, user_id: int) -> list[ChatListOut]:
         chats = await self.chat_repo.list_for_user(user_id)
@@ -78,8 +74,6 @@ class ChatService:
             await self.session.commit()
         return _to_chat_out(chat)
 
-    # --- Сообщения ---
-
     async def send_message(
         self, chat_id: int, sender_id: int, data: MessageCreateIn
     ) -> MessageOut:
@@ -102,8 +96,6 @@ class ChatService:
                 "mime_type": att.mime_type,
                 "duration_seconds": att.duration_seconds,
             })
-
-        # Обновляем last_message_at и last_user_message_at (если отправитель — владелец)
         chat.last_message_at = datetime.now(timezone.utc)
         if chat.user_id == sender_id:
             chat.last_user_message_at = chat.last_message_at
@@ -184,8 +176,6 @@ class ChatService:
         await self.session.delete(rxn)
         await self.session.commit()
 
-    # --- Операторские действия ---
-
     async def operator_take_chat(self, chat_id: int) -> None:
         chat = await self.chat_repo.get_by_id(chat_id)
         if chat is None:
@@ -201,8 +191,6 @@ class ChatService:
         chat.bot_active = True
         chat.bot_no_count = 0
         await self.session.commit()
-
-    # --- Внутренние ---
 
     async def _get_chat_or_403(self, chat_id: int, user_id: int) -> Chat:
         chat = await self.chat_repo.get_by_id(chat_id)
@@ -226,8 +214,6 @@ class ChatService:
         sender_name = user.full_name if user else None
         return _build_message(msg, user, atts, rxns)
 
-
-# --- Вспомогательные функции ---
 
 def _to_chat_out(chat: Chat) -> ChatOut:
     return ChatOut(

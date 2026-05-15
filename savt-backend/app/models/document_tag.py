@@ -7,9 +7,11 @@ from app.database import Base
 class DocumentTag(Base):
     __tablename__ = "document_tags"
 
+    # ид документа
     document_id: Mapped[int] = mapped_column(
         ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True
     )
+    # ид тега
     tag_id: Mapped[int] = mapped_column(
         ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True
     )

@@ -42,7 +42,6 @@ class ChatRepository:
         return list(result.scalars().all())
 
     async def list_for_operator(self) -> list[Chat]:
-        """Все cabinet-чаты + открытые support-чаты."""
         from sqlalchemy import or_
         result = await self.session.execute(
             select(Chat)
@@ -98,7 +97,6 @@ class MessageRepository:
         before_id: int | None = None,
         limit: int = 30,
     ) -> list[tuple]:
-        """Возвращает (Message, User) — от новых к старым."""
         stmt = (
             select(Message, User)
             .join(User, User.id == Message.sender_id)
@@ -133,7 +131,6 @@ class MessageRepository:
         return mapping
 
     async def mark_read(self, chat_id: int, reader_id: int) -> None:
-        """Отмечает все чужие непрочитанные сообщения как прочитанные."""
         from sqlalchemy import update
         await self.session.execute(
             update(Message)
