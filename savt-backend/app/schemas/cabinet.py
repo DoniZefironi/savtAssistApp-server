@@ -3,14 +3,14 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class CabinetCreateIn(BaseModel):
-    type: str = Field(..., max_length=100)
-    object_number: str = Field(..., max_length=100)
-    description: str | None = None
+    type: str = Field(..., min_length=1, max_length=100)
+    object_number: str = Field(..., min_length=1, max_length=100)
+    description: str | None = Field(None, max_length=2000)
     warranty_starts_at: datetime
     warranty_ends_at: datetime
-    admin_internal_name: str | None = Field(None, max_length=200)
-    admin_comment: str | None = None
-    purpose: str | None = Field(None, max_length=200)
+    admin_internal_name: str | None = Field(None, min_length=1, max_length=200)
+    admin_comment: str | None = Field(None, max_length=2000)
+    purpose: str | None = Field(None, min_length=1, max_length=200)
 
     @model_validator(mode="after")
     def validate_warranty_dates(self) -> "CabinetCreateIn":
@@ -20,14 +20,14 @@ class CabinetCreateIn(BaseModel):
 
 
 class CabinetUpdateIn(BaseModel):
-    type: str | None = Field(None, max_length=100)
-    object_number: str | None = Field(None, max_length=100)
-    description: str | None = None
+    type: str | None = Field(None, min_length=1, max_length=100)
+    object_number: str | None = Field(None, min_length=1, max_length=100)
+    description: str | None = Field(None, max_length=2000)
     warranty_starts_at: datetime | None = None
     warranty_ends_at: datetime | None = None
-    admin_internal_name: str | None = Field(None, max_length=200)
-    admin_comment: str | None = None
-    purpose: str | None = Field(None, max_length=200)
+    admin_internal_name: str | None = Field(None, min_length=1, max_length=200)
+    admin_comment: str | None = Field(None, max_length=2000)
+    purpose: str | None = Field(None, min_length=1, max_length=200)
 
 
 class CabinetOut(BaseModel):

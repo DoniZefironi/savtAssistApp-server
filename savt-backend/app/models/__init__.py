@@ -25,6 +25,10 @@ from app.models.device_token import DeviceToken
 from app.models.notification_settings import NotificationSettings
 from app.models.audit_log import AuditLog
 from app.models.notification import Notification
+from app.models.document_tag import DocumentTag
+from app.models.kb_article_tag import KbArticleTag
+from app.models.kb_article_attachment import KbArticleAttachment
+from app.models.user_favorite import UserFavorite
 
 __all__ = [
     "Role", "User", "RefreshToken", "PhoneVerificationCode",
@@ -34,4 +38,5 @@ __all__ = [
     "Chat", "Message", "MessageAttachment", "MessageReaction",
     "Tag", "KbCategory", "KbArticle", "FaqCategory", "FaqEntry",
     "DeviceToken", "NotificationSettings", "AuditLog", "Notification",
+    "DocumentTag", "KbArticleTag", "KbArticleAttachment", "UserFavorite",
 ]

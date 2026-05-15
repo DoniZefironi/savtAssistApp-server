@@ -42,7 +42,7 @@ class UserCabinetService:
                 object_number=cab.object_number,
                 warranty_ends_at=cab.warranty_ends_at,
                 warranty_status=_warranty_status(cab.warranty_ends_at),
-                custom_name=uc.custom_name or cab.admin_internal_name,
+                custom_name=uc.custom_name or cab.admin_internal_name or cab.object_number,
                 is_primary=uc.is_primary,
                 unread_count=unread.get(cab.id, 0),
             )
@@ -64,7 +64,7 @@ class UserCabinetService:
             warranty_starts_at=cab.warranty_starts_at,
             warranty_ends_at=cab.warranty_ends_at,
             warranty_status=_warranty_status(cab.warranty_ends_at),
-            custom_name=uc.custom_name or cab.admin_internal_name,
+            custom_name=uc.custom_name or cab.admin_internal_name or cab.object_number,
             custom_comment=uc.custom_comment,
             is_primary=uc.is_primary,
         )
