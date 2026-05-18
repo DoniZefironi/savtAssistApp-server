@@ -1679,6 +1679,103 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 
 ---
 
+## Рут `admin: faq` — часто задаваемые вопросы (администратор/оператор)
+
+### POST `/admin/faq/categories`
+Создать категорию FAQ.
+```json
+{
+  "name": "Гарантия",
+  "parent_id": null,
+  "sort_order": 0
+}
+```
+
+---
+
+### GET `/admin/faq/categories`
+Список всех категорий.
+
+---
+
+### PATCH `/admin/faq/categories/{cat_id}`
+Обновить категорию (все поля опциональны).
+
+---
+
+### DELETE `/admin/faq/categories/{cat_id}`
+Удалить категорию. Только для администратора.
+
+---
+
+### POST `/admin/faq/entries`
+Создать вопрос и ответ сразу.
+```json
+{
+  "category_id": 1,
+  "question": "Как продлить гарантию?",
+  "answer": "Для продления гарантии обратитесь к оператору через чат поддержки."
+}
+```
+`question` — минимум 5 символов. `answer` — минимум 1 символ.
+
+---
+
+### GET `/admin/faq/entries`
+Список вопросов. Параметры: `category_id`, `search`, `page`, `size`.
+
+---
+
+### PATCH `/admin/faq/entries/{entry_id}`
+Обновить вопрос и/или ответ (передавать только изменённые поля).
+```json
+{ "answer": "Обновлённый ответ" }
+```
+
+---
+
+### DELETE `/admin/faq/entries/{entry_id}`
+Удалить вопрос. Только для администратора.
+
+---
+
+## Рут `faq` — FAQ для пользователя
+
+### GET `/faq/categories`
+Все категории FAQ.
+```json
+[
+  { "id": 1, "parent_id": null, "name": "Гарантия", "sort_order": 0 }
+]
+```
+
+---
+
+### GET `/faq/entries`
+Список вопросов. Параметры:
+- `category_id` — фильтр по категории
+- `search` — поиск по тексту вопроса
+- `page`, `size` — пагинация
+
+```json
+{
+  "items": [
+    {
+      "id": 1,
+      "category_id": 1,
+      "question": "Как продлить гарантию?",
+      "answer": "Для продления гарантии обратитесь к оператору через чат поддержки.",
+      "version": 1,
+      "created_at": "2026-05-18T10:00:00Z",
+      "updated_at": "2026-05-18T10:00:00Z"
+    }
+  ],
+  "total": 5, "page": 1, "size": 20, "pages": 1
+}
+```
+
+---
+
 ## Управление через CLI
 
 ```bash
