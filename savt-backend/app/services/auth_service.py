@@ -207,29 +207,6 @@ class AuthService:
         await self.session.commit()
         return access, refresh
 
-    # Вход для админа
-    async def loginAdmin(
-        self,
-        login: str,
-        password: str,
-        user_agent: str | None,
-        ip_address: str | None,
-    ) -> tuple[str, str]:
-        user = await self.user_repo.find_by_login(login)
-
-        # Проверяем пароль, сравниваем хэши
-        if user is None or not verify_password(password, user.hashed_password):
-            raise AuthenticationError("Неверный логин или пароль")
-
-        # Проверяем актиивность аккаунта, может в бане школьник
-        if not user.is_active:
-            raise AuthenticationError("Аккаунт заблокирован")
-
-        # Выдаем токен
-        access, refresh = await self._issue_tokens(user, user_agent, ip_address)
-        await self.session.commit()
-        return access, refresh
-
     # Обновление токена (как же не понятно по названию)
     async def refresh_tokens(
         self,
@@ -359,7 +336,7 @@ class AuthService:
         new_password_confirm: str
     ) -> None:
         if new_password != new_password_confirm:
-            raise ValueError("Новые пароли не совпадают")
+            raise InvalidCodeError("Новые пароли не совпадают")
 
         user = await self.user_repo.find_by_phone(phone)
         if user is None or not user.is_active or not user.is_phone_verified:
@@ -431,10 +408,10 @@ class AuthService:
             raise AuthenticationError("Неверный текущий пароль")
         
         if old_password == new_password:
-            raise ValueError("Новый пароль должен отличаться от предыдущего")
-        
+            raise InvalidCodeError("Новый пароль должен отличаться от предыдущего")
+
         if new_password != new_password_confirm:
-            raise ValueError("Новый пароль и подтверждение не совпадают")
+            raise InvalidCodeError("Новый пароль и подтверждение не совпадают")
 
         user.hashed_password = hash_password(new_password)
         await self.token_repo.revoke_all_for_user(user.id)

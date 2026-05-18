@@ -29,7 +29,7 @@ docker compose logs api --tail=20
 docker exec -it savt-backend-db-1 psql -U postgres -d savt
 # \dt — все таблицы
 # \d <таблица> — структура таблицы
-# Ctrl+Z — выход
+# \q — выход
 ```
 
 ---

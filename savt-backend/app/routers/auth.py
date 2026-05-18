@@ -112,23 +112,6 @@ async def login(
     )
     return TokenPairOut(access_token=access, refresh_token=refresh)
 
-# Вход админа
-@router.post("/admin/login", response_model=TokenPairOut)
-async def loginAdmin(
-    payload: AdminLoginIn,
-    request: Request,
-    session: AsyncSession = Depends(get_session),
-):
-    user_agent, ip = _client_info(request)
-    service = AuthService(session)
-    access, refresh = await service.loginAdmin(
-        login=payload.login,
-        password=payload.password,
-        user_agent=user_agent,
-        ip_address=ip,
-    )
-    return TokenPairOut(access_token=access, refresh_token=refresh)
-
 # Обновление токенов
 @router.post("/refresh", response_model=TokenPairOut)
 async def refresh(
