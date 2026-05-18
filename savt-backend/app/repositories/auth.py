@@ -107,3 +107,22 @@ class RefreshTokenRepository:
             )
             .values(revoked_at=now)
         )
+
+    async def trim_sessions(self, user_id: int, max_sessions: int = 5) -> None:
+        """Отзывает старейшие токены если активных сессий больше max_sessions."""
+        now = datetime.now(timezone.utc)
+        result = await self.session.execute(
+            select(RefreshToken)
+            .where(
+                RefreshToken.user_id == user_id,
+                RefreshToken.revoked_at.is_(None),
+                RefreshToken.expires_at > now,
+            )
+            .order_by(RefreshToken.created_at.asc())
+        )
+        active = result.scalars().all()
+        if len(active) >= max_sessions:
+            to_revoke = active[: len(active) - max_sessions + 1]
+            for token in to_revoke:
+                token.revoked_at = now
+            await self.session.flush()

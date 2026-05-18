@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
+from app.config import settings
 from app.core.exceptions import (
     AlreadyExistsError,
     AuthenticationError,
@@ -26,15 +27,18 @@ from app.routers import tags as tags_router
 from app.routers import chats as chats_router
 from app.routers import operator as operator_router
 from app.routers import service_requests as service_requests_router
+from app.routers import notifications as notifications_router
 from app.routers import cabinets as cabinets_router
 from app.routers import upload as upload_router
 from app.services.sms_service import SmsSendError
+from app.core.firebase import init_firebase
 
 # Управление жизненным циклом приложения, проверяет подключение к бд и закрывает соединение с бд
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.connect() as conn:
         await conn.execute(text("SELECT 1"))
+    init_firebase(settings.firebase_credentials_path)
     yield
     await engine.dispose()
 
@@ -94,6 +98,7 @@ app.include_router(tags_router.router)
 app.include_router(chats_router.router)
 app.include_router(operator_router.router)
 app.include_router(service_requests_router.router)
+app.include_router(notifications_router.router)
 app.include_router(cabinets_router.router)
 app.include_router(upload_router.router)
 app.mount("/static", StaticFiles(directory="/code/uploads"), name="static")

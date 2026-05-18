@@ -1014,6 +1014,97 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 
 ---
 
+## Рут `notifications` — уведомления
+
+### GET `/notifications`
+Список уведомлений текущего пользователя. Параметры: `is_read=true|false`, `page`, `size`.
+
+```json
+{
+  "items": [
+    {
+      "id": 1,
+      "type": "request_status",
+      "title": "Заявка одобрена",
+      "body": "Ваш ШУ был успешно добавлен",
+      "data": { "cabinet_id": 5 },
+      "is_read": false,
+      "created_at": "2026-05-15T10:00:00Z"
+    }
+  ],
+  "total": 3, "page": 1, "size": 20, "pages": 1
+}
+```
+
+Типы уведомлений (`type`):
+- `chat_message` — новое сообщение от оператора/бота
+- `request_status` — изменился статус заявки (ШУ, документ, сервисная)
+- `warranty_expiring` — гарантия истекает через 30/10/1 день
+- `promotional` — рекламное сообщение от администратора
+
+---
+
+### POST `/notifications/{notif_id}/read`
+Отметить одно уведомление как прочитанное. `204 No Content`.
+
+---
+
+### POST `/notifications/read-all`
+Отметить все уведомления пользователя как прочитанные. `204 No Content`.
+
+---
+
+### GET `/notifications/settings`
+Настройки уведомлений пользователя.
+```json
+{
+  "chat_messages": true,
+  "promotional": false,
+  "warranty_expiring": true,
+  "request_status_change": true
+}
+```
+
+---
+
+### PATCH `/notifications/settings`
+Изменить настройки. Передавать только те поля которые нужно поменять.
+```json
+{ "promotional": true }
+```
+
+---
+
+### POST `/device-tokens`
+Зарегистрировать FCM-токен устройства для получения push-уведомлений. Вызывается после логина или при обновлении токена.
+```json
+{
+  "token": "fcm-device-token-here",
+  "platform": "android"
+}
+```
+`platform`: `android` или `ios`. `204 No Content`.
+
+---
+
+### DELETE `/device-tokens/{token}`
+Удалить FCM-токен устройства. Вызывается при логауте чтобы устройство перестало получать push. `204 No Content`.
+
+---
+
+### POST `/admin/notifications/broadcast`
+Разослать promotional уведомление. Только для администратора.
+```json
+{
+  "title": "Новое обновление",
+  "body": "Доступна новая версия документации",
+  "role": null
+}
+```
+- `role` — если `null`, рассылка всем активным пользователям. Если указать `"user"`, `"operator"` или `"admin"` — только по этой роли.
+
+---
+
 ## Управление через CLI
 
 ```bash
