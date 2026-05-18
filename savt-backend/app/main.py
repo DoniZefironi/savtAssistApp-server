@@ -30,6 +30,8 @@ from app.routers import service_requests as service_requests_router
 from app.routers import notifications as notifications_router
 from app.routers import admin_kb as admin_kb_router
 from app.routers import kb as kb_router
+from app.routers import admin_faq as admin_faq_router
+from app.routers import faq as faq_router
 from app.routers import cabinets as cabinets_router
 from app.routers import upload as upload_router
 from app.services.sms_service import SmsSendError
@@ -103,6 +105,8 @@ app.include_router(service_requests_router.router)
 app.include_router(notifications_router.router)
 app.include_router(admin_kb_router.router)
 app.include_router(kb_router.router)
+app.include_router(admin_faq_router.router)
+app.include_router(faq_router.router)
 app.include_router(cabinets_router.router)
 app.include_router(upload_router.router)
 app.mount("/static", StaticFiles(directory="/code/uploads"), name="static")
