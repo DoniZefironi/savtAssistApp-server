@@ -3,7 +3,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user, get_session
 from app.models.user import User
-from app.repositories.user import UserRepository
 from app.schemas.auth import (
     AdminLoginIn,
     ChangePhoneCompleteIn,

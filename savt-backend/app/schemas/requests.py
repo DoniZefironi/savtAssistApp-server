@@ -32,12 +32,12 @@ class ShareRequestOut(BaseModel):
 
 
 class ApproveAdditionIn(BaseModel):
-    cabinet_id: int
+    cabinet_id: int = Field(..., gt=0)
     admin_response: str | None = Field(None, min_length=1, max_length=1000)
 
 
 class RejectRequestIn(BaseModel):
-    admin_response: str = Field(..., min_length=1)
+    admin_response: str = Field(..., min_length=1, max_length=1000)
 
 
 class ApproveShareIn(BaseModel):

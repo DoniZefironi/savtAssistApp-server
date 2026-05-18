@@ -1,6 +1,7 @@
 from datetime import datetime
 from pydantic import BaseModel, Field
 
+
 from app.schemas.tags import TagOut
 
 
@@ -45,8 +46,8 @@ class PhotoOut(BaseModel):
 
 
 class PhotoUpdateIn(BaseModel):
-    caption: str | None = None
-    sort_order: int | None = None
+    caption: str | None = Field(None, max_length=500)
+    sort_order: int | None = Field(None, ge=0, le=9999)
 
 
 class DocumentRequestCreateIn(BaseModel):
@@ -72,4 +73,4 @@ class ApproveDocumentRequestIn(BaseModel):
 
 
 class RejectDocumentRequestIn(BaseModel):
-    admin_response: str = Field(..., min_length=1)
+    admin_response: str = Field(..., min_length=1, max_length=1000)

@@ -397,16 +397,16 @@ class AuthService:
     
     # смена пароля
     async def change_password(
-            self, 
-            user: User, 
-            old_password: str, 
-            new_password: str, 
+            self,
+            user: User,
+            old_password: str,
+            new_password: str,
             new_password_confirm: str
             ) -> None:
-        
+
         if not verify_password(old_password, user.hashed_password):
             raise AuthenticationError("Неверный текущий пароль")
-        
+
         if old_password == new_password:
             raise InvalidCodeError("Новый пароль должен отличаться от предыдущего")
 

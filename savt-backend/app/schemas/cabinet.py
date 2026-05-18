@@ -29,6 +29,13 @@ class CabinetUpdateIn(BaseModel):
     admin_comment: str | None = Field(None, max_length=2000)
     purpose: str | None = Field(None, min_length=1, max_length=200)
 
+    @model_validator(mode="after")
+    def validate_warranty_dates(self) -> "CabinetUpdateIn":
+        s, e = self.warranty_starts_at, self.warranty_ends_at
+        if s is not None and e is not None and e <= s:
+            raise ValueError("Дата окончания гарантии должна быть позже даты начала")
+        return self
+
 
 class CabinetOut(BaseModel):
     id: int
@@ -86,7 +93,7 @@ class UserCabinetDetailOut(BaseModel):
 
 class UserCabinetPatchIn(BaseModel):
     custom_name: str | None = Field(None, min_length=1, max_length=200)
-    custom_comment: str | None = None
+    custom_comment: str | None = Field(None, max_length=2000)
 
 
 class AddByQrIn(BaseModel):
