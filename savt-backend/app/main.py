@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -36,6 +37,7 @@ from app.routers import cabinets as cabinets_router
 from app.routers import upload as upload_router
 from app.services.sms_service import SmsSendError
 from app.core.firebase import init_firebase
+from app.services.warranty_scheduler import check_warranty_expiry
 
 # Управление жизненным циклом приложения, проверяет подключение к бд и закрывает соединение с бд
 @asynccontextmanager
@@ -43,7 +45,14 @@ async def lifespan(app: FastAPI):
     async with engine.connect() as conn:
         await conn.execute(text("SELECT 1"))
     init_firebase(settings.firebase_credentials_path)
+
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(check_warranty_expiry, "cron", hour=9, minute=0)
+    scheduler.start()
+
     yield
+
+    scheduler.shutdown()
     await engine.dispose()
 
 # Создание приложения с названием SAVT Assist API и привязка к lifespan

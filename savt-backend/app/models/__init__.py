@@ -29,6 +29,7 @@ from app.models.document_tag import DocumentTag
 from app.models.kb_article_tag import KbArticleTag
 from app.models.kb_article_attachment import KbArticleAttachment
 from app.models.user_favorite import UserFavorite
+from app.models.warranty_notif_log import WarrantyNotifLog
 
 __all__ = [
     "Role", "User", "RefreshToken", "PhoneVerificationCode",
@@ -39,4 +40,5 @@ __all__ = [
     "Tag", "KbCategory", "KbArticle", "FaqCategory", "FaqEntry",
     "DeviceToken", "NotificationSettings", "AuditLog", "Notification",
     "DocumentTag", "KbArticleTag", "KbArticleAttachment", "UserFavorite",
+    "WarrantyNotifLog",
 ]
