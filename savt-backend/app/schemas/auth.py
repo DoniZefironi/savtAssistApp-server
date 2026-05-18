@@ -24,7 +24,7 @@ class RegisterStartIn(BaseModel):
     phone: str = Field(...)
     password: str = Field(..., min_length=8, max_length=100)
     password_confirm: str = Field(..., min_length=8, max_length=100)
-    full_name: str = Field(..., max_length=200)
+    full_name: str = Field(..., min_length=1, max_length=200)
     user_type: str = Field(...)
     organization_name: str | None = Field(None)
 

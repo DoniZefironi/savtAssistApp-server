@@ -106,7 +106,7 @@ class AdminDocumentService:
         return PhotoOut.model_validate(photo)
 
     async def list_photos(
-        self, cabinet_id: int, page: int = 1, size: int = 50
+        self, cabinet_id: int | None, page: int = 1, size: int = 50
     ) -> PageOut[PhotoOut]:
         items, total = await self.photo_repo.list_all(
             cabinet_id=cabinet_id, offset=(page - 1) * size, limit=size
