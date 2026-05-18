@@ -150,6 +150,43 @@ class PasswordResetCompleteIn(BaseModel):
             raise ValueError('Пароли не совпадают')
         return self
     
+# Редактирование профиля
+class UpdateProfileIn(BaseModel):
+    full_name: str | None = Field(None, min_length=1, max_length=200)
+    email: str | None = Field(None, max_length=100)
+    organization_name: str | None = Field(None, min_length=1, max_length=255)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        import re
+        if not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', v):
+            raise ValueError("Некорректный email")
+        return v.lower()
+
+
+# Смена номера телефона
+class ChangePhoneStartIn(BaseModel):
+    new_phone: str
+
+    @field_validator("new_phone")
+    @classmethod
+    def validate_phone(cls, v: str) -> str:
+        return _normalize_phone(v)
+
+
+class ChangePhoneCompleteIn(BaseModel):
+    new_phone: str
+    code: str = Field(..., min_length=6, max_length=6)
+
+    @field_validator("new_phone")
+    @classmethod
+    def validate_phone(cls, v: str) -> str:
+        return _normalize_phone(v)
+
+
 # смена пароля
 class PasswordChange(BaseModel):
     password: str = Field(..., min_length=8, max_length=100)

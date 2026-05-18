@@ -17,8 +17,8 @@ class KbArticle(Base):
     title: Mapped[str] = mapped_column(String(500), index=True)
     # юрл идентификатор
     slug: Mapped[str] = mapped_column(String(500), unique=True)
-    # содержимое
-    content: Mapped[str] = mapped_column(Text)
+    # краткое описание (опционально)
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)
     # номер версии
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     # опубликована
