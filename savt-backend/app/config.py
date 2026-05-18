@@ -24,5 +24,8 @@ class Settings(BaseSettings):
     sms_by_alphaname: str = ""
     sms_by_base_url: str = "https://app.sms.by/api/v1"
 
+    # Firebase
+    firebase_credentials_path: str = ""
+
 
 settings = Settings()

@@ -171,6 +171,8 @@ class AuthService:
         if role is None or role.name not in (RoleName.ADMIN.value, RoleName.OPERATOR.value):
             raise AuthenticationError("Недостаточно прав для входа через этот endpoint")
 
+        await self.token_repo.trim_sessions(user.id, max_sessions=5)
+
         access, refresh = await self._issue_tokens(user, user_agent, ip_address)
         await self.session.commit()
         return access, refresh
@@ -196,11 +198,14 @@ class AuthService:
         if not user.is_phone_verified:
             raise AuthenticationError("Телефон не подтверждён")
 
+        # Убираем старейшие сессии если их больше 5
+        await self.token_repo.trim_sessions(user.id, max_sessions=5)
+
         # Выдаем токен
         access, refresh = await self._issue_tokens(user, user_agent, ip_address)
         await self.session.commit()
         return access, refresh
-    
+
     # Вход для админа
     async def loginAdmin(
         self,
