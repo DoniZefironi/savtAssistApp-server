@@ -3,7 +3,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user, get_session
 from app.models.user import User
-from app.repositories.user import UserRepository
 from app.schemas.auth import (
     AdminLoginIn,
     ChangePhoneCompleteIn,
@@ -106,23 +105,6 @@ async def login(
     service = AuthService(session)
     access, refresh = await service.login(
         phone=payload.phone,
-        password=payload.password,
-        user_agent=user_agent,
-        ip_address=ip,
-    )
-    return TokenPairOut(access_token=access, refresh_token=refresh)
-
-# Вход админа
-@router.post("/admin/login", response_model=TokenPairOut)
-async def loginAdmin(
-    payload: AdminLoginIn,
-    request: Request,
-    session: AsyncSession = Depends(get_session),
-):
-    user_agent, ip = _client_info(request)
-    service = AuthService(session)
-    access, refresh = await service.loginAdmin(
-        login=payload.login,
         password=payload.password,
         user_agent=user_agent,
         ip_address=ip,
