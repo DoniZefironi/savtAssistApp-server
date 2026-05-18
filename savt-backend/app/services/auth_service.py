@@ -30,6 +30,7 @@ _DEFAULT_USER_ROLE_ID = 1
 
 PURPOSE_REGISTRATION = "registration"
 PURPOSE_PASSWORD_RESET = "password_reset"
+PURPOSE_PHONE_CHANGE = "phone_change"
 
 
 class AuthService:
@@ -434,9 +435,70 @@ class AuthService:
         
         if new_password != new_password_confirm:
             raise ValueError("Новый пароль и подтверждение не совпадают")
-        
+
         user.hashed_password = hash_password(new_password)
-
         await self.token_repo.revoke_all_for_user(user.id)
+        await self.session.commit()
 
+    # Обновление профиля
+    async def update_profile(
+        self,
+        user: User,
+        full_name: str | None,
+        email: str | None,
+        organization_name: str | None,
+    ) -> User:
+        if full_name is not None:
+            user.full_name = full_name
+        if email is not None:
+            user.email = email
+        if organization_name is not None:
+            user.organization_name = organization_name
+        await self.session.commit()
+        return user
+
+    # Смена номера — шаг 1: код на новый номер
+    async def change_phone_start(self, user: User, new_phone: str) -> int:
+        if user.phone == new_phone:
+            raise AlreadyExistsError("Это уже ваш текущий номер")
+        existing = await self.user_repo.find_by_phone(new_phone)
+        if existing is not None:
+            raise AlreadyExistsError("Этот номер уже занят другим пользователем")
+        latest = await self.code_repo.find_latest(new_phone, PURPOSE_PHONE_CHANGE)
+        cooldown = settings.sms_code_resend_cooldown_seconds
+        if latest is not None:
+            elapsed = (datetime.now(timezone.utc) - latest.created_at).total_seconds()
+            if elapsed < cooldown:
+                raise RateLimitError(
+                    f"Повторная отправка возможна через {int(cooldown - elapsed)} сек."
+                )
+        code = generate_sms_code()
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.sms_code_ttl_minutes)
+        await self.code_repo.create(
+            phone=new_phone,
+            code_hash=hash_token(code),
+            purpose=PURPOSE_PHONE_CHANGE,
+            expires_at=expires_at,
+            max_attempts=settings.sms_code_max_attempts,
+        )
+        await sms_service.send_verification_code(new_phone, code)
+        await self.session.commit()
+        return cooldown
+
+    # Смена номера — шаг 2: подтвердить и сменить
+    async def change_phone_complete(self, user: User, new_phone: str, code: str) -> None:
+        existing = await self.user_repo.find_by_phone(new_phone)
+        if existing is not None:
+            raise AlreadyExistsError("Этот номер уже занят другим пользователем")
+        active_code = await self.code_repo.find_active(new_phone, PURPOSE_PHONE_CHANGE)
+        if active_code is None:
+            raise InvalidCodeError("Код не найден или истёк")
+        if active_code.attempts >= active_code.max_attempts:
+            raise InvalidCodeError("Превышено число попыток. Запросите новый код")
+        if hash_token(code) != active_code.code_hash:
+            await self.code_repo.increment_attempts(active_code)
+            await self.session.commit()
+            raise InvalidCodeError("Неверный код")
+        await self.code_repo.mark_used(active_code)
+        user.phone = new_phone
         await self.session.commit()

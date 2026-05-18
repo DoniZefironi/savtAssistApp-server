@@ -5,20 +5,23 @@ from app.core.dependencies import get_current_user, get_session
 from app.models.user import User
 from app.repositories.user import UserRepository
 from app.schemas.auth import (
+    AdminLoginIn,
+    ChangePhoneCompleteIn,
+    ChangePhoneStartIn,
     LoginIn,
     LogoutIn,
+    PasswordChange,
+    PasswordResetCompleteIn,
+    PasswordResetStartIn,
+    PasswordResetStartOut,
     RefreshIn,
     RegisterCompleteIn,
     RegisterStartIn,
     RegisterStartOut,
     ResendCodeIn,
     TokenPairOut,
+    UpdateProfileIn,
     UserMeOut,
-    PasswordResetCompleteIn,
-    PasswordResetStartIn,
-    PasswordResetStartOut,
-    PasswordChange,
-    AdminLoginIn
 )
 from app.services.auth_service import AuthService
 from app.models.role import Role
@@ -202,9 +205,56 @@ async def change_password(
 ):
     service = AuthService(session)
     await service.change_password(
-        user = current_user,
-        old_password = payload.password,
-        new_password = payload.new_password,
-        new_password_confirm = payload.new_password_confirm
+        user=current_user,
+        old_password=payload.password,
+        new_password=payload.new_password,
+        new_password_confirm=payload.new_password_confirm,
     )
-    return {"message": "Пароль успешно сохранен"}
+    return {"message": "Пароль успешно сохранён"}
+
+# Редактирование профиля
+@router.patch("/me", response_model=UserMeOut)
+async def update_profile(
+    payload: UpdateProfileIn,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    service = AuthService(session)
+    user = await service.update_profile(
+        user=current_user,
+        full_name=payload.full_name,
+        email=payload.email,
+        organization_name=payload.organization_name,
+    )
+    role = await session.get(Role, user.role_id)
+    return UserMeOut(
+        id=user.id,
+        phone=user.phone,
+        full_name=user.full_name,
+        role=role.name if role else "user",
+        is_phone_verified=user.is_phone_verified,
+        email=user.email,
+        user_type=user.user_type,
+        organization_name=user.organization_name,
+    )
+
+# Смена номера телефона — запрос кода
+@router.post("/change-phone/start", response_model=RegisterStartOut)
+async def change_phone_start(
+    payload: ChangePhoneStartIn,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    service = AuthService(session)
+    cooldown = await service.change_phone_start(current_user, payload.new_phone)
+    return RegisterStartOut(resend_after_seconds=cooldown)
+
+# Смена номера телефона — подтверждение
+@router.post("/change-phone/complete", status_code=status.HTTP_204_NO_CONTENT)
+async def change_phone_complete(
+    payload: ChangePhoneCompleteIn,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    service = AuthService(session)
+    await service.change_phone_complete(current_user, payload.new_phone, payload.code)
