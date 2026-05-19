@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleName
-from app.core.dependencies import get_session, require_role
+from app.core.dependencies import get_role_from_token, get_session, require_role
 from app.models.user import User
 from app.schemas.documents import (
     ApproveDocumentRequestIn,
@@ -24,7 +24,8 @@ async def create_document(
     cabinet_id: str = Form(...),
     title: str | None = Form(None),
     requires_approval: bool = Form(False),
-    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    actor: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):
     if not cabinet_id or not cabinet_id.strip().isdigit():
@@ -34,6 +35,8 @@ async def create_document(
         cabinet_id=int(cabinet_id),
         title=title.strip() or None if title else None,
         requires_approval=requires_approval,
+        actor_id=actor.id,
+        actor_role=actor_role,
     )
 
 # Все документы
@@ -58,14 +61,15 @@ async def list_documents(
         page=page, size=size,
     )
 
-# Удалить
+# Удалить документ
 @router.delete("/admin/documents/{doc_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_document(
     doc_id: int,
-    _: User = Depends(require_role(RoleName.ADMIN)),
+    actor: User = Depends(require_role(RoleName.ADMIN)),
+    actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):
-    await AdminDocumentService(session).delete_document(doc_id)
+    await AdminDocumentService(session).delete_document(doc_id, actor.id, actor_role)
 
 # Загрузить фото
 @router.post("/admin/photos", response_model=PhotoOut, status_code=status.HTTP_201_CREATED)
@@ -107,7 +111,7 @@ async def update_photo(
 ):
     return await AdminDocumentService(session).update_photo(photo_id, payload)
 
-# Удалить
+# Удалить фото
 @router.delete("/admin/photos/{photo_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_photo(
     photo_id: int,
@@ -132,17 +136,19 @@ async def list_document_requests(
 async def approve_document_request(
     request_id: int,
     payload: ApproveDocumentRequestIn,
-    admin: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    actor: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):
-    await AdminDocumentService(session).approve_request(request_id, payload, admin.id)
+    await AdminDocumentService(session).approve_request(request_id, payload, actor.id, actor_role)
 
 # Отклонить
 @router.post("/admin/document-requests/{request_id}/reject", status_code=status.HTTP_204_NO_CONTENT)
 async def reject_document_request(
     request_id: int,
     payload: RejectDocumentRequestIn,
-    admin: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    actor: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):
-    await AdminDocumentService(session).reject_request(request_id, payload, admin.id)
+    await AdminDocumentService(session).reject_request(request_id, payload, actor.id, actor_role)

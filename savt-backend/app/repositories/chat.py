@@ -99,7 +99,7 @@ class MessageRepository:
     ) -> list[tuple]:
         stmt = (
             select(Message, User)
-            .join(User, User.id == Message.sender_id)
+            .outerjoin(User, User.id == Message.sender_id)
             .where(Message.chat_id == chat_id)
         )
         if before_id is not None:

@@ -2,6 +2,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
 from app.repositories.notification import DeviceTokenRepository, NotificationRepository
+from app.services.audit_service import AuditLogger
 from app.schemas.notifications import (
     BroadcastIn,
     DeviceTokenIn,
@@ -18,6 +19,7 @@ class NotificationService:
         self.session = session
         self.repo = NotificationRepository(session)
         self.device_repo = DeviceTokenRepository(session)
+        self.audit = AuditLogger(session)
 
     async def send(
         self,
@@ -99,7 +101,7 @@ class NotificationService:
             raise NotFoundError("Токен не найден")
         await self.session.commit()
 
-    async def broadcast(self, data: BroadcastIn) -> None:
+    async def broadcast(self, data: BroadcastIn, actor_id: int = 0, actor_role: str = "admin") -> None:
         """Рассылка promotional уведомления всем или по роли."""
         user_ids = await self.repo.get_all_user_ids(data.role)
         for user_id in user_ids:
@@ -110,6 +112,8 @@ class NotificationService:
                 body=data.body,
                 data={},
             )
+        self.audit.log("notification.broadcast", "notification", None, actor_id, actor_role,
+                       {"title": data.title, "role": data.role, "recipients": len(user_ids)})
         await self.session.commit()
 
         for user_id in user_ids:

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleName
-from app.core.dependencies import get_current_user, get_session, require_role
+from app.core.dependencies import get_current_user, get_role_from_token, get_session, require_role
 from app.models.user import User
 from app.schemas.notifications import (
     BroadcastIn,
@@ -85,7 +85,8 @@ async def remove_device(
 @router.post("/admin/notifications/broadcast", status_code=status.HTTP_204_NO_CONTENT)
 async def broadcast(
     payload: BroadcastIn,
-    _: User = Depends(require_role(RoleName.ADMIN)),
+    actor: User = Depends(require_role(RoleName.ADMIN)),
+    actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):
-    await NotificationService(session).broadcast(payload)
+    await NotificationService(session).broadcast(payload, actor.id, actor_role)

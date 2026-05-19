@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
@@ -29,6 +30,7 @@ from app.routers import chats as chats_router
 from app.routers import operator as operator_router
 from app.routers import service_requests as service_requests_router
 from app.routers import notifications as notifications_router
+from app.routers import admin_audit as admin_audit_router
 from app.routers import admin_kb as admin_kb_router
 from app.routers import kb as kb_router
 from app.routers import admin_faq as admin_faq_router
@@ -57,6 +59,16 @@ async def lifespan(app: FastAPI):
 
 # Создание приложения с названием SAVT Assist API и привязка к lifespan
 app = FastAPI(title="SAVT Assist API", lifespan=lifespan)
+
+# CORS — разрешаем запросы с веб-версии
+_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Обработка исключений
 
@@ -112,6 +124,7 @@ app.include_router(chats_router.router)
 app.include_router(operator_router.router)
 app.include_router(service_requests_router.router)
 app.include_router(notifications_router.router)
+app.include_router(admin_audit_router.router)
 app.include_router(admin_kb_router.router)
 app.include_router(kb_router.router)
 app.include_router(admin_faq_router.router)

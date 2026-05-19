@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleName
-from app.core.dependencies import get_session, require_role
+from app.core.dependencies import get_role_from_token, get_session, require_role
 from app.models.user import User
 from app.schemas.admin_users import (
     AdminUserDetailOut,
@@ -33,42 +33,40 @@ async def list_users(
 @router.get("/admin/users/{user_id}", response_model=AdminUserDetailOut)
 async def get_user(
     user_id: int,
-    admin: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
-    service = AdminUserService(session)
-    return await service.get_user_detail(user_id)
+    return await AdminUserService(session).get_user_detail(user_id)
 
 # Забанить
 @router.post("/admin/users/{user_id}/ban", status_code=status.HTTP_204_NO_CONTENT)
 async def ban_user(
     user_id: int,
     payload: BanUserIn,
-    admin: User = Depends(require_role(RoleName.ADMIN)),
+    actor: User = Depends(require_role(RoleName.ADMIN)),
+    actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):
-    service = AdminUserService(session)
-    await service.ban_user(user_id, payload.reason, admin.id)
+    await AdminUserService(session).ban_user(user_id, payload.reason, actor.id, actor_role)
 
 # Разбанить
 @router.post("/admin/users/{user_id}/unban", status_code=status.HTTP_204_NO_CONTENT)
 async def unban_user(
     user_id: int,
-    admin: User = Depends(require_role(RoleName.ADMIN)),
+    actor: User = Depends(require_role(RoleName.ADMIN)),
+    actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):
-    service = AdminUserService(session)
-    await service.unban_user(user_id, admin.id)
+    await AdminUserService(session).unban_user(user_id, actor.id, actor_role)
 
 # Все пользователи подвязанные к шкафу
 @router.get("/admin/cabinets/{cabinet_id}/users", response_model=list[CabinetUserOut])
 async def list_cabinet_users(
     cabinet_id: int,
-    admin: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
-    service = AdminUserService(session)
-    return await service.list_cabinet_users(cabinet_id)
+    return await AdminUserService(session).list_cabinet_users(cabinet_id)
 
 # Удалить пользователя со шкафа
 @router.delete(
@@ -79,8 +77,8 @@ async def remove_user_from_cabinet(
     cabinet_id: int,
     user_id: int,
     payload: RemoveUserFromCabinetIn,
-    admin: User = Depends(require_role(RoleName.ADMIN)),
+    actor: User = Depends(require_role(RoleName.ADMIN)),
+    actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):
-    service = AdminUserService(session)
-    await service.remove_user_from_cabinet(cabinet_id, user_id, payload.reason, admin.id)
+    await AdminUserService(session).remove_user_from_cabinet(cabinet_id, user_id, payload.reason, actor.id, actor_role)

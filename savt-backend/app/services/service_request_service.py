@@ -12,6 +12,7 @@ from app.schemas.service_requests import (
     ServiceRequestOut,
     ServiceRequestStatusIn,
 )
+from app.services.audit_service import AuditLogger
 
 
 def _to_out(req, cabinet) -> ServiceRequestOut:
@@ -49,9 +50,9 @@ class ServiceRequestService:
         self.session = session
         self.repo = ServiceRequestRepository(session)
         self.user_cabinet_repo = UserCabinetRepository(session)
+        self.audit = AuditLogger(session)
 
     async def create(self, user_id: int, data: ServiceRequestCreateIn) -> ServiceRequestOut:
-        # Пользователь должен быть привязан к этому ШУ
         link = await self.user_cabinet_repo.find(user_id, data.cabinet_id)
         if link is None:
             raise PermissionDeniedError("У вас нет доступа к этому ШУ")
@@ -62,6 +63,9 @@ class ServiceRequestService:
             request_type=data.request_type,
             description=data.description,
         )
+        await self.session.flush()
+        self.audit.log("service_request.create", "service_request", req.id, user_id, "user",
+                       {"cabinet_id": data.cabinet_id, "type": data.request_type})
         await self.session.commit()
         await self.session.refresh(req)
 
@@ -86,18 +90,21 @@ class ServiceRequestService:
         return make_page([_to_detail(r, u, c) for r, u, c in rows], total, page, size)
 
     async def update_status(
-        self, req_id: int, data: ServiceRequestStatusIn
+        self, req_id: int, data: ServiceRequestStatusIn, actor_id: int = 0, actor_role: str = "admin"
     ) -> ServiceRequestDetailOut:
         req = await self.repo.get_by_id(req_id)
         if req is None:
             raise NotFoundError("Заявка не найдена")
 
+        old_status = req.status
         req.status = data.status
         if data.status == "closed":
             req.closed_at = datetime.now(timezone.utc)
         else:
             req.closed_at = None
 
+        self.audit.log("service_request.status_change", "service_request", req_id, actor_id, actor_role,
+                       {"old_status": old_status, "new_status": data.status})
         await self.session.commit()
         await self.session.refresh(req)
 

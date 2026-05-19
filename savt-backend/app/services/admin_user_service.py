@@ -97,21 +97,21 @@ class AdminUserService:
         )
 
     # Бан пользователя
-    async def ban_user(self, user_id: int, reason: str, actor_id: int) -> None:
+    async def ban_user(self, user_id: int, reason: str, actor_id: int, actor_role: str) -> None:
         user = await self.user_repo.get_by_id(user_id)
         if user is None:
             raise NotFoundError("Пользователь не найден")
         user.is_active = False
-        await self._log(actor_id, "user.ban", "user", user_id, {"reason": reason})
+        await self._log(actor_id, actor_role, "user.ban", "user", user_id, {"reason": reason})
         await self.session.commit()
 
     # Разбан пользователя
-    async def unban_user(self, user_id: int, actor_id: int) -> None:
+    async def unban_user(self, user_id: int, actor_id: int, actor_role: str) -> None:
         user = await self.user_repo.get_by_id(user_id)
         if user is None:
             raise NotFoundError("Пользователь не найден")
         user.is_active = True
-        await self._log(actor_id, "user.unban", "user", user_id, {})
+        await self._log(actor_id, actor_role, "user.unban", "user", user_id, {})
         await self.session.commit()
 
     # Все пользователи у шкафа
@@ -135,24 +135,25 @@ class AdminUserService:
 
     # удаление пользователя с ШУ
     async def remove_user_from_cabinet(
-        self, cabinet_id: int, user_id: int, reason: str, actor_id: int
+        self, cabinet_id: int, user_id: int, reason: str, actor_id: int, actor_role: str
     ) -> None:
         uc = await self.user_cabinet_repo.find(user_id, cabinet_id)
         if uc is None:
             raise NotFoundError("Пользователь не привязан к этому ШУ")
         await self.user_cabinet_repo.delete(uc)
         await self._log(
-            actor_id, "user_cabinet.remove", "user_cabinet", uc.id,
+            actor_id, actor_role, "user_cabinet.remove", "user_cabinet", uc.id,
             {"user_id": user_id, "cabinet_id": cabinet_id, "reason": reason},
         )
         await self.session.commit()
 
     # Лог
     async def _log(
-        self, actor_id: int, action: str, entity_type: str, entity_id: int, payload: dict
+        self, actor_id: int, actor_role: str, action: str, entity_type: str, entity_id: int, payload: dict
     ) -> None:
         self.session.add(AuditLog(
             actor_id=actor_id,
+            actor_role=actor_role,
             action=action,
             entity_type=entity_type,
             entity_id=entity_id,

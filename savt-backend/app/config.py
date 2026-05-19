@@ -27,5 +27,9 @@ class Settings(BaseSettings):
     # Firebase
     firebase_credentials_path: str = ""
 
+    # CORS — через запятую: https://admin.example.com,http://localhost:3000
+    # Поставь * чтобы разрешить всем (только для разработки)
+    cors_origins: str = "*"
+
 
 settings = Settings()

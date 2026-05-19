@@ -12,6 +12,7 @@ from app.schemas.requests import (
     RejectRequestIn,
     ShareRequestOut,
 )
+from app.services.audit_service import AuditLogger
 
 
 class CabinetRequestService:
@@ -20,6 +21,7 @@ class CabinetRequestService:
         self.request_repo = CabinetRequestRepository(session)
         self.cabinet_repo = CabinetRepository(session)
         self.user_cabinet_repo = UserCabinetRepository(session)
+        self.audit = AuditLogger(session)
 
     # Все заявки на добавление по фото
     async def list_additions(
@@ -48,7 +50,7 @@ class CabinetRequestService:
 
     # Апрув заявки
     async def approve_addition(
-        self, request_id: int, data: ApproveAdditionIn, admin_id: int
+        self, request_id: int, data: ApproveAdditionIn, admin_id: int, actor_role: str
     ) -> None:
         req = await self.request_repo.get_addition(request_id)
         if req is None:
@@ -78,11 +80,13 @@ class CabinetRequestService:
         req.resolved_by_admin_id = admin_id
         req.resolved_at = datetime.now(timezone.utc)
 
+        self.audit.log("cabinet_request.approve_addition", "cabinet_addition_request", request_id,
+                       admin_id, actor_role, {"user_id": req.user_id, "cabinet_id": data.cabinet_id})
         await self.session.commit()
 
     # Не апрув заявки
     async def reject_addition(
-        self, request_id: int, data: RejectRequestIn, admin_id: int
+        self, request_id: int, data: RejectRequestIn, admin_id: int, actor_role: str
     ) -> None:
         req = await self.request_repo.get_addition(request_id)
         if req is None:
@@ -95,6 +99,8 @@ class CabinetRequestService:
         req.resolved_by_admin_id = admin_id
         req.resolved_at = datetime.now(timezone.utc)
 
+        self.audit.log("cabinet_request.reject_addition", "cabinet_addition_request", request_id,
+                       admin_id, actor_role, {"user_id": req.user_id, "reason": data.admin_response})
         await self.session.commit()
 
     # Все заявки на добавление
@@ -125,7 +131,7 @@ class CabinetRequestService:
 
     # Апрув заявки
     async def approve_share(
-        self, request_id: int, data: ApproveShareIn, admin_id: int
+        self, request_id: int, data: ApproveShareIn, admin_id: int, actor_role: str
     ) -> None:
         req = await self.request_repo.get_share(request_id)
         if req is None:
@@ -150,11 +156,13 @@ class CabinetRequestService:
         req.resolved_by_admin_id = admin_id
         req.resolved_at = datetime.now(timezone.utc)
 
+        self.audit.log("cabinet_request.approve_share", "cabinet_share_request", request_id,
+                       admin_id, actor_role, {"user_id": req.user_id, "cabinet_id": req.cabinet_id})
         await self.session.commit()
 
     # Не апрув заявки
     async def reject_share(
-        self, request_id: int, data: RejectRequestIn, admin_id: int
+        self, request_id: int, data: RejectRequestIn, admin_id: int, actor_role: str
     ) -> None:
         req = await self.request_repo.get_share(request_id)
         if req is None:
@@ -167,4 +175,6 @@ class CabinetRequestService:
         req.resolved_by_admin_id = admin_id
         req.resolved_at = datetime.now(timezone.utc)
 
+        self.audit.log("cabinet_request.reject_share", "cabinet_share_request", request_id,
+                       admin_id, actor_role, {"user_id": req.user_id, "reason": data.admin_response})
         await self.session.commit()

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleName
-from app.core.dependencies import get_current_user, get_session, require_role
+from app.core.dependencies import get_current_user, get_role_from_token, get_session, require_role
 from app.models.user import User
 from app.schemas.pagination import PageOut
 from app.schemas.service_requests import (
@@ -65,7 +65,8 @@ async def list_all_requests(
 async def update_status(
     req_id: int,
     payload: ServiceRequestStatusIn,
-    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    actor: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):
-    return await ServiceRequestService(session).update_status(req_id, payload)
+    return await ServiceRequestService(session).update_status(req_id, payload, actor.id, actor_role)

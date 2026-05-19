@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import AlreadyExistsError, NotFoundError, PermissionDeniedError
 from app.repositories.document import DocumentRepository, DocumentRequestRepository, PhotoRepository
 from app.repositories.tag import TagRepository
+from app.services.audit_service import AuditLogger
 from app.services.upload_service import UPLOAD_ROOT
 from app.schemas.documents import (
     ApproveDocumentRequestIn,
@@ -29,6 +30,7 @@ class AdminDocumentService:
         self.photo_repo = PhotoRepository(session)
         self.request_repo = DocumentRequestRepository(session)
         self.tag_repo = TagRepository(session)
+        self.audit = AuditLogger(session)
 
     async def create_document(
         self,
@@ -36,6 +38,8 @@ class AdminDocumentService:
         cabinet_id: int | None,
         title: str | None,
         requires_approval: bool,
+        actor_id: int = 0,
+        actor_role: str = "admin",
     ) -> DocumentOut:
         info = await save_attachment_with_meta(file)
         doc = await self.doc_repo.create(
@@ -47,6 +51,9 @@ class AdminDocumentService:
             mime_type=info.mime_type,
             requires_approval=requires_approval,
         )
+        await self.session.flush()
+        self.audit.log("document.create", "document", doc.id, actor_id, actor_role,
+                       {"title": doc.title, "cabinet_id": cabinet_id})
         await self.session.commit()
         await self.session.refresh(doc)
         return DocumentOut.model_validate(doc)
@@ -80,10 +87,11 @@ class AdminDocumentService:
             out.append(doc_out)
         return make_page(out, total, page, size)
 
-    async def delete_document(self, doc_id: int) -> None:
+    async def delete_document(self, doc_id: int, actor_id: int = 0, actor_role: str = "admin") -> None:
         doc = await self.doc_repo.get_by_id(doc_id)
         if doc is None:
             raise NotFoundError("Документ не найден")
+        self.audit.log("document.delete", "document", doc_id, actor_id, actor_role, {"title": doc.title})
         await self.doc_repo.delete(doc)
         await self.session.commit()
 
@@ -155,7 +163,7 @@ class AdminDocumentService:
         return make_page(items, total, page, size)
 
     async def approve_request(
-        self, request_id: int, data: ApproveDocumentRequestIn, admin_id: int
+        self, request_id: int, data: ApproveDocumentRequestIn, admin_id: int, actor_role: str = "admin"
     ) -> None:
         req = await self.request_repo.get_by_id(request_id)
         if req is None:
@@ -169,10 +177,12 @@ class AdminDocumentService:
         req.admin_response = data.admin_response
         req.resolved_by_admin_id = admin_id
         req.resolved_at = datetime.now(timezone.utc)
+        self.audit.log("document_request.approve", "document_request", request_id, admin_id, actor_role,
+                       {"user_id": req.user_id, "document_id": req.document_id})
         await self.session.commit()
 
     async def reject_request(
-        self, request_id: int, data: RejectDocumentRequestIn, admin_id: int
+        self, request_id: int, data: RejectDocumentRequestIn, admin_id: int, actor_role: str = "admin"
     ) -> None:
         req = await self.request_repo.get_by_id(request_id)
         if req is None:
@@ -183,6 +193,8 @@ class AdminDocumentService:
         req.admin_response = data.admin_response
         req.resolved_by_admin_id = admin_id
         req.resolved_at = datetime.now(timezone.utc)
+        self.audit.log("document_request.reject", "document_request", request_id, admin_id, actor_role,
+                       {"user_id": req.user_id, "reason": data.admin_response})
         await self.session.commit()
 
 

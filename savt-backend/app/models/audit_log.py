@@ -11,7 +11,9 @@ class AuditLog(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     # кто совершил действие
-    actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    # роль актора на момент действия
+    actor_role: Mapped[str | None] = mapped_column(String(50), index=True)
     # тип действия
     action: Mapped[str] = mapped_column(String(100), index=True)
     # тип сущности
@@ -19,12 +21,12 @@ class AuditLog(Base):
     # идентификатор сущности
     entity_id: Mapped[int | None] = mapped_column(Integer, index=True)
     # детали действия
-    payload: Mapped[dict] = mapped_column(JSONB)
+    payload: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
     # время действия
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
-        index=True
+        index=True,
     )
 
     def __repr__(self) -> str:

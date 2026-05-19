@@ -64,6 +64,19 @@ async def get_current_user(
     return user
 
 
+async def get_role_from_token(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_security),
+) -> str:
+    """Читает роль из JWT без запроса в БД. Используется для audit logging."""
+    if credentials is None:
+        return "unknown"
+    try:
+        payload = decode_access_token(credentials.credentials)
+        return payload.get("role", "user")
+    except Exception:
+        return "unknown"
+
+
 def require_role(*allowed_roles: RoleName):
 
     async def checker(

@@ -7,15 +7,17 @@ from app.models.cabinets import Cabinet
 from app.repositories.cabinet import CabinetRepository
 from app.schemas.cabinet import CabinetCreateIn, CabinetListOut, CabinetUpdateIn
 from app.schemas.pagination import PageOut, make_page
+from app.services.audit_service import AuditLogger
 
 
 class CabinetService:
     def __init__(self, session: AsyncSession):
         self.repo = CabinetRepository(session)
         self.session = session
+        self.audit = AuditLogger(session)
 
     # Создание ШУ
-    async def create(self, data: CabinetCreateIn) -> Cabinet:
+    async def create(self, data: CabinetCreateIn, actor_id: int, actor_role: str) -> Cabinet:
         unique_code = await self._generate_unique_code()
         cabinet = await self.repo.create(
             unique_code=unique_code,
@@ -28,6 +30,9 @@ class CabinetService:
             admin_comment=data.admin_comment,
             purpose=data.purpose,
         )
+        await self.session.flush()
+        self.audit.log("cabinet.create", "cabinet", cabinet.id, actor_id, actor_role,
+                       {"object_number": cabinet.object_number, "type": cabinet.type})
         await self.session.commit()
         await self.session.refresh(cabinet)
         return cabinet
@@ -40,17 +45,21 @@ class CabinetService:
         return cabinet
 
     # Обновление ШУ
-    async def update(self, cabinet_id: int, data: CabinetUpdateIn) -> Cabinet:
+    async def update(self, cabinet_id: int, data: CabinetUpdateIn, actor_id: int, actor_role: str) -> Cabinet:
         cabinet = await self.get(cabinet_id)
-        for field, value in data.model_dump(exclude_unset=True).items():
+        changed = data.model_dump(exclude_unset=True)
+        for field, value in changed.items():
             setattr(cabinet, field, value)
+        self.audit.log("cabinet.update", "cabinet", cabinet_id, actor_id, actor_role, {"fields": list(changed.keys())})
         await self.session.commit()
         await self.session.refresh(cabinet)
         return cabinet
 
     # Удаление ШУ
-    async def delete(self, cabinet_id: int) -> None:
+    async def delete(self, cabinet_id: int, actor_id: int, actor_role: str) -> None:
         cabinet = await self.get(cabinet_id)
+        self.audit.log("cabinet.delete", "cabinet", cabinet_id, actor_id, actor_role,
+                       {"object_number": cabinet.object_number})
         await self.repo.delete(cabinet)
         await self.session.commit()
 

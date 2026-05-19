@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleName
-from app.core.dependencies import get_session, require_role
+from app.core.dependencies import get_role_from_token, get_session, require_role
 from app.models.user import User
 from app.schemas.pagination import PageOut
 from app.schemas.requests import (
@@ -22,33 +22,32 @@ async def list_additions(
     status: str | None = Query(None, pattern="^(pending|approved|rejected)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
-    admin: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
-    service = CabinetRequestService(session)
-    return await service.list_additions(status, page=page, size=size)
+    return await CabinetRequestService(session).list_additions(status, page=page, size=size)
 
 # Апрувнуть заявку
 @router.post("/additions/{request_id}/approve", status_code=status.HTTP_204_NO_CONTENT)
 async def approve_addition(
     request_id: int,
     payload: ApproveAdditionIn,
-    admin: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    actor: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):
-    service = CabinetRequestService(session)
-    await service.approve_addition(request_id, payload, admin.id)
+    await CabinetRequestService(session).approve_addition(request_id, payload, actor.id, actor_role)
 
 # Не апрувнуть заявку
 @router.post("/additions/{request_id}/reject", status_code=status.HTTP_204_NO_CONTENT)
 async def reject_addition(
     request_id: int,
     payload: RejectRequestIn,
-    admin: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    actor: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):
-    service = CabinetRequestService(session)
-    await service.reject_addition(request_id, payload, admin.id)
+    await CabinetRequestService(session).reject_addition(request_id, payload, actor.id, actor_role)
 
 # Все заявки по добавлению к уже подвязанному ШУ
 @router.get("/shares", response_model=PageOut[ShareRequestOut])
@@ -56,30 +55,29 @@ async def list_shares(
     status: str | None = Query(None, pattern="^(pending|approved|rejected)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
-    admin: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
-    service = CabinetRequestService(session)
-    return await service.list_shares(status, page=page, size=size)
+    return await CabinetRequestService(session).list_shares(status, page=page, size=size)
 
 # Апрувнуть добавление
 @router.post("/shares/{request_id}/approve", status_code=status.HTTP_204_NO_CONTENT)
 async def approve_share(
     request_id: int,
     payload: ApproveShareIn,
-    admin: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    actor: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):
-    service = CabinetRequestService(session)
-    await service.approve_share(request_id, payload, admin.id)
+    await CabinetRequestService(session).approve_share(request_id, payload, actor.id, actor_role)
 
-# Не правнуть добавление
+# Отклонить добавление
 @router.post("/shares/{request_id}/reject", status_code=status.HTTP_204_NO_CONTENT)
 async def reject_share(
     request_id: int,
     payload: RejectRequestIn,
-    admin: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    actor: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):
-    service = CabinetRequestService(session)
-    await service.reject_share(request_id, payload, admin.id)
+    await CabinetRequestService(session).reject_share(request_id, payload, actor.id, actor_role)

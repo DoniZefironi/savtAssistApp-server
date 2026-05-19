@@ -1801,6 +1801,47 @@ Data:      { "cabinet_id": 5, "days_left": 30 }
 
 ---
 
+## Бэкапы базы данных
+
+Скрипт `backup.sh` делает дамп PostgreSQL из Docker-контейнера, сжимает и хранит последние 5 файлов.
+
+### Первый запуск (на сервере)
+
+```bash
+# Сделать скрипт исполняемым
+chmod +x savt-backend/backup.sh
+
+# Проверить вручную (переменные берутся из окружения или .env)
+cd savt-backend
+POSTGRES_DB=savt POSTGRES_USER=postgres ./backup.sh
+```
+
+Бэкапы сохраняются в `savt-backend/backups/` с именем `savt_backup_YYYY-MM-DD_HH-MM-SS.sql.gz`.
+
+### Автоматический запуск через cron
+
+```bash
+crontab -e
+```
+
+Добавить строку (запуск каждый день в 03:00):
+
+```
+0 3 * * * cd /path/to/savt-backend && POSTGRES_DB=savt POSTGRES_USER=postgres POSTGRES_PASSWORD=yourpassword ./backup.sh >> /var/log/savt-backup.log 2>&1
+```
+
+> Замените `/path/to/savt-backend` на реальный путь к директории на сервере.
+
+### Восстановление из бэкапа
+
+```bash
+# Распаковать и восстановить
+gunzip -c backups/savt_backup_2026-05-18_03-00-00.sql.gz \
+    | docker exec -i savt-backend-db-1 psql -U postgres -d savt
+```
+
+---
+
 ## Управление через CLI
 
 ```bash
