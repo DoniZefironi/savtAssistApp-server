@@ -67,6 +67,44 @@ class ChatService:
             ))
         return result
 
+    async def list_operator_chats(self, operator_id: int) -> list[ChatListOut]:
+        chats = await self.chat_repo.list_for_operator()
+        result = []
+        for chat in chats:
+            unread = await self.chat_repo.get_unread_count(chat.id, operator_id)
+
+            cabinet_name = None
+            if chat.cabinet_id:
+                from app.repositories.cabinet import CabinetRepository
+                cab = await CabinetRepository(self.session).get_by_id(chat.cabinet_id)
+                if cab:
+                    cabinet_name = cab.admin_internal_name or cab.object_number
+
+            from app.repositories.user import UserRepository
+            user = await UserRepository(self.session).get_by_id(chat.user_id)
+
+            last_text = None
+            msgs = await self.msg_repo.get_messages(chat.id, limit=1)
+            if msgs:
+                msg, _ = msgs[0]
+                last_text = msg.text if not msg.deleted_at else "Сообщение удалено"
+
+            result.append(ChatListOut(
+                id=chat.id,
+                chat_type=chat.chat_type,
+                cabinet_id=chat.cabinet_id,
+                cabinet_name=cabinet_name,
+                user_id=chat.user_id,
+                user_name=user.full_name if user else None,
+                last_message_text=last_text,
+                last_message_at=chat.last_message_at,
+                unread_count=unread,
+                problem_status=chat.problem_status,
+                bot_active=chat.bot_active,
+                operator_requested=chat.operator_requested,
+            ))
+        return result
+
     async def get_cabinet_chat(self, user_id: int, cabinet_id: int) -> ChatOut:
         chat = await self.chat_repo.find(user_id, "cabinet", cabinet_id)
         if chat is None:
