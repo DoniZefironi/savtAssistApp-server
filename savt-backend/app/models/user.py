@@ -29,6 +29,10 @@ class User(Base):
     is_phone_verified: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false"
     )
+    # подтверждён ли аккаунт администратором
+    is_verified: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
+    )
     # бан или актив?
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="true"

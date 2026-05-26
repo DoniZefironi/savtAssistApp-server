@@ -149,6 +149,7 @@ async def me(
         full_name=user.full_name,
         role=role.name if role else "user",
         is_phone_verified=user.is_phone_verified,
+        is_verified=user.is_verified,
         email=user.email,
         user_type=user.user_type,
         organization_name=user.organization_name
@@ -215,10 +216,19 @@ async def update_profile(
         full_name=user.full_name,
         role=role.name if role else "user",
         is_phone_verified=user.is_phone_verified,
+        is_verified=user.is_verified,
         email=user.email,
         user_type=user.user_type,
         organization_name=user.organization_name,
     )
+
+# Удаление аккаунта
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_account(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    await AuthService(session).delete_account(current_user)
 
 # Смена номера телефона — запрос кода
 @router.post("/change-phone/start", response_model=RegisterStartOut)

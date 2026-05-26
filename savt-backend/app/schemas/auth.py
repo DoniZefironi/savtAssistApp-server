@@ -115,6 +115,7 @@ class UserMeOut(BaseModel):
     full_name: str | None
     role: str
     is_phone_verified: bool
+    is_verified: bool
 
     model_config = {"from_attributes": True}
 

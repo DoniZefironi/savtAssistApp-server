@@ -257,6 +257,12 @@ class AuthService:
             await self.token_repo.revoke(stored) # отзываем токен
         await self.session.commit()
 
+    # Удаление аккаунта
+    async def delete_account(self, user: User) -> None:
+        await self.token_repo.revoke_all_for_user(user.id)
+        await self.session.delete(user)
+        await self.session.commit()
+
     
     async def _issue_tokens(
         self,

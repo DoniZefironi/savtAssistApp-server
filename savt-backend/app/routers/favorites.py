@@ -31,7 +31,7 @@ async def remove_favorite(
 
 @router.get("", response_model=PageOut[FavoriteOut])
 async def list_favorites(
-    entity_type: str | None = Query(None, pattern="^(document|kb_article)$"),
+    entity_type: str | None = Query(None, pattern="^(document|kb_article|faq_entry)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     current_user: User = Depends(get_current_user),

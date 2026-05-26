@@ -12,6 +12,7 @@ class AdminUserListOut(BaseModel):
     role: str
     is_active: bool
     is_phone_verified: bool
+    is_verified: bool
     created_at: datetime
 
 
@@ -37,6 +38,7 @@ class AdminUserDetailOut(BaseModel):
     role: str
     is_active: bool
     is_phone_verified: bool
+    is_verified: bool
     created_at: datetime
     cabinets: list[AdminUserCabinetItem]
 

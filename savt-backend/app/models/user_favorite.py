@@ -28,7 +28,7 @@ class UserFavorite(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "entity_type", "entity_id", name="uq_user_favorite"),
         CheckConstraint(
-            "entity_type IN ('document', 'kb_article')",
+            "entity_type IN ('document', 'kb_article', 'faq_entry')",
             name="ck_user_favorite_entity_type",
         ),
     )

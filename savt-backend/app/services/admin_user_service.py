@@ -53,6 +53,7 @@ class AdminUserService:
                 role=role.name,
                 is_active=user.is_active,
                 is_phone_verified=user.is_phone_verified,
+                is_verified=user.is_verified,
                 created_at=user.created_at,
             )
             for user, role in rows
@@ -92,6 +93,7 @@ class AdminUserService:
             role=role.name,
             is_active=user.is_active,
             is_phone_verified=user.is_phone_verified,
+            is_verified=user.is_verified,
             created_at=user.created_at,
             cabinets=cabinets,
         )
@@ -145,6 +147,24 @@ class AdminUserService:
             actor_id, actor_role, "user_cabinet.remove", "user_cabinet", uc.id,
             {"user_id": user_id, "cabinet_id": cabinet_id, "reason": reason},
         )
+        await self.session.commit()
+
+    # Подтвердить аккаунт
+    async def verify_user(self, user_id: int, actor_id: int, actor_role: str) -> None:
+        user = await self.user_repo.get_by_id(user_id)
+        if user is None:
+            raise NotFoundError("Пользователь не найден")
+        user.is_verified = True
+        await self._log(actor_id, actor_role, "user.verify", "user", user_id, {})
+        await self.session.commit()
+
+    # Снять подтверждение
+    async def unverify_user(self, user_id: int, actor_id: int, actor_role: str) -> None:
+        user = await self.user_repo.get_by_id(user_id)
+        if user is None:
+            raise NotFoundError("Пользователь не найден")
+        user.is_verified = False
+        await self._log(actor_id, actor_role, "user.unverify", "user", user_id, {})
         await self.session.commit()
 
     # Лог

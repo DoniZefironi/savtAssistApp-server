@@ -38,6 +38,26 @@ async def get_user(
 ):
     return await AdminUserService(session).get_user_detail(user_id)
 
+# Подтвердить аккаунт
+@router.post("/admin/users/{user_id}/verify", status_code=status.HTTP_204_NO_CONTENT)
+async def verify_user(
+    user_id: int,
+    actor: User = Depends(require_role(RoleName.ADMIN)),
+    actor_role: str = Depends(get_role_from_token),
+    session: AsyncSession = Depends(get_session),
+):
+    await AdminUserService(session).verify_user(user_id, actor.id, actor_role)
+
+# Снять подтверждение
+@router.post("/admin/users/{user_id}/unverify", status_code=status.HTTP_204_NO_CONTENT)
+async def unverify_user(
+    user_id: int,
+    actor: User = Depends(require_role(RoleName.ADMIN)),
+    actor_role: str = Depends(get_role_from_token),
+    session: AsyncSession = Depends(get_session),
+):
+    await AdminUserService(session).unverify_user(user_id, actor.id, actor_role)
+
 # Забанить
 @router.post("/admin/users/{user_id}/ban", status_code=status.HTTP_204_NO_CONTENT)
 async def ban_user(
