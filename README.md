@@ -522,9 +522,18 @@ POST /upload/voice (multipart/form-data, поле: file)
   "organization_name": null,
   "full_name": "Иванов Иван",
   "role": "user",
-  "is_phone_verified": true
+  "is_phone_verified": true,
+  "is_verified": false
 }
 ```
+- `is_verified` — подтверждён ли аккаунт администратором
+
+---
+
+### DELETE `/auth/me`
+Удаление собственного аккаунта (доступно всем авторизованным пользователям). Отзывает все refresh-токены и удаляет аккаунт безвозвратно.
+
+Ответ: `204 No Content`.
 
 ---
 
@@ -651,6 +660,16 @@ POST /upload/voice (multipart/form-data, поле: file)
 ```json
 { "url": "/static/voices/abc123.ogg" }
 ```
+
+---
+
+### GET `/upload/download?url={file_url}`
+Скачать любой файл (фото, документ, видео, голосовое) с заголовком `Content-Disposition: attachment`. Требует Bearer-токен.
+
+Параметр `url` — значение поля `file_url` из вложения или `url` из фото, например `/static/photos/abc123.jpg`.
+
+- `400` — URL не указывает на загруженный файл
+- `404` — файл не найден на диске
 
 ---
 
@@ -855,6 +874,7 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
     "role": "user",
     "is_active": true,
     "is_phone_verified": true,
+    "is_verified": false,
     "created_at": "2026-05-01T10:00:00Z"
   }
 ]
@@ -877,6 +897,7 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
   "role": "user",
   "is_active": true,
   "is_phone_verified": true,
+  "is_verified": false,
   "created_at": "2026-05-01T10:00:00Z",
   "cabinets": [
     {
@@ -896,8 +917,22 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 
 ---
 
+### POST `/admin/users/{user_id}/verify`
+Подтвердить аккаунт пользователя (`is_verified = true`). Только для администратора. Логируется в `audit_log`.
+
+Ответ: `204 No Content`.
+
+---
+
+### POST `/admin/users/{user_id}/unverify`
+Снять подтверждение аккаунта (`is_verified = false`). Только для администратора. Логируется в `audit_log`.
+
+Ответ: `204 No Content`.
+
+---
+
 ### POST `/admin/users/{user_id}/ban`
-Блокировка пользователя. Только для админа. Логируется в `audit_log`.
+Блокировка пользователя (`is_active = false`). Только для администратора. Логируется в `audit_log`.
 ```json
 { "reason": "Нарушение условий использования" }
 ```
@@ -906,7 +941,7 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ---
 
 ### POST `/admin/users/{user_id}/unban`
-Разблокировка пользователя. Только для админа. Логируется в `audit_log`.
+Разблокировка пользователя. Только для администратора. Логируется в `audit_log`.
 
 Ответ: `204 No Content`.
 
@@ -1204,7 +1239,7 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ```json
 { "entity_type": "document", "entity_id": 5 }
 ```
-`entity_type`: `document` или `kb_article`. Ответ: объект избранного.
+`entity_type`: `document`, `kb_article` или `faq_entry`. Ответ: объект избранного.
 
 ---
 
@@ -1214,7 +1249,7 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ---
 
 ### GET `/favorites`
-Список избранного. Параметры: `entity_type=document|kb_article`, `page`, `size`.
+Список избранного. Параметры: `entity_type=document|kb_article|faq_entry`, `page`, `size`.
 ```json
 {
   "items": [
