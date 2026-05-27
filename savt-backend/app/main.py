@@ -5,7 +5,11 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy import text
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from app.config import settings
 from app.core.exceptions import (
@@ -40,6 +44,7 @@ from app.routers import upload as upload_router
 from app.services.sms_service import SmsSendError
 from app.core.firebase import init_firebase
 from app.services.warranty_scheduler import check_warranty_expiry
+from app.core.limiter import limiter
 
 # Управление жизненным циклом приложения, проверяет подключение к бд и закрывает соединение с бд
 @asynccontextmanager
@@ -59,6 +64,14 @@ async def lifespan(app: FastAPI):
 
 # Создание приложения с названием SAVT Assist API и привязка к lifespan
 app = FastAPI(title="SAVT Assist API", lifespan=lifespan)
+
+# Читаем реальный IP из X-Forwarded-For (Nginx proxy)
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+
+# Rate limiting
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 # CORS — разрешаем запросы с веб-версии
 _origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]

@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user, get_session
+from app.core.limiter import limiter
 from app.models.user import User
 from app.schemas.auth import (
     AdminLoginIn,
@@ -36,9 +37,11 @@ def _client_info(request: Request) -> tuple[str | None, str | None]:
 
 # Регистрация
 @router.post("/register/start", response_model=RegisterStartOut)
+@limiter.limit("5/minute")
 async def register_start(
-    payload: RegisterStartIn, # валидация
-    session: AsyncSession = Depends(get_session), # создание сессии бд
+    request: Request,
+    payload: RegisterStartIn,
+    session: AsyncSession = Depends(get_session),
 ):
     service = AuthService(session) # создание сервиса
     cooldown = await service.register_start(
@@ -52,9 +55,10 @@ async def register_start(
 
 # Подтверждение кода
 @router.post("/register/complete", response_model=TokenPairOut, status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/minute")
 async def register_complete(
+    request: Request,
     payload: RegisterCompleteIn,
-    request: Request, # для получения IP
     session: AsyncSession = Depends(get_session),
 ):
     user_agent, ip = _client_info(request)
@@ -69,8 +73,10 @@ async def register_complete(
 
 # Переотправка кода
 @router.post("/register/resend", response_model=RegisterStartOut)
+@limiter.limit("3/minute")
 async def register_resend(
-    payload: ResendCodeIn,  
+    request: Request,
+    payload: ResendCodeIn,
     session: AsyncSession = Depends(get_session),
 ):
     service = AuthService(session)
@@ -79,9 +85,10 @@ async def register_resend(
 
 # Вход для администратора / оператора
 @router.post("/admin-login", response_model=TokenPairOut)
+@limiter.limit("5/minute")
 async def admin_login(
-    payload: AdminLoginIn,
     request: Request,
+    payload: AdminLoginIn,
     session: AsyncSession = Depends(get_session),
 ):
     user_agent, ip = _client_info(request)
@@ -96,9 +103,10 @@ async def admin_login(
 
 # Вход пользователя
 @router.post("/login", response_model=TokenPairOut)
+@limiter.limit("10/minute")
 async def login(
-    payload: LoginIn,
     request: Request,
+    payload: LoginIn,
     session: AsyncSession = Depends(get_session),
 ):
     user_agent, ip = _client_info(request)
@@ -113,9 +121,10 @@ async def login(
 
 # Обновление токенов
 @router.post("/refresh", response_model=TokenPairOut)
+@limiter.limit("20/minute")
 async def refresh(
-    payload: RefreshIn,
     request: Request,
+    payload: RefreshIn,
     session: AsyncSession = Depends(get_session),
 ):
     user_agent, ip = _client_info(request)
@@ -157,7 +166,9 @@ async def me(
 
 # Восстановление пароля: запрос кода
 @router.post("/password-reset/start", response_model=PasswordResetStartOut)
+@limiter.limit("5/minute")
 async def password_reset_start(
+    request: Request,
     payload: PasswordResetStartIn,
     session: AsyncSession = Depends(get_session),
 ):
@@ -167,7 +178,9 @@ async def password_reset_start(
 
 # Восстановление пароля: новый пароль
 @router.post("/password-reset/complete", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("5/minute")
 async def password_reset_complete(
+    request: Request,
     payload: PasswordResetCompleteIn,
     session: AsyncSession = Depends(get_session),
 ):

@@ -8,8 +8,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - ./postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    # Порт БД не торчит наружу — только внутри Docker-сети
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -21,8 +20,7 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    ports:
-      - "8000:8000"
+    # Порт 8000 не открываем наружу — только через Nginx
     volumes:
       - ./app:/code/app
       - ./alembic:/code/alembic
@@ -32,3 +30,14 @@ services:
     depends_on:
       db:
         condition: service_healthy
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./uploads:/uploads:ro
+    depends_on:
+      - api
