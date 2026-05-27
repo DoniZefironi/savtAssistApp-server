@@ -67,16 +67,6 @@ def _extract_text(file_url: str) -> str:
 
 # ── Сохранение эмбеддингов ───────────────────────────────────────────────────
 
-_EMBED_SEM: asyncio.Semaphore | None = None
-
-
-def _get_sem() -> asyncio.Semaphore:
-    global _EMBED_SEM
-    if _EMBED_SEM is None:
-        _EMBED_SEM = asyncio.Semaphore(5)
-    return _EMBED_SEM
-
-
 async def _upsert_chunks(
     session: AsyncSession,
     source_type: str,
@@ -90,21 +80,18 @@ async def _upsert_chunks(
             Embedding.source_id == source_id,
         )
     )
-
-    async def _embed_one(i: int, chunk: str) -> tuple[int, list[float]]:
-        async with _get_sem():
-            return i, await yandex_service.embed_document(chunk)
-
-    pairs = await asyncio.gather(*[_embed_one(i, c) for i, c in enumerate(chunks)])
-    for i, vector in pairs:
+    for i, chunk in enumerate(chunks):
+        vector = await yandex_service.embed_document(chunk)
         session.add(Embedding(
             source_type=source_type,
             source_id=source_id,
             chunk_index=i,
-            content=chunks[i],
+            content=chunk,
             embedding=vector,
             meta=meta,
         ))
+        # Yandex лимит: 10 запросов/сек → 0.12с между запросами = ~8/сек
+        await asyncio.sleep(0.12)
     await session.flush()
 
 
