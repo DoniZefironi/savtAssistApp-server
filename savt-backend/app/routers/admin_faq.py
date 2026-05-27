@@ -1,8 +1,11 @@
+import asyncio
+
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleName
 from app.core.dependencies import get_session, require_role
+from app.database import AsyncSessionLocal
 from app.models.user import User
 from app.schemas.faq import (
     FaqCategoryCreateIn,
@@ -14,6 +17,18 @@ from app.schemas.faq import (
 )
 from app.schemas.pagination import PageOut
 from app.services.faq_service import FaqCategoryService, FaqEntryService
+
+
+def _reindex_faq(entry_id: int) -> None:
+    async def _task():
+        from app.models.faq_entry import FaqEntry
+        from app.services.bot_indexer import index_faq_entry
+        async with AsyncSessionLocal() as s:
+            entry = await s.get(FaqEntry, entry_id)
+            if entry:
+                await index_faq_entry(s, entry)
+                await s.commit()
+    asyncio.create_task(_task())
 
 router = APIRouter(prefix="/admin/faq", tags=["admin: faq"])
 
@@ -64,7 +79,9 @@ async def create_entry(
     _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
-    return await FaqEntryService(session).create(payload)
+    entry = await FaqEntryService(session).create(payload)
+    _reindex_faq(entry.id)
+    return entry
 
 
 @router.get("/entries", response_model=PageOut[FaqEntryOut])
@@ -86,7 +103,9 @@ async def update_entry(
     _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
-    return await FaqEntryService(session).update(entry_id, payload)
+    entry = await FaqEntryService(session).update(entry_id, payload)
+    _reindex_faq(entry.id)
+    return entry
 
 
 @router.delete("/entries/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)

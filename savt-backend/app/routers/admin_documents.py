@@ -1,8 +1,11 @@
+import asyncio
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleName
 from app.core.dependencies import get_role_from_token, get_session, require_role
+from app.database import AsyncSessionLocal
 from app.models.user import User
 from app.schemas.documents import (
     ApproveDocumentRequestIn,
@@ -17,6 +20,18 @@ from app.services.document_service import AdminDocumentService
 
 router = APIRouter(tags=["admin: documents"])
 
+
+def _reindex_document(doc_id: int) -> None:
+    async def _task():
+        from app.models.document import Document
+        from app.services.bot_indexer import index_document
+        async with AsyncSessionLocal() as s:
+            doc = await s.get(Document, doc_id)
+            if doc:
+                await index_document(s, doc)
+                await s.commit()
+    asyncio.create_task(_task())
+
 # Загрузить документ
 @router.post("/admin/documents", response_model=DocumentOut, status_code=status.HTTP_201_CREATED)
 async def create_document(
@@ -30,7 +45,7 @@ async def create_document(
 ):
     if not cabinet_id or not cabinet_id.strip().isdigit():
         raise HTTPException(status_code=422, detail="cabinet_id обязателен и должен быть числом")
-    return await AdminDocumentService(session).create_document(
+    doc = await AdminDocumentService(session).create_document(
         file=file,
         cabinet_id=int(cabinet_id),
         title=title.strip() or None if title else None,
@@ -38,6 +53,8 @@ async def create_document(
         actor_id=actor.id,
         actor_role=actor_role,
     )
+    _reindex_document(doc.id)
+    return doc
 
 # Все документы
 @router.get("/admin/documents", response_model=PageOut[DocumentOut])

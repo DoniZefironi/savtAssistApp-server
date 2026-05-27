@@ -16,3 +16,6 @@ Pillow==11.2.1
 firebase-admin==6.5.0
 apscheduler==3.10.4
 slowapi==0.1.9
+pgvector==0.3.6
+pypdf==5.1.0
+python-docx==1.1.2

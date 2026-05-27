@@ -142,7 +142,27 @@ class ChatService:
         await self.session.refresh(msg)
         from app.repositories.user import UserRepository
         sender = await UserRepository(self.session).get_by_id(sender_id)
-        return await self._build_message_out(msg, sender)
+        result = await self._build_message_out(msg, sender)
+
+        # Бот отвечает только на сообщения владельца чата
+        if chat.user_id == sender_id and chat.bot_active and chat.chat_type != "notes":
+            import asyncio
+            import logging
+            from app.database import AsyncSessionLocal
+            from app.services.bot_service import handle_message
+
+            _log = logging.getLogger(__name__)
+
+            async def _bot_reply():
+                try:
+                    async with AsyncSessionLocal() as bot_session:
+                        await handle_message(bot_session, chat.id, data.text)
+                except Exception:
+                    _log.exception("Bot reply failed for chat %s", chat.id)
+
+            asyncio.create_task(_bot_reply())
+
+        return result
 
     async def get_messages(
         self, chat_id: int, user_id: int, before_id: int | None, limit: int
@@ -249,7 +269,6 @@ class ChatService:
     async def _build_message_out(self, msg, user) -> MessageOut:
         atts = (await self.msg_repo.get_attachments([msg.id])).get(msg.id, [])
         rxns = (await self.msg_repo.get_reactions([msg.id])).get(msg.id, [])
-        sender_name = user.full_name if user else None
         return _build_message(msg, user, atts, rxns)
 
 

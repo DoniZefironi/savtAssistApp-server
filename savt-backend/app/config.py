@@ -31,5 +31,14 @@ class Settings(BaseSettings):
     # Поставь * чтобы разрешить всем (только для разработки)
     cors_origins: str = "*"
 
+    # Яндекс API
+    yandex_folder_id: str = ""
+    yandex_api_key: str = ""
+    yandex_gpt_model: str = "yandexgpt-lite"
+
+    # Бот
+    bot_follow_up_minutes: int = 60
+    bot_max_attempts: int = 3
+
 
 settings = Settings()

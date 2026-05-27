@@ -41,10 +41,19 @@ from app.routers import admin_faq as admin_faq_router
 from app.routers import faq as faq_router
 from app.routers import cabinets as cabinets_router
 from app.routers import upload as upload_router
+from app.routers import admin_bot as admin_bot_router
 from app.services.sms_service import SmsSendError
 from app.core.firebase import init_firebase
 from app.services.warranty_scheduler import check_warranty_expiry
 from app.core.limiter import limiter
+from app.database import AsyncSessionLocal
+
+
+async def _bot_follow_up_job() -> None:
+    async with AsyncSessionLocal() as session:
+        from app.services.bot_service import send_follow_up
+        await send_follow_up(session)
+
 
 # Управление жизненным циклом приложения, проверяет подключение к бд и закрывает соединение с бд
 @asynccontextmanager
@@ -53,8 +62,14 @@ async def lifespan(app: FastAPI):
         await conn.execute(text("SELECT 1"))
     init_firebase(settings.firebase_credentials_path)
 
+    # Создаём системного пользователя Ася
+    async with AsyncSessionLocal() as session:
+        from app.services.bot_service import ensure_bot_user
+        await ensure_bot_user(session)
+
     scheduler = AsyncIOScheduler()
     scheduler.add_job(check_warranty_expiry, "cron", hour=9, minute=0)
+    scheduler.add_job(_bot_follow_up_job, "interval", minutes=10)
     scheduler.start()
 
     yield
@@ -144,6 +159,7 @@ app.include_router(admin_faq_router.router)
 app.include_router(faq_router.router)
 app.include_router(cabinets_router.router)
 app.include_router(upload_router.router)
+app.include_router(admin_bot_router.router)
 app.mount("/static", StaticFiles(directory="/code/uploads"), name="static")
 
 # Бэзик эндпоинты
