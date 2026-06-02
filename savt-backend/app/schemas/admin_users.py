@@ -1,5 +1,5 @@
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class AdminUserListOut(BaseModel):
@@ -41,6 +41,19 @@ class AdminUserDetailOut(BaseModel):
     is_verified: bool
     created_at: datetime
     cabinets: list[AdminUserCabinetItem]
+
+
+class CreateOperatorIn(BaseModel):
+    login: str = Field(..., min_length=3, max_length=50)
+    password: str = Field(..., min_length=8, max_length=100)
+    full_name: str | None = Field(None, max_length=200)
+
+    @field_validator("login")
+    @classmethod
+    def login_no_spaces(cls, v: str) -> str:
+        if " " in v:
+            raise ValueError("Логин не должен содержать пробелы")
+        return v.lower()
 
 
 class BanUserIn(BaseModel):

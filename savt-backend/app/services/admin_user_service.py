@@ -11,6 +11,7 @@ from app.schemas.admin_users import (
     AdminUserDetailOut,
     AdminUserListOut,
     CabinetUserOut,
+    CreateOperatorIn,
 )
 from app.schemas.pagination import PageOut, make_page
 
@@ -36,11 +37,16 @@ class AdminUserService:
         self,
         query: str | None = None,
         is_active: bool | None = None,
+        role: str | None = None,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
         page: int = 1,
         size: int = 20,
     ) -> PageOut[AdminUserListOut]:
         rows, total = await self.user_repo.admin_search(
-            query=query, is_active=is_active, offset=(page - 1) * size, limit=size
+            query=query, is_active=is_active, role=role,
+            sort_by=sort_by, sort_order=sort_order,
+            offset=(page - 1) * size, limit=size,
         )
         items = [
             AdminUserListOut(
@@ -96,6 +102,50 @@ class AdminUserService:
             is_verified=user.is_verified,
             created_at=user.created_at,
             cabinets=cabinets,
+        )
+
+    # Создание оператора
+    async def create_operator(self, data: CreateOperatorIn, actor_id: int, actor_role: str) -> AdminUserListOut:
+        from app.core.exceptions import AlreadyExistsError
+        from app.core.security import hash_password
+        from app.models.role import Role
+        from sqlalchemy import select
+
+        existing = await self.user_repo.find_by_login(data.login)
+        if existing is not None:
+            raise AlreadyExistsError("Пользователь с таким логином уже существует")
+
+        role = (await self.session.execute(
+            select(Role).where(Role.name == "operator")
+        )).scalar_one_or_none()
+        if role is None:
+            from app.core.exceptions import NotFoundError
+            raise NotFoundError("Роль 'operator' не найдена")
+
+        user = await self.user_repo.create(
+            login=data.login,
+            full_name=data.full_name,
+            hashed_password=hash_password(data.password),
+            role_id=role.id,
+            is_active=True,
+            is_phone_verified=True,
+            is_verified=True,
+        )
+        await self._log(actor_id, actor_role, "user.create_operator", "user", user.id, {"login": data.login})
+        await self.session.commit()
+
+        return AdminUserListOut(
+            id=user.id,
+            phone=user.phone,
+            login=user.login,
+            full_name=user.full_name,
+            user_type=user.user_type,
+            organization_name=user.organization_name,
+            role="operator",
+            is_active=user.is_active,
+            is_phone_verified=user.is_phone_verified,
+            is_verified=user.is_verified,
+            created_at=user.created_at,
         )
 
     # Бан пользователя

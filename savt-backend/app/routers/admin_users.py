@@ -9,6 +9,7 @@ from app.schemas.admin_users import (
     AdminUserListOut,
     BanUserIn,
     CabinetUserOut,
+    CreateOperatorIn,
     RemoveUserFromCabinetIn,
 )
 from app.schemas.pagination import PageOut
@@ -16,18 +17,35 @@ from app.services.admin_user_service import AdminUserService
 
 router = APIRouter(tags=["admin: users"])
 
+# Создать оператора
+@router.post("/admin/users/operators", response_model=AdminUserListOut, status_code=status.HTTP_201_CREATED)
+async def create_operator(
+    payload: CreateOperatorIn,
+    actor: User = Depends(require_role(RoleName.ADMIN)),
+    actor_role: str = Depends(get_role_from_token),
+    session: AsyncSession = Depends(get_session),
+):
+    return await AdminUserService(session).create_operator(payload, actor.id, actor_role)
+
+
 # Все пользователи
 @router.get("/admin/users", response_model=PageOut[AdminUserListOut])
 async def list_users(
     search: str | None = Query(None),
     is_active: bool | None = Query(None),
+    role: str | None = Query(None, pattern="^(user|operator)$"),
+    sort_by: str = Query("created_at", pattern="^(created_at|full_name|role)$"),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
-    service = AdminUserService(session)
-    return await service.list_users(query=search, is_active=is_active, page=page, size=size)
+    return await AdminUserService(session).list_users(
+        query=search, is_active=is_active, role=role,
+        sort_by=sort_by, sort_order=sort_order,
+        page=page, size=size,
+    )
 
 # Подробнее о пользователе
 @router.get("/admin/users/{user_id}", response_model=AdminUserDetailOut)

@@ -44,22 +44,32 @@ async def get_bot_user_id(session: AsyncSession) -> int | None:
 
 async def ensure_bot_user(session: AsyncSession) -> int:
     """Создаёт системного пользователя-бота если его нет. Возвращает его id."""
+    from app.models.role import Role
     from app.models.user import User
     from app.core.security import hash_password
     import secrets
+
+    bot_role = (await session.execute(
+        select(Role).where(Role.name == "bot")
+    )).scalar_one_or_none()
+    if bot_role is None:
+        raise RuntimeError("Роль 'bot' не найдена в БД — примените миграции")
 
     result = await session.execute(
         select(User).where(User.login == _BOT_USER_LOGIN)
     )
     bot = result.scalar_one_or_none()
     if bot:
+        if bot.role_id != bot_role.id:
+            bot.role_id = bot_role.id
+            await session.commit()
         return bot.id
 
     bot = User(
         login=_BOT_USER_LOGIN,
         full_name=_BOT_NAME,
         hashed_password=hash_password(secrets.token_hex(32)),
-        role_id=1,
+        role_id=bot_role.id,
         is_phone_verified=True,
         is_active=True,
         is_verified=True,
