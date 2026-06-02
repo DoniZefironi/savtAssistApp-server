@@ -59,9 +59,10 @@ docker exec -it savt-backend-db-1 psql -U postgres -d savt
 API для управления пользователями, шкафами управления (ШУ), документацией, QR-кодами, чатами, сервисными заявками, уведомлениями, базой знаний и FAQ.
 
 **Роли:**
-1. **Пользователь** — добавляет ШУ, пользуется чатом поддержки, просматривает/запрашивает документацию, создаёт сервисные заявки.
-2. **Оператор** — отвечает в чате, обрабатывает заявки.
-3. **Администратор** — полное управление всеми данными.
+1. **Пользователь** (`user`) — добавляет ШУ, пользуется чатом поддержки, просматривает/запрашивает документацию, создаёт сервисные заявки.
+2. **Оператор** (`operator`) — отвечает в чате, обрабатывает заявки. Создаётся через `POST /admin/users/operators` или CLI.
+3. **Администратор** (`admin`) — полное управление всеми данными. Создаётся только через CLI.
+4. **Бот** (`bot`) — системная роль для Аси, не отображается в списках пользователей.
 
 ---
 
@@ -876,28 +877,60 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 
 ## Рут `admin: users` — управление пользователями (админ/оператор)
 
+> Список **не показывает** пользователей с ролями `admin` и `bot` (системные аккаунты). Только `user` и `operator`.
+
+### POST `/admin/users/operators`
+Создать оператора. Только для администратора. Логируется в `audit_log`.
+```json
+{
+  "login": "operator2",
+  "password": "securePass8",
+  "full_name": "Иванов Иван"
+}
+```
+- `login` — минимум 3 символа, без пробелов, приводится к нижнему регистру, должен быть уникальным
+- `password` — минимум 8 символов
+- `full_name` — необязателен
+
+Ответ: созданный пользователь (`AdminUserListOut`), `201 Created`.
+
+> Создание **администратора** — только через CLI:
+> ```bash
+> docker exec savt-backend-api-1 python -m app.cli create-admin <login> <password> [full_name]
+> ```
+
+---
+
 ### GET `/admin/users`
-Список всех пользователей. Параметры:
+Список пользователей с ролями `user` и `operator`. Параметры:
 - `search` — поиск по ФИО, телефону, организации
 - `is_active` — `true` / `false`
-- `page`, `size` — пагинация (по умолчанию `page=1`, `size=20`, максимум `100`)
+- `role` — фильтр по роли: `user` / `operator`
+- `sort_by` — сортировка: `created_at` (по умолч.), `full_name`, `role`
+- `sort_order` — `asc` / `desc` (по умолч. `desc`)
+- `page`, `size` — пагинация (по умолч. `page=1`, `size=20`, максимум `100`)
+
+При `sort_by=role` операторы показываются первыми.
 
 ```json
-[
-  {
-    "id": 1,
-    "phone": "+375291234567",
-    "login": null,
-    "full_name": "Иванов Иван",
-    "user_type": "individual",
-    "organization_name": null,
-    "role": "user",
-    "is_active": true,
-    "is_phone_verified": true,
-    "is_verified": false,
-    "created_at": "2026-05-01T10:00:00Z"
-  }
-]
+{
+  "items": [
+    {
+      "id": 1,
+      "phone": "+375291234567",
+      "login": null,
+      "full_name": "Иванов Иван",
+      "user_type": "individual",
+      "organization_name": null,
+      "role": "user",
+      "is_active": true,
+      "is_phone_verified": true,
+      "is_verified": false,
+      "created_at": "2026-05-01T10:00:00Z"
+    }
+  ],
+  "total": 50, "page": 1, "size": 20, "pages": 3
+}
 ```
 
 ---
@@ -956,7 +989,7 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ```json
 { "reason": "Нарушение условий использования" }
 ```
-Ответ: `204 No Content`.
+Поле `reason` обязательно (минимум 1 символ). Ответ: `204 No Content`.
 
 ---
 
@@ -2013,9 +2046,11 @@ gunzip -c backups/savt_backup_2026-05-18_03-00-00.sql.gz \
 ## Управление через CLI
 
 ```bash
-# Создать администратора
+# Создать администратора (только через CLI — API не предусмотрен намеренно)
 docker exec savt-backend-api-1 python -m app.cli create-admin <login> <password> [full_name]
 
-# Создать оператора
+# Создать оператора через CLI (альтернатива API POST /admin/users/operators)
 docker exec savt-backend-api-1 python -m app.cli create-operator <login> <password> [full_name]
 ```
+
+> Операторов можно создавать и через API (`POST /admin/users/operators`), и через CLI — результат одинаковый. Администратора — только CLI.
