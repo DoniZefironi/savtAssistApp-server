@@ -703,7 +703,7 @@ POST /upload/voice (multipart/form-data, поле: file)
 Создание нового ШУ. `unique_code` генерируется автоматически (64-бит случайный код).
 ```json
 {
-  "type": "Вентиляционная установка",
+  "type": "вентиляционная установка",
   "object_number": "29_099",
   "description": "Описание",
   "warranty_starts_at": "2025-01-01T00:00:00Z",
@@ -713,7 +713,13 @@ POST /upload/voice (multipart/form-data, поле: file)
   "purpose": "Вентиляция"
 }
 ```
-Ответ — полная информация о созданном ШУ включая `unique_code`.
+
+**Поле `type`:**
+- Приводится к нижнему регистру автоматически (`"Вентиляция"` = `"вентиляция"`)
+- Если тип новый — создаётся тег `scope="cabinet_type"` автоматически
+- На фронте: получить список готовых типов через `GET /tags?scope=cabinet_type` и показать выпадающий список
+
+Ответ — полная информация о созданном ШУ включая `unique_code` и `tags`.
 
 ---
 
@@ -966,22 +972,26 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ---
 
 ### GET `/admin/users`
-Список пользователей. Параметры:
-- `search` — поиск по ФИО, телефону, **логину**, **email**, организации
+Только пользователи (`role=user`). Параметры:
+- `search` — поиск по ФИО, телефону, логину, email, организации
 - `is_active` — `true` / `false`
-- `role` — фильтр по роли: `user` / `operator` / `admin` / `superadmin`
-- `sort_by` — `created_at` (по умолч.), `full_name`, `phone`, `email`, `role`
-- `sort_order` — `asc` / `desc` (по умолч. `desc`)
+- `sort_by` — `created_at` (по умолч.), `full_name`, `phone`, `email`
+- `sort_order` — `asc` / `desc`
 - `page`, `size` — пагинация (по умолч. `page=1`, `size=20`, максимум `100`)
 
-**Видимость по ролям:**
-- Без фильтра: только `user` и `operator`
-- `?role=admin`: администраторы (только суперадмин должен вызывать)
-- `?role=superadmin`: суперадмины
-- `bot` и удалённые операторы (`_deleted_*`) никогда не показываются
+---
 
-При `sort_by=role` порядок: operator → user → admin.
+### GET `/admin/operators`
+Только операторы (`role=operator`). Параметры: аналогично `/admin/users`.
 
+---
+
+### GET `/admin/admins`
+Только администраторы (`role=admin`). **Только для суперадмина.** Параметры: аналогично `/admin/users`.
+
+---
+
+Все три эндпоинта возвращают `PageOut[AdminUserListOut]`:
 ```json
 {
   "items": [
@@ -1328,27 +1338,30 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 Теги разделены по области видимости (`scope`):
 - `document` — теги для документов и статей базы знаний
 - `cabinet` — теги для ШУ
+- `cabinet_type` — типы ШУ (создаются автоматически при вводе нового типа)
 
 ### GET `/tags`
 Список тегов. Параметры:
-- `scope` — фильтр по области: `document` / `cabinet`. Без фильтра — все теги.
+- `scope` — фильтр: `document` / `cabinet` / `cabinet_type`. Без фильтра — все теги.
 
 ```json
 [
   { "id": 1, "name": "паспорт", "scope": "document" },
-  { "id": 2, "name": "Электрика", "scope": "cabinet" }
+  { "id": 2, "name": "электрика", "scope": "cabinet_type" }
 ]
 ```
+
+> Для автодополнения типа ШУ на фронте: `GET /tags?scope=cabinet_type`
 
 ---
 
 ### POST `/admin/tags`
-Создать тег. Только для администратора/оператора.
+Создать тег вручную.
 ```json
 { "name": "паспорт", "scope": "document" }
 ```
-- `scope`: `document` (по умолчанию) или `cabinet`
-- Имя тега уникально в рамках одной области
+- `scope`: `document` / `cabinet` / `cabinet_type`
+- Имя тега уникально в рамках одной области (сравнение без учёта регистра)
 
 ---
 

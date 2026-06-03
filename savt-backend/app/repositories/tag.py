@@ -22,7 +22,7 @@ class TagRepository:
 
     async def get_by_name_and_scope(self, name: str, scope: str) -> Tag | None:
         result = await self.session.execute(
-            select(Tag).where(Tag.name == name, Tag.scope == scope)
+            select(Tag).where(Tag.name.ilike(name), Tag.scope == scope)
         )
         return result.scalar_one_or_none()
 

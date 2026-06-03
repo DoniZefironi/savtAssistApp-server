@@ -13,8 +13,8 @@ from app.services.audit_service import AuditLogger
 
 
 async def _resolve_type(session: AsyncSession, raw_type: str) -> str:
-    """Нормализует тип ШУ и создаёт тег cabinet_type если его нет."""
-    normalized = raw_type.strip()
+    """Нормализует тип ШУ в нижний регистр и создаёт тег cabinet_type если его нет."""
+    normalized = raw_type.strip().lower()
     if not normalized:
         return raw_type
     repo = TagRepository(session)

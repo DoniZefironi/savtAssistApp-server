@@ -45,7 +45,10 @@ class UserRepository(BaseRepository[User]):
                 conditions.append(Role.name == role)
 
         # Удалённые операторы имеют логин вида _deleted_N — скрываем их
-        conditions.append(~User.login.ilike("_deleted_%"))
+        # NULL login (пользователи по телефону) тоже включаем
+        conditions.append(
+            or_(User.login.is_(None), ~User.login.ilike("_deleted_%"))
+        )
 
         if query:
             conditions.append(or_(
