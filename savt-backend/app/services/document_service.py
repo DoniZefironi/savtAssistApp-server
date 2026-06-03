@@ -242,7 +242,6 @@ class UserDocumentService:
         return make_page(items, total, page, size)
 
     async def get_file_path(self, user_id: int, doc_id: int) -> tuple[Path, str, str]:
-        """Возвращает (путь к файлу, mime_type, имя файла) с проверкой доступа."""
         doc = await self.doc_repo.get_by_id(doc_id)
         if doc is None:
             raise NotFoundError("Документ не найден")

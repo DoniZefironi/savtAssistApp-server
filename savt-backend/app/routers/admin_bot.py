@@ -14,6 +14,5 @@ async def reindex(
     _: User = Depends(require_role(RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
-    """Полная переиндексация FAQ, базы знаний и документов ШУ."""
     stats = await reindex_all(session)
     return {"status": "ok", "indexed": stats}

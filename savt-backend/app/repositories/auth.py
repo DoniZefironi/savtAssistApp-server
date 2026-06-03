@@ -109,7 +109,6 @@ class RefreshTokenRepository:
         )
 
     async def trim_sessions(self, user_id: int, max_sessions: int = 5) -> None:
-        """Отзывает старейшие токены если активных сессий больше max_sessions."""
         now = datetime.now(timezone.utc)
         result = await self.session.execute(
             select(RefreshToken)

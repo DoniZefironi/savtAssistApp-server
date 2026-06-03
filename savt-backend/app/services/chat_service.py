@@ -22,14 +22,12 @@ class ChatService:
         self.msg_repo = MessageRepository(session)
 
     async def ensure_support_and_notes(self, user_id: int) -> None:
-        """Создаёт support и notes чаты если их нет. Вызывается при регистрации."""
         for chat_type in ("support", "notes"):
             existing = await self.chat_repo.find(user_id, chat_type)
             if existing is None:
                 await self.chat_repo.create(user_id, chat_type)
 
     async def ensure_cabinet_chat(self, user_id: int, cabinet_id: int) -> Chat:
-        """Создаёт cabinet-чат если его нет. Вызывается при привязке ШУ."""
         existing = await self.chat_repo.find(user_id, "cabinet", cabinet_id)
         if existing is None:
             existing = await self.chat_repo.create(user_id, "cabinet", cabinet_id)

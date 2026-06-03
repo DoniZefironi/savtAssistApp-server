@@ -67,7 +67,6 @@ async def get_current_user(
 async def get_role_from_token(
     credentials: HTTPAuthorizationCredentials | None = Depends(_security),
 ) -> str:
-    """Читает роль из JWT без запроса в БД. Используется для audit logging."""
     if credentials is None:
         return "unknown"
     try:

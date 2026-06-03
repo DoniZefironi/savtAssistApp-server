@@ -29,7 +29,6 @@ class NotificationService:
         body: str,
         data: dict | None = None,
     ) -> None:
-        """Создаёт уведомление в БД и отправляет push если настройки разрешают."""
         settings = await self.repo.get_settings(user_id)
 
         # Проверяем настройки пользователя
@@ -102,7 +101,6 @@ class NotificationService:
         await self.session.commit()
 
     async def broadcast(self, data: BroadcastIn, actor_id: int = 0, actor_role: str = "admin") -> None:
-        """Рассылка promotional уведомления всем или по роли."""
         user_ids = await self.repo.get_all_user_ids(data.role)
         for user_id in user_ids:
             await self.repo.create(

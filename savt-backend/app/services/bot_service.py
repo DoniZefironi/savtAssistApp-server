@@ -43,7 +43,6 @@ async def get_bot_user_id(session: AsyncSession) -> int | None:
 
 
 async def ensure_bot_user(session: AsyncSession) -> int:
-    """Создаёт системного пользователя-бота если его нет. Возвращает его id."""
     from app.models.role import Role
     from app.models.user import User
     from app.core.security import hash_password
@@ -90,7 +89,6 @@ _SOURCE_LABELS = {
 async def _retrieve_context(
     session: AsyncSession, query: str, cabinet_id: int | None, k: int = 3
 ) -> list[dict]:
-    """RAG: возвращает k чанков с меткой источника."""
     vec = cast(await yandex_service.embed_query(query), Vector(256))
 
     stmt = (
@@ -146,7 +144,6 @@ async def handle_message(
     chat_id: int,
     user_text: str | None,
 ) -> None:
-    """Главный обработчик входящего сообщения пользователя."""
     if not user_text:
         return
 
@@ -235,7 +232,6 @@ async def handle_message(
 
 
 async def send_follow_up(session: AsyncSession) -> None:
-    """APScheduler job: отправляет follow-up в неактивные чаты."""
     from datetime import timedelta
     from sqlalchemy import and_
 

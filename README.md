@@ -806,10 +806,15 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 
 ---
 
-## Рут `admin: cabinet requests` — заявки по ШУ (админ/оператор)
+## Рут `admin: cabinet requests` — заявки по ШУ (просмотр — оператор/админ, одобрение/отклонение — только админ)
 
 ### GET `/admin/cabinet-requests/additions`
-Заявки на добавление ШУ через фото. Параметры: `status=pending|approved|rejected`, `page`, `size`
+Заявки на добавление ШУ через фото. Параметры:
+- `status` — `pending` / `approved` / `rejected`
+- `search` — поиск по ФИО, телефону, организации пользователя
+- `sort_by` — `created_at` (по умолч.), `status`, `user_full_name`
+- `sort_order` — `asc` / `desc`
+- `page`, `size`
 
 ```json
 [
@@ -818,6 +823,10 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
     "user_id": 8,
     "user_full_name": "Иванов Иван",
     "user_phone": "+375291234567",
+    "user_type": "individual",
+    "organization_name": null,
+    "user_is_verified": false,
+    "user_registered_at": "2026-04-01T10:00:00Z",
     "photo_url": "/static/photos/abc.jpg",
     "user_comment": "Шкаф на заводе",
     "status": "pending",
@@ -854,7 +863,12 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ---
 
 ### GET `/admin/cabinet-requests/shares`
-Заявки на доступ к уже существующему ШУ (сканирован QR, но ШУ уже занят). Параметры: `status=pending|approved|rejected`, `page`, `size`
+Заявки на доступ к уже существующему ШУ (сканирован QR, но ШУ уже занят). Параметры:
+- `status` — `pending` / `approved` / `rejected`
+- `search` — поиск по ФИО/телефону пользователя, типу/номеру/названию ШУ
+- `sort_by` — `created_at` (по умолч.), `status`, `user_full_name`, `cabinet_object_number`
+- `sort_order` — `asc` / `desc`
+- `page`, `size`
 
 ```json
 [
@@ -863,6 +877,10 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
     "user_id": 10,
     "user_full_name": "Петров Пётр",
     "user_phone": "+375291111111",
+    "user_type": "organization",
+    "organization_name": "ООО Ромашка",
+    "user_is_verified": true,
+    "user_registered_at": "2026-03-15T08:00:00Z",
     "cabinet_id": 5,
     "cabinet_type": "Вентиляционная установка",
     "cabinet_object_number": "29_099",
@@ -899,6 +917,19 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 
 > Список **не показывает** пользователей с ролями `admin` и `bot` (системные аккаунты). Только `user` и `operator`.
 
+### POST `/admin/users/admins`
+Создать администратора. Только для **суперадмина**. Логируется в `audit_log`.
+```json
+{
+  "login": "admin2",
+  "password": "securePass8",
+  "full_name": "Сидоров Сидор"
+}
+```
+Ответ: созданный пользователь (`AdminUserListOut`), `201 Created`.
+
+---
+
 ### POST `/admin/users/operators`
 Создать оператора. Только для администратора. Логируется в `audit_log`.
 ```json
@@ -914,23 +945,42 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 
 Ответ: созданный пользователь (`AdminUserListOut`), `201 Created`.
 
-> Создание **администратора** — только через CLI:
+> Создание **администратора** — через API (только суперадмин) или CLI:
 > ```bash
 > docker exec savt-backend-api-1 python -m app.cli create-admin <login> <password> [full_name]
 > ```
 
 ---
 
+### DELETE `/admin/users/operators/{user_id}`
+Удалить оператора. Только для администратора. Логируется в `audit_log`.
+
+Что происходит:
+- Все сессии оператора немедленно отзываются (принудительный logout)
+- Аккаунт деактивируется и анонимизируется
+- Переписка в чатах сохраняется
+- Оператор исчезает из всех списков
+
+Ответ: `204 No Content`.
+
+---
+
 ### GET `/admin/users`
-Список пользователей с ролями `user` и `operator`. Параметры:
-- `search` — поиск по ФИО, телефону, организации
+Список пользователей. Параметры:
+- `search` — поиск по ФИО, телефону, **логину**, **email**, организации
 - `is_active` — `true` / `false`
-- `role` — фильтр по роли: `user` / `operator`
-- `sort_by` — сортировка: `created_at` (по умолч.), `full_name`, `role`
+- `role` — фильтр по роли: `user` / `operator` / `admin` / `superadmin`
+- `sort_by` — `created_at` (по умолч.), `full_name`, `phone`, `email`, `role`
 - `sort_order` — `asc` / `desc` (по умолч. `desc`)
 - `page`, `size` — пагинация (по умолч. `page=1`, `size=20`, максимум `100`)
 
-При `sort_by=role` операторы показываются первыми.
+**Видимость по ролям:**
+- Без фильтра: только `user` и `operator`
+- `?role=admin`: администраторы (только суперадмин должен вызывать)
+- `?role=superadmin`: суперадмины
+- `bot` и удалённые операторы (`_deleted_*`) никогда не показываются
+
+При `sort_by=role` порядок: operator → user → admin.
 
 ```json
 {
@@ -1361,6 +1411,7 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
     "chat_type": "cabinet",
     "cabinet_id": 5,
     "cabinet_name": "ШУ-18К",
+    "cabinet_object_number": "29_099",
     "last_message_text": "Здравствуйте, помогите",
     "last_message_at": "2026-05-15T10:00:00Z",
     "unread_count": 2,
@@ -1382,6 +1433,7 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 История сообщений. Параметры:
 - `before_id` — ID сообщения, загрузить более старые (cursor pagination для бесконечного скролла)
 - `limit` — количество (по умолчанию `30`, максимум `100`)
+- `search` — поиск по тексту сообщений
 
 Сообщения возвращаются от новых к старым.
 ```json
@@ -1454,12 +1506,19 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ## Рут `operator` — операторский интерфейс
 
 ### GET `/operator/chats`
-Все `cabinet` и `support` чаты. Сортировка: сначала ожидающие оператора (`operator_requested=true`).
+Все `cabinet` и `support` чаты. Параметры:
+- `search` — поиск по имени/телефону пользователя, номеру/типу/названию ШУ
+
+Сортировка: сначала ожидающие оператора (`operator_requested=true`), затем по последнему сообщению.
+
+Каждый чат содержит `user_id`, `user_name`, `cabinet_object_number`.
 
 ---
 
 ### GET `/operator/chats/{chat_id}/messages`
-История сообщений чата (аналогично пользовательскому, но без ограничения владельца).
+История сообщений чата. Параметры:
+- `before_id`, `limit` — cursor pagination
+- `search` — поиск по тексту сообщений
 
 ---
 
@@ -1738,7 +1797,9 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 Список записей. Параметры:
 - `category_id` — фильтр по категории
 - `tag_ids` — фильтр по тегам (`?tag_ids=1&tag_ids=2`)
-- `search` — поиск по заголовку
+- `search` — поиск по заголовку **и содержимому**
+- `sort_by` — `created_at` (по умолч.), `updated_at`, `title`
+- `sort_order` — `asc` / `desc`
 - `page`, `size` — пагинация
 
 ```json
@@ -1751,7 +1812,7 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
       "slug": "pasport-shu-a1b2c3",
       "description": "Техническая документация для ВУ-100",
       "created_at": "2026-05-15T10:00:00Z",
-      "tags": [{ "id": 1, "name": "паспорт" }],
+      "tags": [{ "id": 1, "name": "паспорт", "scope": "document" }],
       "attachment_count": 3
     }
   ],
@@ -1873,7 +1934,9 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ### GET `/faq/entries`
 Список вопросов. Параметры:
 - `category_id` — фильтр по категории
-- `search` — поиск по тексту вопроса
+- `search` — поиск по тексту **вопроса и ответа**
+- `sort_by` — `created_at` (по умолч.), `updated_at`, `question`
+- `sort_order` — `asc` / `desc`
 - `page`, `size` — пагинация
 
 ```json
@@ -2077,11 +2140,18 @@ gunzip -c backups/savt_backup_2026-05-18_03-00-00.sql.gz \
 ## Управление через CLI
 
 ```bash
-# Создать администратора (только через CLI — API не предусмотрен намеренно)
+# Создать суперадмина (только через CLI — намеренно нет API)
+docker exec savt-backend-api-1 python -m app.cli create-superadmin <login> <password> [full_name]
+
+# Создать администратора через CLI (альтернатива API POST /admin/users/admins, доступна суперадмину)
 docker exec savt-backend-api-1 python -m app.cli create-admin <login> <password> [full_name]
 
 # Создать оператора через CLI (альтернатива API POST /admin/users/operators)
 docker exec savt-backend-api-1 python -m app.cli create-operator <login> <password> [full_name]
 ```
 
-> Операторов можно создавать и через API (`POST /admin/users/operators`), и через CLI — результат одинаковый. Администратора — только CLI.
+| Кто создаёт | Через CLI | Через API |
+|---|---|---|
+| Суперадмин | ✅ | ❌ только CLI |
+| Администратор | ✅ | ✅ `POST /admin/users/admins` (суперадмин) |
+| Оператор | ✅ | ✅ `POST /admin/users/operators` (администратор) |

@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class SmsProvider(ABC):
     @abstractmethod
     async def send_verification_code(self, phone: str, code: str) -> None:
-        """Отправить SMS с кодом подтверждения."""
+        """Отправляет код подтверждения на указанный телефон."""
 
 # Для тестирования создания кодов, никуда не отправляет коды, это mock в .env, если вдруг sms-сервис вмэр, 
 # для получения кода в консоле написать "docker compose logs api", там будет что-то SMS на +375XXXXXXXX КОД = 228228

@@ -47,7 +47,6 @@ async def take_chat(
     _: User = Depends(require_role(RoleName.OPERATOR, RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
-    """Оператор берёт чат — бот замолкает."""
     await ChatService(session).operator_take_chat(chat_id)
 
 # Вернуть боту
@@ -57,5 +56,4 @@ async def return_to_bot(
     _: User = Depends(require_role(RoleName.OPERATOR, RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
-    """Оператор возвращает чат боту."""
     await ChatService(session).operator_return_to_bot(chat_id)

@@ -16,7 +16,6 @@ CHUNK_SIZE = 800
 CHUNK_OVERLAP = 100
 
 
-# ── Чанкинг ──────────────────────────────────────────────────────────────────
 
 def _chunks(text: str) -> list[str]:
     text = text.strip()
@@ -31,7 +30,6 @@ def _chunks(text: str) -> list[str]:
     return result
 
 
-# ── Парсинг файлов ────────────────────────────────────────────────────────────
 
 def _parse_pdf(path: Path) -> str:
     try:
@@ -52,7 +50,6 @@ def _parse_docx(path: Path) -> str:
 
 
 def _extract_text(file_url: str) -> str:
-    """Извлекает текст из файла по URL вида /static/..."""
     relative = file_url.removeprefix("/static/")
     path = UPLOAD_ROOT / relative
     if not path.exists():
@@ -65,7 +62,6 @@ def _extract_text(file_url: str) -> str:
     return ""
 
 
-# ── Сохранение эмбеддингов ───────────────────────────────────────────────────
 
 async def _upsert_chunks(
     session: AsyncSession,
@@ -95,7 +91,6 @@ async def _upsert_chunks(
     await session.flush()
 
 
-# ── Публичные функции индексации ─────────────────────────────────────────────
 
 async def index_faq_entry(session: AsyncSession, entry: FaqEntry) -> None:
     text = f"Вопрос: {entry.question}\nОтвет: {entry.answer}"
@@ -130,7 +125,6 @@ async def index_document(session: AsyncSession, doc: Document) -> None:
 
 
 async def reindex_all(session: AsyncSession) -> dict:
-    """Полная переиндексация всех источников. Возвращает статистику."""
     stats = {"faq": 0, "kb_article": 0, "document": 0}
 
     entries = (await session.execute(select(FaqEntry))).scalars().all()

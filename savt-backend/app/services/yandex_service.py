@@ -29,12 +29,10 @@ def _headers() -> dict:
 
 
 async def embed_document(text: str) -> list[float]:
-    """Эмбеддинг для индексируемых документов (без кэша — каждый чанк уникален)."""
     return await _embed(text, "text-search-doc")
 
 
 async def embed_query(text: str) -> list[float]:
-    """Эмбеддинг поискового запроса с кэшированием."""
     key = text.strip().lower()[:200]
     if key in _QUERY_CACHE:
         return _QUERY_CACHE[key]
@@ -58,7 +56,6 @@ async def _embed(text: str, model_type: str) -> list[float]:
 
 
 async def complete(system_prompt: str, messages: list[dict]) -> str:
-    """Генерация ответа YandexGPT."""
     model_uri = f"gpt://{settings.yandex_folder_id}/{settings.yandex_gpt_model}/latest"
 
     yandex_messages = [{"role": "system", "text": system_prompt}]

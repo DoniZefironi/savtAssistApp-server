@@ -53,12 +53,10 @@ class FileInfo:
 
 
 async def save_attachment(file: UploadFile) -> str:
-    """Сохраняет вложение и возвращает URL (для /upload/attachment)."""
     return (await save_attachment_with_meta(file)).url
 
 
 async def save_attachment_with_meta(file: UploadFile) -> FileInfo:
-    """Сохраняет вложение и возвращает полные метаданные (для документов)."""
     if file.content_type not in _ATTACHMENT_TYPES:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
