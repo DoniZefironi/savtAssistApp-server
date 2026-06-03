@@ -5,10 +5,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
 from app.repositories.cabinet import CabinetRepository
+from app.repositories.tag import TagRepository
 from app.schemas.cabinet import CabinetCreateIn, CabinetListOut, CabinetOut, CabinetUpdateIn
 from app.schemas.tags import TagOut
 from app.schemas.pagination import PageOut, make_page
 from app.services.audit_service import AuditLogger
+
+
+async def _resolve_type(session: AsyncSession, raw_type: str) -> str:
+    """Нормализует тип ШУ и создаёт тег cabinet_type если его нет."""
+    normalized = raw_type.strip()
+    if not normalized:
+        return raw_type
+    repo = TagRepository(session)
+    existing = await repo.get_by_name_and_scope(normalized, "cabinet_type")
+    if existing is None:
+        await repo.create(normalized, "cabinet_type")
+    return normalized
 
 
 def _warranty_status(ends_at: datetime) -> str:
@@ -31,7 +44,7 @@ class CabinetService:
         unique_code = await self._generate_unique_code()
         cabinet = await self.repo.create(
             unique_code=unique_code,
-            type=data.type,
+            type=await _resolve_type(self.session, data.type),
             object_number=data.object_number,
             description=data.description,
             warranty_starts_at=data.warranty_starts_at,
@@ -74,6 +87,8 @@ class CabinetService:
         if cabinet is None:
             raise NotFoundError("ШУ не найден")
         changed = data.model_dump(exclude_unset=True)
+        if "type" in changed and changed["type"]:
+            changed["type"] = await _resolve_type(self.session, changed["type"])
         for field, value in changed.items():
             setattr(cabinet, field, value)
         self.audit.log("cabinet.update", "cabinet", cabinet_id, actor_id, actor_role, {"fields": list(changed.keys())})

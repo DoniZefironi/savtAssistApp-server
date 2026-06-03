@@ -12,7 +12,7 @@ router = APIRouter(tags=["tags"])
 
 @router.get("/tags", response_model=list[TagOut])
 async def list_tags(
-    scope: str | None = Query(None, pattern="^(document|cabinet)$"),
+    scope: str | None = Query(None, pattern="^(document|cabinet|cabinet_type)$"),
     _: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):

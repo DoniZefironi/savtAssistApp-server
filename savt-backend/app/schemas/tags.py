@@ -11,7 +11,7 @@ class TagOut(BaseModel):
 
 class TagCreateIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
-    scope: str = Field("document", pattern="^(document|cabinet)$")
+    scope: str = Field("document", pattern="^(document|cabinet|cabinet_type)$")
 
 
 class DocumentTagsIn(BaseModel):

@@ -40,12 +40,11 @@ async def create_operator(
     return await AdminUserService(session).create_operator(payload, actor.id, actor_role)
 
 
-# Все пользователи
+# Пользователи (role=user)
 @router.get("/admin/users", response_model=PageOut[AdminUserListOut])
 async def list_users(
     search: str | None = Query(None),
     is_active: bool | None = Query(None),
-    role: str | None = Query(None, pattern="^(user|operator|admin|superadmin)$"),
     sort_by: str = Query("created_at", pattern="^(created_at|full_name|phone|email|role)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
@@ -54,7 +53,45 @@ async def list_users(
     session: AsyncSession = Depends(get_session),
 ):
     return await AdminUserService(session).list_users(
-        query=search, is_active=is_active, role=role,
+        query=search, is_active=is_active, role="user",
+        sort_by=sort_by, sort_order=sort_order,
+        page=page, size=size,
+    )
+
+
+# Операторы (role=operator)
+@router.get("/admin/operators", response_model=PageOut[AdminUserListOut])
+async def list_operators(
+    search: str | None = Query(None),
+    is_active: bool | None = Query(None),
+    sort_by: str = Query("created_at", pattern="^(created_at|full_name|phone|email)$"),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$"),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    session: AsyncSession = Depends(get_session),
+):
+    return await AdminUserService(session).list_users(
+        query=search, is_active=is_active, role="operator",
+        sort_by=sort_by, sort_order=sort_order,
+        page=page, size=size,
+    )
+
+
+# Администраторы (role=admin) — только суперадмин
+@router.get("/admin/admins", response_model=PageOut[AdminUserListOut])
+async def list_admins(
+    search: str | None = Query(None),
+    is_active: bool | None = Query(None),
+    sort_by: str = Query("created_at", pattern="^(created_at|full_name|phone|email)$"),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$"),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    _: User = Depends(require_role(RoleName.SUPERADMIN)),
+    session: AsyncSession = Depends(get_session),
+):
+    return await AdminUserService(session).list_users(
+        query=search, is_active=is_active, role="admin",
         sort_by=sort_by, sort_order=sort_order,
         page=page, size=size,
     )
