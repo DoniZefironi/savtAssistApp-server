@@ -77,10 +77,13 @@ class FaqEntryService:
         self,
         category_id: int | None,
         search: str | None,
-        page: int,
-        size: int,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+        page: int = 1,
+        size: int = 20,
     ) -> PageOut[FaqEntryOut]:
         items, total = await self.repo.list_entries(
-            category_id, search, offset=(page - 1) * size, limit=size
+            category_id, search, sort_by, sort_order,
+            offset=(page - 1) * size, limit=size,
         )
         return make_page([FaqEntryOut.model_validate(e) for e in items], total, page, size)

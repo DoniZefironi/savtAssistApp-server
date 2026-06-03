@@ -41,18 +41,25 @@ class ChatRepository:
         )
         return list(result.scalars().all())
 
-    async def list_for_operator(self) -> list[Chat]:
+    async def list_for_operator(self, search: str | None = None) -> list[Chat]:
         from sqlalchemy import or_
-        result = await self.session.execute(
+        from app.models.cabinets import Cabinet
+        stmt = (
             select(Chat)
-            .where(
-                or_(
-                    Chat.chat_type == "cabinet",
-                    Chat.chat_type == "support",
-                )
-            )
-            .order_by(Chat.operator_requested.desc(), Chat.last_message_at.desc().nullslast())
+            .outerjoin(User, User.id == Chat.user_id)
+            .outerjoin(Cabinet, Cabinet.id == Chat.cabinet_id)
+            .where(or_(Chat.chat_type == "cabinet", Chat.chat_type == "support"))
         )
+        if search:
+            stmt = stmt.where(or_(
+                User.full_name.ilike(f"%{search}%"),
+                User.phone.ilike(f"%{search}%"),
+                Cabinet.object_number.ilike(f"%{search}%"),
+                Cabinet.admin_internal_name.ilike(f"%{search}%"),
+                Cabinet.type.ilike(f"%{search}%"),
+            ))
+        stmt = stmt.order_by(Chat.operator_requested.desc(), Chat.last_message_at.desc().nullslast())
+        result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
     async def get_unread_count(self, chat_id: int, user_id: int) -> int:
@@ -96,6 +103,7 @@ class MessageRepository:
         chat_id: int,
         before_id: int | None = None,
         limit: int = 30,
+        search: str | None = None,
     ) -> list[tuple]:
         stmt = (
             select(Message, User)
@@ -104,6 +112,8 @@ class MessageRepository:
         )
         if before_id is not None:
             stmt = stmt.where(Message.id < before_id)
+        if search:
+            stmt = stmt.where(Message.text.ilike(f"%{search}%"))
         stmt = stmt.order_by(Message.id.desc()).limit(limit)
         result = await self.session.execute(stmt)
         return result.all()

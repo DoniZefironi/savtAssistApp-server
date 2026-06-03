@@ -1,13 +1,23 @@
 import secrets
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
-from app.models.cabinets import Cabinet
 from app.repositories.cabinet import CabinetRepository
-from app.schemas.cabinet import CabinetCreateIn, CabinetListOut, CabinetUpdateIn
+from app.schemas.cabinet import CabinetCreateIn, CabinetListOut, CabinetOut, CabinetUpdateIn
+from app.schemas.tags import TagOut
 from app.schemas.pagination import PageOut, make_page
 from app.services.audit_service import AuditLogger
+
+
+def _warranty_status(ends_at: datetime) -> str:
+    now = datetime.now(timezone.utc)
+    if ends_at < now:
+        return "expired"
+    if ends_at < now + timedelta(days=30):
+        return "expiring_soon"
+    return "active"
 
 
 class CabinetService:
@@ -17,7 +27,7 @@ class CabinetService:
         self.audit = AuditLogger(session)
 
     # Создание ШУ
-    async def create(self, data: CabinetCreateIn, actor_id: int, actor_role: str) -> Cabinet:
+    async def create(self, data: CabinetCreateIn, actor_id: int, actor_role: str) -> CabinetOut:
         unique_code = await self._generate_unique_code()
         cabinet = await self.repo.create(
             unique_code=unique_code,
@@ -34,26 +44,42 @@ class CabinetService:
         self.audit.log("cabinet.create", "cabinet", cabinet.id, actor_id, actor_role,
                        {"object_number": cabinet.object_number, "type": cabinet.type})
         await self.session.commit()
-        await self.session.refresh(cabinet)
-        return cabinet
+        return await self.get(cabinet.id)
 
-    # Получение ШУ
-    async def get(self, cabinet_id: int) -> Cabinet:
+    # Получение ШУ с тегами
+    async def get(self, cabinet_id: int) -> CabinetOut:
         cabinet = await self.repo.get_by_id(cabinet_id)
         if cabinet is None:
             raise NotFoundError("ШУ не найден")
-        return cabinet
+        tags_map = await self.repo.get_tags([cabinet_id])
+        return CabinetOut(
+            id=cabinet.id,
+            unique_code=cabinet.unique_code,
+            type=cabinet.type,
+            object_number=cabinet.object_number,
+            description=cabinet.description,
+            warranty_starts_at=cabinet.warranty_starts_at,
+            warranty_ends_at=cabinet.warranty_ends_at,
+            admin_internal_name=cabinet.admin_internal_name,
+            admin_comment=cabinet.admin_comment,
+            purpose=cabinet.purpose,
+            tags=[TagOut.model_validate(t) for t in tags_map.get(cabinet_id, [])],
+            created_at=cabinet.created_at,
+            updated_at=cabinet.updated_at,
+        )
 
     # Обновление ШУ
-    async def update(self, cabinet_id: int, data: CabinetUpdateIn, actor_id: int, actor_role: str) -> Cabinet:
-        cabinet = await self.get(cabinet_id)
+    async def update(self, cabinet_id: int, data: CabinetUpdateIn, actor_id: int, actor_role: str) -> CabinetOut:
+        cabinet = await self.repo.get_by_id(cabinet_id)
+        if cabinet is None:
+            raise NotFoundError("ШУ не найден")
         changed = data.model_dump(exclude_unset=True)
         for field, value in changed.items():
             setattr(cabinet, field, value)
         self.audit.log("cabinet.update", "cabinet", cabinet_id, actor_id, actor_role, {"fields": list(changed.keys())})
         await self.session.commit()
         await self.session.refresh(cabinet)
-        return cabinet
+        return await self.get(cabinet_id)
 
     # Удаление ШУ
     async def delete(self, cabinet_id: int, actor_id: int, actor_role: str) -> None:
@@ -67,17 +93,46 @@ class CabinetService:
     async def list_all(
         self,
         query: str | None = None,
+        tag_ids: list[int] | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
         page: int = 1,
         size: int = 20,
     ) -> PageOut[CabinetListOut]:
         offset = (page - 1) * size
-        items, total = await self.repo.search(
-            query=query, sort_by=sort_by, sort_order=sort_order,
+        cabinets, total = await self.repo.search(
+            query=query, tag_ids=tag_ids, sort_by=sort_by, sort_order=sort_order,
             offset=offset, limit=size,
         )
+        cabinet_ids = [c.id for c in cabinets]
+        tags_map = await self.repo.get_tags(cabinet_ids)
+        items = [
+            CabinetListOut(
+                id=c.id,
+                unique_code=c.unique_code,
+                type=c.type,
+                object_number=c.object_number,
+                purpose=c.purpose,
+                warranty_starts_at=c.warranty_starts_at,
+                warranty_ends_at=c.warranty_ends_at,
+                warranty_status=_warranty_status(c.warranty_ends_at),
+                admin_internal_name=c.admin_internal_name,
+                admin_comment=c.admin_comment,
+                tags=[TagOut.model_validate(t) for t in tags_map.get(c.id, [])],
+                created_at=c.created_at,
+            )
+            for c in cabinets
+        ]
         return make_page(items, total, page, size)
+
+    # Привязать теги к ШУ
+    async def set_tags(self, cabinet_id: int, tag_ids: list[int], actor_id: int, actor_role: str) -> None:
+        cabinet = await self.repo.get_by_id(cabinet_id)
+        if cabinet is None:
+            raise NotFoundError("ШУ не найден")
+        await self.repo.set_tags(cabinet_id, tag_ids)
+        self.audit.log("cabinet.set_tags", "cabinet", cabinet_id, actor_id, actor_role, {"tag_ids": tag_ids})
+        await self.session.commit()
 
     # Генерация уникального кода(хранится в кур-коде)
     async def _generate_unique_code(self) -> str:

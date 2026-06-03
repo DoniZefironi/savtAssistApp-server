@@ -1,6 +1,8 @@
 from datetime import datetime
 from pydantic import BaseModel, Field, model_validator
 
+from app.schemas.tags import TagOut
+
 
 class CabinetCreateIn(BaseModel):
     type: str = Field(..., min_length=1, max_length=100)
@@ -48,6 +50,7 @@ class CabinetOut(BaseModel):
     admin_internal_name: str | None
     admin_comment: str | None
     purpose: str | None
+    tags: list[TagOut] = []
     created_at: datetime
     updated_at: datetime
 
@@ -57,10 +60,15 @@ class CabinetOut(BaseModel):
 class CabinetListOut(BaseModel):
     id: int
     unique_code: str
+    type: str
     object_number: str
+    purpose: str | None
     warranty_starts_at: datetime
     warranty_ends_at: datetime
+    warranty_status: str
     admin_internal_name: str | None
+    admin_comment: str | None
+    tags: list[TagOut] = []
     created_at: datetime
 
     model_config = {"from_attributes": True}

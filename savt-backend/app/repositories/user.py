@@ -33,30 +33,44 @@ class UserRepository(BaseRepository[User]):
         offset: int = 0,
         limit: int = 20,
     ) -> tuple[list, int]:
-        # системные роли не показываем
-        _hidden = ["admin", "bot"]
-        conditions = [~Role.name.in_(_hidden)]
+        # bot всегда скрыт; superadmin всегда скрыт в общем списке
+        # admin виден только при явном role=admin или role=superadmin
+        _always_hidden = ["bot", "superadmin"]
+        if role in ("admin", "superadmin"):
+            conditions = [Role.name == role]
+        else:
+            _hidden = _always_hidden + (["admin"] if role not in ("user", "operator") else [])
+            conditions = [~Role.name.in_(_hidden)]
+            if role in ("user", "operator"):
+                conditions.append(Role.name == role)
+
+        # Удалённые операторы имеют логин вида _deleted_N — скрываем их
+        conditions.append(~User.login.ilike("_deleted_%"))
 
         if query:
             conditions.append(or_(
                 User.full_name.ilike(f"%{query}%"),
                 User.phone.ilike(f"%{query}%"),
+                User.login.ilike(f"%{query}%"),
+                User.email.ilike(f"%{query}%"),
                 User.organization_name.ilike(f"%{query}%"),
             ))
         if is_active is not None:
             conditions.append(User.is_active == is_active)
-        if role in ("user", "operator"):
-            conditions.append(Role.name == role)
 
-        # Роли: operator выводится первым, потом user
-        _role_order = case({"operator": 0, "user": 1}, value=Role.name, else_=2)
-
-        _sort_map = {
-            "created_at": (User.created_at.desc() if sort_order == "desc" else User.created_at.asc()),
-            "full_name":  (User.full_name.asc()    if sort_order == "asc"  else User.full_name.desc()),
-            "role":       (_role_order.asc()        if sort_order == "asc"  else _role_order.desc()),
+        _role_order = case({"operator": 0, "user": 1, "admin": 2}, value=Role.name, else_=3)
+        _col = {
+            "created_at": User.created_at,
+            "full_name":  User.full_name,
+            "phone":      User.phone,
+            "email":      User.email,
         }
-        order_col = _sort_map.get(sort_by, User.created_at.desc())
+        if sort_by in _col:
+            order_col = _col[sort_by].asc() if sort_order == "asc" else _col[sort_by].desc()
+        elif sort_by == "role":
+            order_col = _role_order.asc() if sort_order == "asc" else _role_order.desc()
+        else:
+            order_col = User.created_at.desc()
 
         count_stmt = (
             select(func.count(User.id))

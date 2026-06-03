@@ -22,9 +22,11 @@ async def list_categories(
 async def list_entries(
     category_id: int | None = Query(None, gt=0),
     search: str | None = Query(None, min_length=1, max_length=200),
+    sort_by: str = Query("created_at", pattern="^(created_at|updated_at|question)$"),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     _: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    return await FaqEntryService(session).list_entries(category_id, search, page, size)
+    return await FaqEntryService(session).list_entries(category_id, search, sort_by, sort_order, page, size)

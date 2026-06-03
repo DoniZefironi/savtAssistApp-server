@@ -1,4 +1,4 @@
-from sqlalchemy import String 
+from sqlalchemy import String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -6,10 +6,9 @@ from app.database import Base
 
 class Tag(Base):
     __tablename__ = "tags"
+    __table_args__ = (UniqueConstraint("name", "scope", name="uq_tag_name_scope"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    # Название тега
-    name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
-
-    def __repr__(self) -> str:
-        return f"<Tag id={self.id} name={self.name}>"
+    name: Mapped[str] = mapped_column(String(100), index=True)
+    # document | cabinet
+    scope: Mapped[str] = mapped_column(String(20), default="document", index=True)

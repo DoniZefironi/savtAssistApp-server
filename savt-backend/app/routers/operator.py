@@ -12,10 +12,11 @@ router = APIRouter(prefix="/operator", tags=["operator"])
 # Все чаты
 @router.get("/chats", response_model=list[ChatListOut])
 async def list_operator_chats(
+    search: str | None = Query(None, min_length=1, max_length=200),
     operator: User = Depends(require_role(RoleName.OPERATOR, RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
-    return await ChatService(session).list_operator_chats(operator.id)
+    return await ChatService(session).list_operator_chats(operator.id, search)
 
 # Получить сообщения
 @router.get("/chats/{chat_id}/messages", response_model=list[MessageOut])
@@ -23,10 +24,11 @@ async def get_messages(
     chat_id: int,
     before_id: int | None = Query(None),
     limit: int = Query(30, ge=1, le=100),
+    search: str | None = Query(None, min_length=1, max_length=200),
     operator: User = Depends(require_role(RoleName.OPERATOR, RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
-    return await ChatService(session).get_messages(chat_id, operator.id, before_id, limit)
+    return await ChatService(session).get_messages(chat_id, operator.id, before_id, limit, search)
 
 # Все чаты
 @router.post("/chats/{chat_id}/messages", response_model=MessageOut, status_code=status.HTTP_201_CREATED)

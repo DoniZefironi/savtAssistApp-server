@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleName
@@ -12,10 +12,11 @@ router = APIRouter(tags=["tags"])
 
 @router.get("/tags", response_model=list[TagOut])
 async def list_tags(
+    scope: str | None = Query(None, pattern="^(document|cabinet)$"),
     _: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    return await TagService(session).list_all()
+    return await TagService(session).list_all(scope=scope)
 
 
 @router.post("/admin/tags", response_model=TagOut, status_code=status.HTTP_201_CREATED)

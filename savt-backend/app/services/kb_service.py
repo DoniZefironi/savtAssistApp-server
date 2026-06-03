@@ -98,13 +98,17 @@ class KbArticleService:
         category_id: int | None,
         tag_ids: list[int] | None,
         search: str | None,
-        page: int,
-        size: int,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+        page: int = 1,
+        size: int = 20,
     ) -> PageOut[KbArticleListOut]:
         articles, total = await self.repo.list_articles(
             category_id=category_id,
             tag_ids=tag_ids,
             search=search,
+            sort_by=sort_by,
+            sort_order=sort_order,
             offset=(page - 1) * size,
             limit=size,
         )

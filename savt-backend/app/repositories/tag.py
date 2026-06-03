@@ -10,19 +10,24 @@ class TagRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def get_all(self) -> list[Tag]:
-        result = await self.session.execute(select(Tag).order_by(Tag.name))
+    async def get_all(self, scope: str | None = None) -> list[Tag]:
+        stmt = select(Tag).order_by(Tag.name)
+        if scope:
+            stmt = stmt.where(Tag.scope == scope)
+        result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
     async def get_by_id(self, tag_id: int) -> Tag | None:
         return await self.session.get(Tag, tag_id)
 
-    async def get_by_name(self, name: str) -> Tag | None:
-        result = await self.session.execute(select(Tag).where(Tag.name == name))
+    async def get_by_name_and_scope(self, name: str, scope: str) -> Tag | None:
+        result = await self.session.execute(
+            select(Tag).where(Tag.name == name, Tag.scope == scope)
+        )
         return result.scalar_one_or_none()
 
-    async def create(self, name: str) -> Tag:
-        tag = Tag(name=name)
+    async def create(self, name: str, scope: str = "document") -> Tag:
+        tag = Tag(name=name, scope=scope)
         self.session.add(tag)
         await self.session.flush()
         return tag

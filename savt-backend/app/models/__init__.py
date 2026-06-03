@@ -27,6 +27,7 @@ from app.models.audit_log import AuditLog
 from app.models.notification import Notification
 from app.models.document_tag import DocumentTag
 from app.models.kb_article_tag import KbArticleTag
+from app.models.cabinet_tag import CabinetTag
 from app.models.kb_article_attachment import KbArticleAttachment
 from app.models.user_favorite import UserFavorite
 from app.models.warranty_notif_log import WarrantyNotifLog
@@ -40,6 +41,6 @@ __all__ = [
     "Chat", "Message", "MessageAttachment", "MessageReaction",
     "Tag", "KbCategory", "KbArticle", "FaqCategory", "FaqEntry",
     "DeviceToken", "NotificationSettings", "AuditLog", "Notification",
-    "DocumentTag", "KbArticleTag", "KbArticleAttachment", "UserFavorite",
+    "DocumentTag", "KbArticleTag", "CabinetTag", "KbArticleAttachment", "UserFavorite",
     "WarrantyNotifLog", "Embedding",
 ]

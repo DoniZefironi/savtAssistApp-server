@@ -7,6 +7,10 @@ class AdditionRequestOut(BaseModel):
     user_id: int
     user_full_name: str | None
     user_phone: str | None
+    user_type: str | None
+    organization_name: str | None
+    user_is_verified: bool
+    user_registered_at: datetime
     photo_url: str
     user_comment: str | None
     status: str
@@ -21,6 +25,10 @@ class ShareRequestOut(BaseModel):
     user_id: int
     user_full_name: str | None
     user_phone: str | None
+    user_type: str | None
+    organization_name: str | None
+    user_is_verified: bool
+    user_registered_at: datetime
     cabinet_id: int
     cabinet_type: str
     cabinet_object_number: str

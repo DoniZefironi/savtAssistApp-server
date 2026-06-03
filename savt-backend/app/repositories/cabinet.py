@@ -1,9 +1,11 @@
-from sqlalchemy import func, select, or_
+from sqlalchemy import delete, func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.cabinet_addition_request import CabinetAdditionRequest
 from app.models.cabinet_share_request import CabinetShareRequest
+from app.models.cabinet_tag import CabinetTag
 from app.models.cabinets import Cabinet
+from app.models.tag import Tag
 from app.models.user import User
 from app.models.user_cabinet import UserCabinet
 from app.repositories.base import BaseRepository
@@ -22,6 +24,7 @@ class CabinetRepository(BaseRepository[Cabinet]):
     async def search(
         self,
         query: str | None = None,
+        tag_ids: list[int] | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
         offset: int = 0,
@@ -33,7 +36,18 @@ class CabinetRepository(BaseRepository[Cabinet]):
                 Cabinet.type.ilike(f"%{query}%"),
                 Cabinet.object_number.ilike(f"%{query}%"),
                 Cabinet.admin_internal_name.ilike(f"%{query}%"),
+                Cabinet.purpose.ilike(f"%{query}%"),
+                Cabinet.description.ilike(f"%{query}%"),
+                Cabinet.admin_comment.ilike(f"%{query}%"),
             ))
+        if tag_ids:
+            tag_subq = (
+                select(CabinetTag.cabinet_id)
+                .where(CabinetTag.tag_id.in_(tag_ids))
+                .distinct()
+                .scalar_subquery()
+            )
+            conditions.append(Cabinet.id.in_(tag_subq))
 
         count_stmt = select(func.count(Cabinet.id))
         if conditions:
@@ -44,6 +58,7 @@ class CabinetRepository(BaseRepository[Cabinet]):
             "type": Cabinet.type,
             "warranty_ends_at": Cabinet.warranty_ends_at,
             "object_number": Cabinet.object_number,
+            "admin_internal_name": Cabinet.admin_internal_name,
             "created_at": Cabinet.created_at,
         }.get(sort_by, Cabinet.created_at)
 
@@ -55,6 +70,27 @@ class CabinetRepository(BaseRepository[Cabinet]):
 
         result = await self.session.execute(stmt)
         return list(result.scalars().all()), total
+
+    async def get_tags(self, cabinet_ids: list[int]) -> dict[int, list[Tag]]:
+        if not cabinet_ids:
+            return {}
+        result = await self.session.execute(
+            select(CabinetTag.cabinet_id, Tag)
+            .join(Tag, Tag.id == CabinetTag.tag_id)
+            .where(CabinetTag.cabinet_id.in_(cabinet_ids))
+        )
+        mapping: dict[int, list[Tag]] = {cid: [] for cid in cabinet_ids}
+        for cabinet_id, tag in result.all():
+            mapping[cabinet_id].append(tag)
+        return mapping
+
+    async def set_tags(self, cabinet_id: int, tag_ids: list[int]) -> None:
+        await self.session.execute(
+            delete(CabinetTag).where(CabinetTag.cabinet_id == cabinet_id)
+        )
+        for tag_id in tag_ids:
+            self.session.add(CabinetTag(cabinet_id=cabinet_id, tag_id=tag_id))
+        await self.session.flush()
 
 
 class UserCabinetRepository(BaseRepository[UserCabinet]):
@@ -169,38 +205,87 @@ class CabinetRequestRepository:
         return result.scalar_one_or_none()
 
     async def list_additions(
-        self, status: str | None = None, offset: int = 0, limit: int = 20
+        self,
+        status: str | None = None,
+        search: str | None = None,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+        offset: int = 0,
+        limit: int = 20,
     ) -> tuple[list, int]:
-        count_stmt = select(func.count(CabinetAdditionRequest.id))
+        conditions = []
         if status:
-            count_stmt = count_stmt.where(CabinetAdditionRequest.status == status)
+            conditions.append(CabinetAdditionRequest.status == status)
+        if search:
+            conditions.append(or_(
+                User.full_name.ilike(f"%{search}%"),
+                User.phone.ilike(f"%{search}%"),
+                User.organization_name.ilike(f"%{search}%"),
+            ))
+
+        count_stmt = select(func.count(CabinetAdditionRequest.id)).join(User, User.id == CabinetAdditionRequest.user_id)
+        if conditions:
+            count_stmt = count_stmt.where(*conditions)
         total = (await self.session.execute(count_stmt)).scalar() or 0
 
-        stmt = (
-            select(CabinetAdditionRequest, User)
-            .join(User, User.id == CabinetAdditionRequest.user_id)
-            .order_by(CabinetAdditionRequest.created_at.desc())
-        )
-        if status:
-            stmt = stmt.where(CabinetAdditionRequest.status == status)
-        result = await self.session.execute(stmt.offset(offset).limit(limit))
+        _sort_col = {
+            "created_at": CabinetAdditionRequest.created_at,
+            "status": CabinetAdditionRequest.status,
+            "user_full_name": User.full_name,
+        }.get(sort_by, CabinetAdditionRequest.created_at)
+        order = _sort_col.asc() if sort_order == "asc" else _sort_col.desc()
+
+        stmt = select(CabinetAdditionRequest, User).join(User, User.id == CabinetAdditionRequest.user_id)
+        if conditions:
+            stmt = stmt.where(*conditions)
+        result = await self.session.execute(stmt.order_by(order).offset(offset).limit(limit))
         return result.all(), total
 
     async def list_shares(
-        self, status: str | None = None, offset: int = 0, limit: int = 20
+        self,
+        status: str | None = None,
+        search: str | None = None,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+        offset: int = 0,
+        limit: int = 20,
     ) -> tuple[list, int]:
-        count_stmt = select(func.count(CabinetShareRequest.id))
+        conditions = []
         if status:
-            count_stmt = count_stmt.where(CabinetShareRequest.status == status)
+            conditions.append(CabinetShareRequest.status == status)
+        if search:
+            conditions.append(or_(
+                User.full_name.ilike(f"%{search}%"),
+                User.phone.ilike(f"%{search}%"),
+                User.organization_name.ilike(f"%{search}%"),
+                Cabinet.type.ilike(f"%{search}%"),
+                Cabinet.object_number.ilike(f"%{search}%"),
+                Cabinet.admin_internal_name.ilike(f"%{search}%"),
+            ))
+
+        count_stmt = (
+            select(func.count(CabinetShareRequest.id))
+            .join(User, User.id == CabinetShareRequest.user_id)
+            .join(Cabinet, Cabinet.id == CabinetShareRequest.cabinet_id)
+        )
+        if conditions:
+            count_stmt = count_stmt.where(*conditions)
         total = (await self.session.execute(count_stmt)).scalar() or 0
+
+        _sort_col = {
+            "created_at": CabinetShareRequest.created_at,
+            "status": CabinetShareRequest.status,
+            "user_full_name": User.full_name,
+            "cabinet_object_number": Cabinet.object_number,
+        }.get(sort_by, CabinetShareRequest.created_at)
+        order = _sort_col.asc() if sort_order == "asc" else _sort_col.desc()
 
         stmt = (
             select(CabinetShareRequest, User, Cabinet)
             .join(User, User.id == CabinetShareRequest.user_id)
             .join(Cabinet, Cabinet.id == CabinetShareRequest.cabinet_id)
-            .order_by(CabinetShareRequest.created_at.desc())
         )
-        if status:
-            stmt = stmt.where(CabinetShareRequest.status == status)
-        result = await self.session.execute(stmt.offset(offset).limit(limit))
+        if conditions:
+            stmt = stmt.where(*conditions)
+        result = await self.session.execute(stmt.order_by(order).offset(offset).limit(limit))
         return result.all(), total

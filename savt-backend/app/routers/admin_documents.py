@@ -39,7 +39,7 @@ async def create_document(
     cabinet_id: str = Form(...),
     title: str | None = Form(None),
     requires_approval: bool = Form(False),
-    actor: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    actor: User = Depends(require_role(RoleName.ADMIN)),
     actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):
@@ -95,7 +95,7 @@ async def create_photo(
     cabinet_id: str = Form(...),
     caption: str | None = Form(None),
     sort_order: str = Form("0"),
-    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    _: User = Depends(require_role(RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
     if not cabinet_id or not cabinet_id.strip().isdigit():
@@ -123,7 +123,7 @@ async def list_photos(
 async def update_photo(
     photo_id: int,
     payload: PhotoUpdateIn,
-    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    _: User = Depends(require_role(RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
     return await AdminDocumentService(session).update_photo(photo_id, payload)
@@ -153,7 +153,7 @@ async def list_document_requests(
 async def approve_document_request(
     request_id: int,
     payload: ApproveDocumentRequestIn,
-    actor: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    actor: User = Depends(require_role(RoleName.ADMIN)),
     actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):
@@ -164,7 +164,7 @@ async def approve_document_request(
 async def reject_document_request(
     request_id: int,
     payload: RejectDocumentRequestIn,
-    actor: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    actor: User = Depends(require_role(RoleName.ADMIN)),
     actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):

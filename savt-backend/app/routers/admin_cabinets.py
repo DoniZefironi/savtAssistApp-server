@@ -6,6 +6,7 @@ from app.core.dependencies import get_role_from_token, get_session, require_role
 from app.models.user import User
 from app.schemas.cabinet import CabinetCreateIn, CabinetListOut, CabinetOut, CabinetUpdateIn
 from app.schemas.pagination import PageOut
+from app.schemas.tags import DocumentTagsIn
 from app.services.cabinet_service import CabinetService
 
 router = APIRouter(prefix="/admin/cabinets", tags=["admin: cabinets"])
@@ -24,20 +25,24 @@ async def create_cabinet(
 @router.get("", response_model=PageOut[CabinetListOut])
 async def list_cabinets(
     search: str | None = Query(None),
-    sort_by: str = Query("created_at", pattern="^(type|warranty_ends_at|object_number|created_at)$"),
+    tag_ids: list[int] = Query(default=[]),
+    sort_by: str = Query("created_at", pattern="^(type|warranty_ends_at|object_number|admin_internal_name|created_at)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
-    _: User = Depends(require_role(RoleName.ADMIN)),
+    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
-    return await CabinetService(session).list_all(query=search, sort_by=sort_by, sort_order=sort_order, page=page, size=size)
+    return await CabinetService(session).list_all(
+        query=search, tag_ids=tag_ids or None,
+        sort_by=sort_by, sort_order=sort_order, page=page, size=size,
+    )
 
 # Подробнее о ШУ
 @router.get("/{cabinet_id}", response_model=CabinetOut)
 async def get_cabinet(
     cabinet_id: int,
-    _: User = Depends(require_role(RoleName.ADMIN)),
+    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
     return await CabinetService(session).get(cabinet_id)
@@ -62,3 +67,15 @@ async def delete_cabinet(
     session: AsyncSession = Depends(get_session),
 ):
     await CabinetService(session).delete(cabinet_id, actor.id, actor_role)
+
+
+# Привязать теги к ШУ (полная замена)
+@router.put("/{cabinet_id}/tags", status_code=status.HTTP_204_NO_CONTENT)
+async def set_cabinet_tags(
+    cabinet_id: int,
+    payload: DocumentTagsIn,
+    actor: User = Depends(require_role(RoleName.ADMIN)),
+    actor_role: str = Depends(get_role_from_token),
+    session: AsyncSession = Depends(get_session),
+):
+    await CabinetService(session).set_tags(cabinet_id, payload.tag_ids, actor.id, actor_role)

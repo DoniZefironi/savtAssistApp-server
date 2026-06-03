@@ -38,7 +38,7 @@ router = APIRouter(prefix="/admin/faq", tags=["admin: faq"])
 @router.post("/categories", response_model=FaqCategoryOut, status_code=status.HTTP_201_CREATED)
 async def create_category(
     payload: FaqCategoryCreateIn,
-    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    _: User = Depends(require_role(RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
     return await FaqCategoryService(session).create(payload)
@@ -56,7 +56,7 @@ async def list_categories(
 async def update_category(
     cat_id: int,
     payload: FaqCategoryUpdateIn,
-    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    _: User = Depends(require_role(RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
     return await FaqCategoryService(session).update(cat_id, payload)
@@ -76,7 +76,7 @@ async def delete_category(
 @router.post("/entries", response_model=FaqEntryOut, status_code=status.HTTP_201_CREATED)
 async def create_entry(
     payload: FaqEntryCreateIn,
-    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    _: User = Depends(require_role(RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
     entry = await FaqEntryService(session).create(payload)
@@ -88,19 +88,21 @@ async def create_entry(
 async def list_entries(
     category_id: int | None = Query(None, gt=0),
     search: str | None = Query(None, min_length=1, max_length=200),
+    sort_by: str = Query("created_at", pattern="^(created_at|updated_at|question)$"),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
-    return await FaqEntryService(session).list_entries(category_id, search, page, size)
+    return await FaqEntryService(session).list_entries(category_id, search, sort_by, sort_order, page, size)
 
 
 @router.patch("/entries/{entry_id}", response_model=FaqEntryOut)
 async def update_entry(
     entry_id: int,
     payload: FaqEntryUpdateIn,
-    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    _: User = Depends(require_role(RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
     entry = await FaqEntryService(session).update(entry_id, payload)

@@ -38,7 +38,7 @@ router = APIRouter(prefix="/admin/kb", tags=["admin: kb"])
 @router.post("/categories", response_model=KbCategoryOut, status_code=status.HTTP_201_CREATED)
 async def create_category(
     payload: KbCategoryCreateIn,
-    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    _: User = Depends(require_role(RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
     return await KbCategoryService(session).create(payload)
@@ -56,7 +56,7 @@ async def list_categories(
 async def update_category(
     cat_id: int,
     payload: KbCategoryUpdateIn,
-    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    _: User = Depends(require_role(RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
     return await KbCategoryService(session).update(cat_id, payload)
@@ -76,7 +76,7 @@ async def delete_category(
 @router.post("/articles", response_model=KbArticleDetailOut, status_code=status.HTTP_201_CREATED)
 async def create_article(
     payload: KbArticleCreateIn,
-    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    _: User = Depends(require_role(RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
     article = await KbArticleService(session).create(payload)
@@ -88,7 +88,7 @@ async def create_article(
 async def update_article(
     article_id: int,
     payload: KbArticleUpdateIn,
-    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    _: User = Depends(require_role(RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
     article = await KbArticleService(session).update(article_id, payload)
@@ -111,7 +111,7 @@ async def delete_article(
 async def add_attachment(
     article_id: int,
     file: UploadFile = File(...),
-    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    _: User = Depends(require_role(RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
     att = await KbArticleService(session).add_attachment(article_id, file)

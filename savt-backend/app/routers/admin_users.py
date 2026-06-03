@@ -9,6 +9,7 @@ from app.schemas.admin_users import (
     AdminUserListOut,
     BanUserIn,
     CabinetUserOut,
+    CreateAdminIn,
     CreateOperatorIn,
     RemoveUserFromCabinetIn,
 )
@@ -16,6 +17,17 @@ from app.schemas.pagination import PageOut
 from app.services.admin_user_service import AdminUserService
 
 router = APIRouter(tags=["admin: users"])
+
+# Создать администратора (только суперадмин)
+@router.post("/admin/users/admins", response_model=AdminUserListOut, status_code=status.HTTP_201_CREATED)
+async def create_admin(
+    payload: CreateAdminIn,
+    actor: User = Depends(require_role(RoleName.SUPERADMIN)),
+    actor_role: str = Depends(get_role_from_token),
+    session: AsyncSession = Depends(get_session),
+):
+    return await AdminUserService(session).create_admin(payload, actor.id, actor_role)
+
 
 # Создать оператора
 @router.post("/admin/users/operators", response_model=AdminUserListOut, status_code=status.HTTP_201_CREATED)
@@ -33,8 +45,8 @@ async def create_operator(
 async def list_users(
     search: str | None = Query(None),
     is_active: bool | None = Query(None),
-    role: str | None = Query(None, pattern="^(user|operator)$"),
-    sort_by: str = Query("created_at", pattern="^(created_at|full_name|role)$"),
+    role: str | None = Query(None, pattern="^(user|operator|admin|superadmin)$"),
+    sort_by: str = Query("created_at", pattern="^(created_at|full_name|phone|email|role)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
@@ -86,6 +98,17 @@ async def ban_user(
     session: AsyncSession = Depends(get_session),
 ):
     await AdminUserService(session).ban_user(user_id, payload.reason, actor.id, actor_role)
+
+# Удалить оператора
+@router.delete("/admin/users/operators/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_operator(
+    user_id: int,
+    actor: User = Depends(require_role(RoleName.ADMIN)),
+    actor_role: str = Depends(get_role_from_token),
+    session: AsyncSession = Depends(get_session),
+):
+    await AdminUserService(session).delete_operator(user_id, actor.id, actor_role)
+
 
 # Разбанить
 @router.post("/admin/users/{user_id}/unban", status_code=status.HTTP_204_NO_CONTENT)

@@ -24,6 +24,8 @@ async def list_articles(
     category_id: int | None = Query(None, gt=0),
     tag_ids: list[int] = Query(default=[]),
     search: str | None = Query(None, min_length=1, max_length=200),
+    sort_by: str = Query("created_at", pattern="^(created_at|updated_at|title)$"),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     _: User = Depends(get_current_user),
@@ -33,6 +35,8 @@ async def list_articles(
         category_id=category_id,
         tag_ids=tag_ids or None,
         search=search,
+        sort_by=sort_by,
+        sort_order=sort_order,
         page=page,
         size=size,
     )

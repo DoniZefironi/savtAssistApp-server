@@ -1,4 +1,4 @@
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.faq_category import FaqCategory
@@ -50,6 +50,8 @@ class FaqEntryRepository:
         self,
         category_id: int | None = None,
         search: str | None = None,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
         offset: int = 0,
         limit: int = 20,
     ) -> tuple[list[FaqEntry], int]:
@@ -57,15 +59,25 @@ class FaqEntryRepository:
         if category_id is not None:
             conditions.append(FaqEntry.category_id == category_id)
         if search:
-            conditions.append(FaqEntry.question.ilike(f"%{search}%"))
+            conditions.append(or_(
+                FaqEntry.question.ilike(f"%{search}%"),
+                FaqEntry.answer.ilike(f"%{search}%"),
+            ))
 
         count_stmt = select(func.count(FaqEntry.id))
         if conditions:
             count_stmt = count_stmt.where(*conditions)
         total = (await self.session.execute(count_stmt)).scalar() or 0
 
-        stmt = select(FaqEntry).order_by(FaqEntry.category_id, FaqEntry.created_at)
+        _sort_col = {
+            "question": FaqEntry.question,
+            "created_at": FaqEntry.created_at,
+            "updated_at": FaqEntry.updated_at,
+        }.get(sort_by, FaqEntry.created_at)
+        order = _sort_col.asc() if sort_order == "asc" else _sort_col.desc()
+
+        stmt = select(FaqEntry)
         if conditions:
             stmt = stmt.where(*conditions)
-        result = await self.session.execute(stmt.offset(offset).limit(limit))
+        result = await self.session.execute(stmt.order_by(order).offset(offset).limit(limit))
         return list(result.scalars().all()), total

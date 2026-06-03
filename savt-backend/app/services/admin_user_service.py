@@ -11,6 +11,7 @@ from app.schemas.admin_users import (
     AdminUserDetailOut,
     AdminUserListOut,
     CabinetUserOut,
+    CreateAdminIn,
     CreateOperatorIn,
 )
 from app.schemas.pagination import PageOut, make_page
@@ -104,6 +105,50 @@ class AdminUserService:
             cabinets=cabinets,
         )
 
+    # Создание администратора (только суперадмин)
+    async def create_admin(self, data: CreateAdminIn, actor_id: int, actor_role: str) -> AdminUserListOut:
+        from app.core.exceptions import AlreadyExistsError
+        from app.core.security import hash_password
+        from app.models.role import Role
+        from sqlalchemy import select
+
+        existing = await self.user_repo.find_by_login(data.login)
+        if existing is not None:
+            raise AlreadyExistsError("Пользователь с таким логином уже существует")
+
+        role = (await self.session.execute(
+            select(Role).where(Role.name == "admin")
+        )).scalar_one_or_none()
+        if role is None:
+            from app.core.exceptions import NotFoundError
+            raise NotFoundError("Роль 'admin' не найдена")
+
+        user = await self.user_repo.create(
+            login=data.login,
+            full_name=data.full_name,
+            hashed_password=hash_password(data.password),
+            role_id=role.id,
+            is_active=True,
+            is_phone_verified=True,
+            is_verified=True,
+        )
+        await self._log(actor_id, actor_role, "user.create_admin", "user", user.id, {"login": data.login})
+        await self.session.commit()
+
+        return AdminUserListOut(
+            id=user.id,
+            phone=user.phone,
+            login=user.login,
+            full_name=user.full_name,
+            user_type=user.user_type,
+            organization_name=user.organization_name,
+            role="admin",
+            is_active=user.is_active,
+            is_phone_verified=user.is_phone_verified,
+            is_verified=user.is_verified,
+            created_at=user.created_at,
+        )
+
     # Создание оператора
     async def create_operator(self, data: CreateOperatorIn, actor_id: int, actor_role: str) -> AdminUserListOut:
         from app.core.exceptions import AlreadyExistsError
@@ -147,6 +192,39 @@ class AdminUserService:
             is_verified=user.is_verified,
             created_at=user.created_at,
         )
+
+    # Удаление оператора (soft permanent delete)
+    async def delete_operator(self, user_id: int, actor_id: int, actor_role: str) -> None:
+        from datetime import datetime, timezone
+        from sqlalchemy import update
+        from app.models.role import Role
+        from app.models.refresh_token import RefreshToken
+        from app.core.exceptions import PermissionDeniedError
+
+        user = await self.user_repo.get_by_id(user_id)
+        if user is None:
+            raise NotFoundError("Пользователь не найден")
+
+        role = await self.session.get(Role, user.role_id)
+        if role is None or role.name != "operator":
+            raise PermissionDeniedError("Можно удалять только операторов")
+
+        # Отзываем все сессии
+        await self.session.execute(
+            update(RefreshToken)
+            .where(RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None))
+            .values(revoked_at=datetime.now(timezone.utc))
+        )
+
+        # Анонимизируем и деактивируем
+        user.is_active = False
+        user.login = f"_deleted_{user_id}"
+        user.hashed_password = "DELETED"
+        user.full_name = None
+        user.email = None
+
+        await self._log(actor_id, actor_role, "user.delete_operator", "user", user_id, {})
+        await self.session.commit()
 
     # Бан пользователя
     async def ban_user(self, user_id: int, reason: str, actor_id: int, actor_role: str) -> None:

@@ -38,13 +38,15 @@ async def _create_staff(login: str, password: str, full_name: str | None, role_n
 
 
 def main():
+    commands = ("create-admin", "create-operator", "create-superadmin")
     usage = (
         "Использование:\n"
+        "  python -m app.cli create-superadmin <login> <password> [full_name]\n"
         "  python -m app.cli create-admin <login> <password> [full_name]\n"
         "  python -m app.cli create-operator <login> <password> [full_name]"
     )
 
-    if len(sys.argv) < 4 or sys.argv[1] not in ("create-admin", "create-operator"):
+    if len(sys.argv) < 4 or sys.argv[1] not in commands:
         print(usage)
         sys.exit(1)
 
@@ -53,8 +55,12 @@ def main():
     password = sys.argv[3]
     full_name = sys.argv[4] if len(sys.argv) > 4 else None
 
-    role_name = RoleName.ADMIN.value if command == "create-admin" else RoleName.OPERATOR.value
-    asyncio.run(_create_staff(login, password, full_name, role_name))
+    role_map = {
+        "create-superadmin": RoleName.SUPERADMIN.value,
+        "create-admin": RoleName.ADMIN.value,
+        "create-operator": RoleName.OPERATOR.value,
+    }
+    asyncio.run(_create_staff(login, password, full_name, role_map[command]))
 
 
 if __name__ == "__main__":

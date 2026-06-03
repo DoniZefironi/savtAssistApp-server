@@ -71,6 +71,8 @@ class KbArticleRepository:
         category_id: int | None = None,
         tag_ids: list[int] | None = None,
         search: str | None = None,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
         offset: int = 0,
         limit: int = 20,
     ) -> tuple[list[KbArticle], int]:
@@ -80,7 +82,10 @@ class KbArticleRepository:
             conditions.append(KbArticle.category_id == category_id)
 
         if search:
-            conditions.append(KbArticle.title.ilike(f"%{search}%"))
+            conditions.append(or_(
+                KbArticle.title.ilike(f"%{search}%"),
+                KbArticle.content.ilike(f"%{search}%"),
+            ))
 
         if tag_ids:
             tag_subq = (
@@ -95,9 +100,16 @@ class KbArticleRepository:
             select(func.count(KbArticle.id)).where(*conditions)
         )).scalar() or 0
 
+        _sort_col = {
+            "title": KbArticle.title,
+            "created_at": KbArticle.created_at,
+            "updated_at": KbArticle.updated_at,
+        }.get(sort_by, KbArticle.created_at)
+        order = _sort_col.asc() if sort_order == "asc" else _sort_col.desc()
+
         result = await self.session.execute(
             select(KbArticle).where(*conditions)
-            .order_by(KbArticle.created_at.desc())
+            .order_by(order)
             .offset(offset).limit(limit)
         )
         return list(result.scalars().all()), total

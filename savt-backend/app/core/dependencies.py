@@ -77,14 +77,27 @@ async def get_role_from_token(
         return "unknown"
 
 
+# Иерархия: каждая роль может выполнять действия своего уровня и ниже
+_ROLE_HIERARCHY: dict[str, set[str]] = {
+    "user":       {"user", "operator", "admin", "superadmin"},
+    "operator":   {"operator", "admin", "superadmin"},
+    "admin":      {"admin", "superadmin"},
+    "superadmin": {"superadmin"},
+}
+
+
 def require_role(*allowed_roles: RoleName):
+    # Расширяем список: если admin разрешён — superadmin тоже
+    expanded = set()
+    for r in allowed_roles:
+        expanded.update(_ROLE_HIERARCHY.get(r.value, {r.value}))
 
     async def checker(
         user: User = Depends(get_current_user),
         session: AsyncSession = Depends(get_session),
     ) -> User:
         role = await session.get(Role, user.role_id)
-        if role is None or role.name not in {r.value for r in allowed_roles}:
+        if role is None or role.name not in expanded:
             raise HTTPException(status_code=403, detail="Недостаточно прав")
         return user
 

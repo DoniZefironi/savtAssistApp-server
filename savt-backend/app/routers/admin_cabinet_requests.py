@@ -20,19 +20,24 @@ router = APIRouter(prefix="/admin/cabinet-requests", tags=["admin: cabinet reque
 @router.get("/additions", response_model=PageOut[AdditionRequestOut])
 async def list_additions(
     status: str | None = Query(None, pattern="^(pending|approved|rejected)$"),
+    search: str | None = Query(None, min_length=1, max_length=200),
+    sort_by: str = Query("created_at", pattern="^(created_at|status|user_full_name)$"),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
-    return await CabinetRequestService(session).list_additions(status, page=page, size=size)
+    return await CabinetRequestService(session).list_additions(
+        status=status, search=search, sort_by=sort_by, sort_order=sort_order, page=page, size=size
+    )
 
 # Апрувнуть заявку
 @router.post("/additions/{request_id}/approve", status_code=status.HTTP_204_NO_CONTENT)
 async def approve_addition(
     request_id: int,
     payload: ApproveAdditionIn,
-    actor: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    actor: User = Depends(require_role(RoleName.ADMIN)),
     actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):
@@ -43,7 +48,7 @@ async def approve_addition(
 async def reject_addition(
     request_id: int,
     payload: RejectRequestIn,
-    actor: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    actor: User = Depends(require_role(RoleName.ADMIN)),
     actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):
@@ -53,19 +58,24 @@ async def reject_addition(
 @router.get("/shares", response_model=PageOut[ShareRequestOut])
 async def list_shares(
     status: str | None = Query(None, pattern="^(pending|approved|rejected)$"),
+    search: str | None = Query(None, min_length=1, max_length=200),
+    sort_by: str = Query("created_at", pattern="^(created_at|status|user_full_name|cabinet_object_number)$"),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
-    return await CabinetRequestService(session).list_shares(status, page=page, size=size)
+    return await CabinetRequestService(session).list_shares(
+        status=status, search=search, sort_by=sort_by, sort_order=sort_order, page=page, size=size
+    )
 
 # Апрувнуть добавление
 @router.post("/shares/{request_id}/approve", status_code=status.HTTP_204_NO_CONTENT)
 async def approve_share(
     request_id: int,
     payload: ApproveShareIn,
-    actor: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    actor: User = Depends(require_role(RoleName.ADMIN)),
     actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):
@@ -76,7 +86,7 @@ async def approve_share(
 async def reject_share(
     request_id: int,
     payload: RejectRequestIn,
-    actor: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    actor: User = Depends(require_role(RoleName.ADMIN)),
     actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):

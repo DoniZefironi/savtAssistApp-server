@@ -41,11 +41,13 @@ class ChatService:
         for chat in chats:
             unread = await self.chat_repo.get_unread_count(chat.id, user_id)
             cabinet_name = None
+            cabinet_object_number = None
             if chat.cabinet_id:
                 from app.repositories.cabinet import CabinetRepository
                 cab = await CabinetRepository(self.session).get_by_id(chat.cabinet_id)
                 if cab:
                     cabinet_name = cab.admin_internal_name or cab.object_number
+                    cabinet_object_number = cab.object_number
 
             last_text = None
             msgs = await self.msg_repo.get_messages(chat.id, limit=1)
@@ -58,6 +60,7 @@ class ChatService:
                 chat_type=chat.chat_type,
                 cabinet_id=chat.cabinet_id,
                 cabinet_name=cabinet_name,
+                cabinet_object_number=cabinet_object_number,
                 last_message_text=last_text,
                 last_message_at=chat.last_message_at,
                 unread_count=unread,
@@ -67,18 +70,20 @@ class ChatService:
             ))
         return result
 
-    async def list_operator_chats(self, operator_id: int) -> list[ChatListOut]:
-        chats = await self.chat_repo.list_for_operator()
+    async def list_operator_chats(self, operator_id: int, search: str | None = None) -> list[ChatListOut]:
+        chats = await self.chat_repo.list_for_operator(search)
         result = []
         for chat in chats:
             unread = await self.chat_repo.get_unread_count(chat.id, operator_id)
 
             cabinet_name = None
+            cabinet_object_number = None
             if chat.cabinet_id:
                 from app.repositories.cabinet import CabinetRepository
                 cab = await CabinetRepository(self.session).get_by_id(chat.cabinet_id)
                 if cab:
                     cabinet_name = cab.admin_internal_name or cab.object_number
+                    cabinet_object_number = cab.object_number
 
             from app.repositories.user import UserRepository
             user = await UserRepository(self.session).get_by_id(chat.user_id)
@@ -94,6 +99,7 @@ class ChatService:
                 chat_type=chat.chat_type,
                 cabinet_id=chat.cabinet_id,
                 cabinet_name=cabinet_name,
+                cabinet_object_number=cabinet_object_number,
                 user_id=chat.user_id,
                 user_name=user.full_name if user else None,
                 last_message_text=last_text,
@@ -165,10 +171,11 @@ class ChatService:
         return result
 
     async def get_messages(
-        self, chat_id: int, user_id: int, before_id: int | None, limit: int
+        self, chat_id: int, user_id: int, before_id: int | None, limit: int,
+        search: str | None = None,
     ) -> list[MessageOut]:
         await self._get_chat_or_403(chat_id, user_id)
-        rows = await self.msg_repo.get_messages(chat_id, before_id, limit)
+        rows = await self.msg_repo.get_messages(chat_id, before_id, limit, search)
         if not rows:
             return []
         msg_ids = [m.id for m, _ in rows]

@@ -25,10 +25,13 @@ class CabinetRequestService:
 
     # Все заявки на добавление по фото
     async def list_additions(
-        self, status: str | None = None, page: int = 1, size: int = 20
+        self, status: str | None = None, search: str | None = None,
+        sort_by: str = "created_at", sort_order: str = "desc",
+        page: int = 1, size: int = 20,
     ) -> PageOut[AdditionRequestOut]:
         rows, total = await self.request_repo.list_additions(
-            status=status, offset=(page - 1) * size, limit=size
+            status=status, search=search, sort_by=sort_by, sort_order=sort_order,
+            offset=(page - 1) * size, limit=size,
         )
         items = [
             AdditionRequestOut(
@@ -36,6 +39,10 @@ class CabinetRequestService:
                 user_id=req.user_id,
                 user_full_name=user.full_name,
                 user_phone=user.phone,
+                user_type=user.user_type,
+                organization_name=user.organization_name,
+                user_is_verified=user.is_verified,
+                user_registered_at=user.created_at,
                 photo_url=req.photo_url,
                 user_comment=req.user_comment,
                 status=req.status,
@@ -105,10 +112,13 @@ class CabinetRequestService:
 
     # Все заявки на добавление
     async def list_shares(
-        self, status: str | None = None, page: int = 1, size: int = 20
+        self, status: str | None = None, search: str | None = None,
+        sort_by: str = "created_at", sort_order: str = "desc",
+        page: int = 1, size: int = 20,
     ) -> PageOut[ShareRequestOut]:
         rows, total = await self.request_repo.list_shares(
-            status=status, offset=(page - 1) * size, limit=size
+            status=status, search=search, sort_by=sort_by, sort_order=sort_order,
+            offset=(page - 1) * size, limit=size,
         )
         items = [
             ShareRequestOut(
@@ -116,6 +126,10 @@ class CabinetRequestService:
                 user_id=req.user_id,
                 user_full_name=user.full_name,
                 user_phone=user.phone,
+                user_type=user.user_type,
+                organization_name=user.organization_name,
+                user_is_verified=user.is_verified,
+                user_registered_at=user.created_at,
                 cabinet_id=req.cabinet_id,
                 cabinet_type=cabinet.type,
                 cabinet_object_number=cabinet.object_number,

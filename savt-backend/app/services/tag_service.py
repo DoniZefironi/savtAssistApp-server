@@ -10,15 +10,15 @@ class TagService:
         self.session = session
         self.repo = TagRepository(session)
 
-    async def list_all(self) -> list[TagOut]:
-        tags = await self.repo.get_all()
+    async def list_all(self, scope: str | None = None) -> list[TagOut]:
+        tags = await self.repo.get_all(scope=scope)
         return [TagOut.model_validate(t) for t in tags]
 
     async def create(self, data: TagCreateIn) -> TagOut:
-        existing = await self.repo.get_by_name(data.name)
+        existing = await self.repo.get_by_name_and_scope(data.name, data.scope)
         if existing is not None:
-            raise AlreadyExistsError(f"Тег '{data.name}' уже существует")
-        tag = await self.repo.create(data.name)
+            raise AlreadyExistsError(f"Тег '{data.name}' уже существует в области '{data.scope}'")
+        tag = await self.repo.create(data.name, data.scope)
         await self.session.commit()
         return TagOut.model_validate(tag)
 
