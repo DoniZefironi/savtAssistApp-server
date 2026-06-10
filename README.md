@@ -25,8 +25,6 @@
 | `JWT_SECRET_KEY` | Секрет для подписи JWT |
 | `JWT_ACCESS_TOKEN_TTL_MINUTES` | Время жизни access-токена (мин) |
 | `JWT_REFRESH_TOKEN_TTL_DAYS` | Время жизни refresh-токена (дни) |
-| `SMS_BY_TOKEN` | API-токен SMS-провайдера |
-| `SMS_BY_ALPHANAME` | Имя отправителя SMS |
 | `CORS_ORIGINS` | Разрешённые origins через запятую |
 | `FIREBASE_CREDENTIALS_PATH` | Путь к JSON-ключу Firebase |
 | `YANDEX_FOLDER_ID` | Folder ID сервисного аккаунта Yandex Cloud |
@@ -35,8 +33,11 @@
 | `BOT_FOLLOW_UP_MINUTES` | Через сколько минут бот пишет follow-up (по умолч. 60) |
 | `BOT_MAX_ATTEMPTS` | Попыток бота до предложения оператора (по умолч. 3) |
 | `APP_ENV` | Окружение (`dev`/`prod`), в `dev` включает SQL-логирование |
-| `SMS_PROVIDER` | Провайдер SMS: `mock` (по умолч.) или `sms_by` |
-| `SMS_BY_BASE_URL` | Базовый URL API SMS-провайдера (по умолч. `https://app.sms.by/api/v1`) |
+| `SMS_PROVIDER` | Провайдер SMS: `mock` (по умолч.) или `smscenter` |
+| `SMSCENTER_LOGIN` | Логин аккаунта smscenter.by |
+| `SMSCENTER_PASSWORD` | Пароль аккаунта smscenter.by |
+| `SMSCENTER_SENDER` | Имя отправителя SMS (Sender ID), необязательно |
+| `SMSCENTER_BASE_URL` | Базовый URL API smscenter.by (по умолч. `https://smscentre.by`) |
 | `SMS_CODE_TTL_MINUTES` | Срок действия SMS-кода в минутах (по умолч. `10`) |
 | `SMS_CODE_MAX_ATTEMPTS` | Максимум попыток ввода SMS-кода (по умолч. `5`) |
 | `SMS_CODE_RESEND_COOLDOWN_SECONDS` | Кулдаун повторной отправки SMS-кода в секундах (по умолч. `60`) |

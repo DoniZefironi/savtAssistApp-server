@@ -2,7 +2,12 @@
   "permissions": {
     "allow": [
       "Bash(docker compose *)",
-      "Bash(findstr /i \"NullType\\\\|CompileError\\\\|embed\\\\|bot\\\\|Traceback\\\\|File.*code\")"
+      "Bash(findstr /i \"NullType\\\\|CompileError\\\\|embed\\\\|bot\\\\|Traceback\\\\|File.*code\")",
+      "Bash(xargs grep -l \"admin\\\\|operator\\\\|123qweASDZXC\\\\|qweasdzxc\\\\|375291002030\")",
+      "PowerShell(Set-Location \"c:\\\\Users\\\\ShaboldaV\\\\Documents\\\\GitHub\\\\savtAssistApp-server\"; $count = \\(git ls-files | Select-String \"\\\\.venv\"\\).Count; Write-Output \"venv tracked files: $count\"; Get-Content \"savt-backend\\\\.gitignore\" -ErrorAction SilentlyContinue | Select-Object -First 30)",
+      "Bash(grep -iE \"\\\\.env$|\\\\.venv\")",
+      "Bash(powershell -Command \"Select-String -Path app\\\\routers\\\\auth.py -Pattern 'from fastapi import|^import'\")",
+      "Bash(powershell -Command \"Select-String -Path app\\\\core\\\\exceptions.py -Pattern 'class.*Error'; Select-String -Path app\\\\main.py -Pattern 'PermissionDeniedError'\")"
     ]
   }
 }

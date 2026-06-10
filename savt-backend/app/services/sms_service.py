@@ -22,13 +22,14 @@ class MockSmsProvider(SmsProvider):
         print(f"\n>>> SMS на {phone}: КОД = {code} <<<\n", flush=True)
 
 # Реальный провайдер
-class SmsByProvider(SmsProvider):
+class SmsCenterProvider(SmsProvider):
 
-    def __init__(self, token: str, alphaname: str, base_url: str):
-        if not token:
-            raise ValueError("SMS_BY_TOKEN не задан") # А токен есть?
-        self._token = token
-        self._alphaname = alphaname
+    def __init__(self, login: str, password: str, sender: str, base_url: str):
+        if not login or not password:
+            raise ValueError("SMSCENTER_LOGIN/SMSCENTER_PASSWORD не заданы") # А логин с паролем есть?
+        self._login = login
+        self._password = password
+        self._sender = sender
         self._base_url = base_url.rstrip("/")
 
     async def send_verification_code(self, phone: str, code: str) -> None:
@@ -38,56 +39,61 @@ class SmsByProvider(SmsProvider):
         # Формируем сообщение
         message = f"Код подтверждения SAVT Assist: {code}"
 
-        # Параметры запроса
+        # Параметры запроса (fmt=1 — ответ в виде csv: <id>,<cnt>,<cost>,<balance> либо <id>,-<код ошибки>)
         params = {
-            "token": self._token,
-            "message": message,
-            "phone": phone_clean,
+            "login": self._login,
+            "psw": self._password,
+            "phones": phone_clean,
+            "mes": message,
+            "fmt": "1",
+            "charset": "utf-8",
+            "cost": "3",
         }
-        if self._alphaname:
-            params["alphaname_id"] = self._alphaname # вместо номера телефона кидаем альфа-имя(оно будет показываться как отправитель смс)
+        if self._sender:
+            params["sender"] = self._sender # имя отправителя (Sender ID)
 
-        url = f"{self._base_url}/sendQuickSMS"
+        url = f"{self._base_url}/sys/send.php"
 
         # Обрабатываем хттп запрос с таймаутом 10 сек(чтоб когда-то это закончилось)
         async with httpx.AsyncClient(timeout=10.0) as client:
             try:
                 response = await client.get(url, params=params)
             except httpx.RequestError as e:
-                logger.error(f"SMS.by сетевая ошибка: {e}")
+                logger.error(f"SMSCenter сетевая ошибка: {e}")
                 raise SmsSendError("Не удалось отправить SMS") from e
 
         # Проверка статуса
         if response.status_code != 200:
-            logger.error(f"SMS.by HTTP {response.status_code}: {response.text}")
+            logger.error(f"SMSCenter HTTP {response.status_code}: {response.text}")
             raise SmsSendError(f"SMS-провайдер вернул ошибку HTTP {response.status_code}")
 
-        # Пытаемся запарсить
+        # Разбираем csv-ответ: <id>,<cnt>,<cost>,<balance> или <id>,-<код ошибки>
+        parts = response.text.strip().split(",")
         try:
-            data = response.json()
-        except ValueError:
-            logger.error(f"SMS.by не-JSON ответ: {response.text}")
+            sms_id, second = parts[0], int(parts[1])
+        except (IndexError, ValueError):
+            logger.error(f"SMSCenter не распознан ответ: {response.text}")
             raise SmsSendError("Не удалось разобрать ответ SMS-провайдера")
 
-        # Проверяем на ошибки в ответе апи
-        if "error" in data:
-            logger.error(f"SMS.by ошибка: {data}")
-            raise SmsSendError(f"SMS-провайдер: {data.get('error')}")
+        if second < 0:
+            logger.error(f"SMSCenter ошибка №{-second}: {response.text}")
+            raise SmsSendError(f"SMS-провайдер вернул ошибку №{-second}")
 
         # Успешнооо, логируем
-        logger.info(f"SMS.by отправлено: phone={phone_clean}, sms_id={data.get('sms_id')}")
+        logger.info(f"SMSCenter отправлено: phone={phone_clean}, sms_id={sms_id}, cnt={second}")
 
 
 class SmsSendError(Exception):
     """Ошибка отправки SMS."""
 
-# Фабрика(сама решаем кого нам подсунуть, тут sms_by) провайдеров, если вдруг у нас что-то кроме sms_by, то запускаем mock(тестовый режим с логами)
+# Фабрика(сама решаем кого нам подсунуть, тут smscenter) провайдеров, если вдруг у нас что-то кроме smscenter, то запускаем mock(тестовый режим с логами)
 def _build_provider() -> SmsProvider:
-    if settings.sms_provider == "sms_by":
-        return SmsByProvider(
-            token=settings.sms_by_token,
-            alphaname=settings.sms_by_alphaname,
-            base_url=settings.sms_by_base_url,
+    if settings.sms_provider == "smscenter":
+        return SmsCenterProvider(
+            login=settings.smscenter_login,
+            password=settings.smscenter_password,
+            sender=settings.smscenter_sender,
+            base_url=settings.smscenter_base_url,
         )
     return MockSmsProvider()
 

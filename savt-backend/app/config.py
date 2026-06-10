@@ -19,10 +19,11 @@ class Settings(BaseSettings):
     sms_code_resend_cooldown_seconds: int = 60
 
     # SMS сервис для кодиков
-    sms_provider: str = "mock"  # "mock" | "sms_by"
-    sms_by_token: str = ""
-    sms_by_alphaname: str = ""
-    sms_by_base_url: str = "https://app.sms.by/api/v1"
+    sms_provider: str = "mock"  # "mock" | "smscenter"
+    smscenter_login: str = ""
+    smscenter_password: str = ""
+    smscenter_sender: str = ""
+    smscenter_base_url: str = "https://smscentre.by"
 
     # Firebase
     firebase_credentials_path: str = ""
