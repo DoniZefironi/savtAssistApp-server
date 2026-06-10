@@ -6,6 +6,7 @@ from app.models.cabinet_share_request import CabinetShareRequest
 from app.models.cabinet_tag import CabinetTag
 from app.models.cabinets import Cabinet
 from app.models.tag import Tag
+from app.utils.db import escape_like
 from app.models.user import User
 from app.models.user_cabinet import UserCabinet
 from app.repositories.base import BaseRepository
@@ -32,13 +33,14 @@ class CabinetRepository(BaseRepository[Cabinet]):
     ) -> tuple[list[Cabinet], int]:
         conditions = []
         if query:
+            pattern = f"%{escape_like(query)}%"
             conditions.append(or_(
-                Cabinet.type.ilike(f"%{query}%"),
-                Cabinet.object_number.ilike(f"%{query}%"),
-                Cabinet.admin_internal_name.ilike(f"%{query}%"),
-                Cabinet.purpose.ilike(f"%{query}%"),
-                Cabinet.description.ilike(f"%{query}%"),
-                Cabinet.admin_comment.ilike(f"%{query}%"),
+                Cabinet.type.ilike(pattern, escape="\\"),
+                Cabinet.object_number.ilike(pattern, escape="\\"),
+                Cabinet.admin_internal_name.ilike(pattern, escape="\\"),
+                Cabinet.purpose.ilike(pattern, escape="\\"),
+                Cabinet.description.ilike(pattern, escape="\\"),
+                Cabinet.admin_comment.ilike(pattern, escape="\\"),
             ))
         if tag_ids:
             tag_subq = (
@@ -217,10 +219,11 @@ class CabinetRequestRepository:
         if status:
             conditions.append(CabinetAdditionRequest.status == status)
         if search:
+            pattern = f"%{escape_like(search)}%"
             conditions.append(or_(
-                User.full_name.ilike(f"%{search}%"),
-                User.phone.ilike(f"%{search}%"),
-                User.organization_name.ilike(f"%{search}%"),
+                User.full_name.ilike(pattern, escape="\\"),
+                User.phone.ilike(pattern, escape="\\"),
+                User.organization_name.ilike(pattern, escape="\\"),
             ))
 
         count_stmt = select(func.count(CabinetAdditionRequest.id)).join(User, User.id == CabinetAdditionRequest.user_id)
@@ -254,13 +257,14 @@ class CabinetRequestRepository:
         if status:
             conditions.append(CabinetShareRequest.status == status)
         if search:
+            pattern = f"%{escape_like(search)}%"
             conditions.append(or_(
-                User.full_name.ilike(f"%{search}%"),
-                User.phone.ilike(f"%{search}%"),
-                User.organization_name.ilike(f"%{search}%"),
-                Cabinet.type.ilike(f"%{search}%"),
-                Cabinet.object_number.ilike(f"%{search}%"),
-                Cabinet.admin_internal_name.ilike(f"%{search}%"),
+                User.full_name.ilike(pattern, escape="\\"),
+                User.phone.ilike(pattern, escape="\\"),
+                User.organization_name.ilike(pattern, escape="\\"),
+                Cabinet.type.ilike(pattern, escape="\\"),
+                Cabinet.object_number.ilike(pattern, escape="\\"),
+                Cabinet.admin_internal_name.ilike(pattern, escape="\\"),
             ))
 
         count_stmt = (

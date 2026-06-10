@@ -8,6 +8,13 @@
 | operator | operator           | 123qweASDZXC     |
 | user     | +375291002030      | qweasdzxc        |
 
+> Эти аккаунты не создаются автоматически миграциями. Администратора и оператора нужно создать через CLI:
+> ```bash
+> docker exec savt-backend-api-1 python -m app.cli create-admin admin 123qweASDZXC
+> docker exec savt-backend-api-1 python -m app.cli create-operator operator 123qweASDZXC
+> ```
+> Пользователя `+375291002030` — зарегистрировать через `POST /auth/register/start` + `/auth/register/complete`.
+
 ---
 
 ## Переменные окружения (.env)
@@ -27,6 +34,12 @@
 | `YANDEX_GPT_MODEL` | Модель YandexGPT (`yandexgpt-lite`) |
 | `BOT_FOLLOW_UP_MINUTES` | Через сколько минут бот пишет follow-up (по умолч. 60) |
 | `BOT_MAX_ATTEMPTS` | Попыток бота до предложения оператора (по умолч. 3) |
+| `APP_ENV` | Окружение (`dev`/`prod`), в `dev` включает SQL-логирование |
+| `SMS_PROVIDER` | Провайдер SMS: `mock` (по умолч.) или `sms_by` |
+| `SMS_BY_BASE_URL` | Базовый URL API SMS-провайдера (по умолч. `https://app.sms.by/api/v1`) |
+| `SMS_CODE_TTL_MINUTES` | Срок действия SMS-кода в минутах (по умолч. `10`) |
+| `SMS_CODE_MAX_ATTEMPTS` | Максимум попыток ввода SMS-кода (по умолч. `5`) |
+| `SMS_CODE_RESEND_COOLDOWN_SECONDS` | Кулдаун повторной отправки SMS-кода в секундах (по умолч. `60`) |
 
 ---
 
@@ -472,7 +485,7 @@ POST /upload/voice (multipart/form-data, поле: file)
   "code": "123456"
 }
 ```
-Ответ:
+Ответ: `201 Created`
 ```json
 {
   "access_token": "eyJ...",
@@ -617,7 +630,7 @@ POST /upload/voice (multipart/form-data, поле: file)
 ---
 
 ### POST `/auth/change-phone/start`
-Запрос SMS-кода для смены номера телефона. Код отправляется на **новый** номер.
+Запрос SMS-кода для смены номера телефона. Код отправляется на **новый** номер. Лимит — 5 запросов в минуту.
 ```json
 { "new_phone": "+375291234568" }
 ```
@@ -630,7 +643,7 @@ POST /upload/voice (multipart/form-data, поле: file)
 ---
 
 ### POST `/auth/change-phone/complete`
-Подтверждение смены номера кодом из SMS.
+Подтверждение смены номера кодом из SMS. Лимит — 10 запросов в минуту.
 ```json
 {
   "new_phone": "+375291234568",
@@ -662,14 +675,20 @@ POST /upload/voice (multipart/form-data, поле: file)
 
 | Тип | Форматы | Лимит |
 |---|---|---|
-| Изображение | jpg, png, webp | 10 МБ |
-| Документ | pdf, doc, docx, xls, xlsx | 50 МБ |
+| Изображение | jpg, png, webp | 500 МБ |
+| Документ | pdf, doc, docx, xls, xlsx | 500 МБ |
 | Видео | mp4, mov | 500 МБ |
+
+Единый лимит на все типы вложений — 500 МБ.
 
 Ответ:
 ```json
 { "url": "/static/photos/abc123.jpg" }
 ```
+
+Ошибки:
+- `415` — неподдерживаемый MIME-тип файла
+- `413` — файл превышает лимит размера
 
 ---
 
@@ -684,6 +703,10 @@ POST /upload/voice (multipart/form-data, поле: file)
 ```json
 { "url": "/static/voices/abc123.ogg" }
 ```
+
+Ошибки:
+- `415` — неподдерживаемый MIME-тип файла
+- `413` — файл превышает лимит размера
 
 ---
 
@@ -735,7 +758,7 @@ POST /upload/voice (multipart/form-data, поле: file)
 ```json
 {
   "id": 1,
-  "unique_code": "A3F7BC12",
+  "unique_code": "A3F7BC1254E8D9F0",
   "type": "Вентиляционная установка",
   "object_number": "29_099",
   "purpose": "Вентиляция",
@@ -772,11 +795,13 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ---
 
 ### PUT `/admin/cabinets/{cabinet_id}/tags`
-Привязать теги к ШУ (полная замена). Только для администратора. Теги должны иметь `scope="cabinet"`.
+Привязать теги к ШУ (полная замена). Только для администратора.
 ```json
 { "tag_ids": [1, 2] }
 ```
 Пустой список снимает все теги. `204 No Content`.
+
+> Рекомендуется привязывать теги со `scope="cabinet"` (на фронте — выбирать из `GET /tags?scope=cabinet`), но сервер не проверяет `scope` тега при сохранении.
 
 ---
 
@@ -823,25 +848,28 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 - `page`, `size`
 
 ```json
-[
-  {
-    "id": 1,
-    "user_id": 8,
-    "user_full_name": "Иванов Иван",
-    "user_phone": "+375291234567",
-    "user_type": "individual",
-    "organization_name": null,
-    "user_is_verified": false,
-    "user_registered_at": "2026-04-01T10:00:00Z",
-    "photo_url": "/static/photos/abc.jpg",
-    "user_comment": "Шкаф на заводе",
-    "status": "pending",
-    "cabinet_id": null,
-    "admin_response": null,
-    "created_at": "2026-05-12T08:00:00Z",
-    "resolved_at": null
-  }
-]
+{
+  "items": [
+    {
+      "id": 1,
+      "user_id": 8,
+      "user_full_name": "Иванов Иван",
+      "user_phone": "+375291234567",
+      "user_type": "individual",
+      "organization_name": null,
+      "user_is_verified": false,
+      "user_registered_at": "2026-04-01T10:00:00Z",
+      "photo_url": "/static/photos/abc.jpg",
+      "user_comment": "Шкаф на заводе",
+      "status": "pending",
+      "cabinet_id": null,
+      "admin_response": null,
+      "created_at": "2026-05-12T08:00:00Z",
+      "resolved_at": null
+    }
+  ],
+  "total": 1, "page": 1, "size": 20, "pages": 1
+}
 ```
 `cabinet_id` — `null` пока заявка не одобрена.
 
@@ -877,26 +905,29 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 - `page`, `size`
 
 ```json
-[
-  {
-    "id": 1,
-    "user_id": 10,
-    "user_full_name": "Петров Пётр",
-    "user_phone": "+375291111111",
-    "user_type": "organization",
-    "organization_name": "ООО Ромашка",
-    "user_is_verified": true,
-    "user_registered_at": "2026-03-15T08:00:00Z",
-    "cabinet_id": 5,
-    "cabinet_type": "Вентиляционная установка",
-    "cabinet_object_number": "29_099",
-    "user_comment": null,
-    "status": "pending",
-    "admin_response": null,
-    "created_at": "2026-05-12T09:00:00Z",
-    "resolved_at": null
-  }
-]
+{
+  "items": [
+    {
+      "id": 1,
+      "user_id": 10,
+      "user_full_name": "Петров Пётр",
+      "user_phone": "+375291111111",
+      "user_type": "organization",
+      "organization_name": "ООО Ромашка",
+      "user_is_verified": true,
+      "user_registered_at": "2026-03-15T08:00:00Z",
+      "cabinet_id": 5,
+      "cabinet_type": "Вентиляционная установка",
+      "cabinet_object_number": "29_099",
+      "user_comment": null,
+      "status": "pending",
+      "admin_response": null,
+      "created_at": "2026-05-12T09:00:00Z",
+      "resolved_at": null
+    }
+  ],
+  "total": 1, "page": 1, "size": 20, "pages": 1
+}
 ```
 
 ---
@@ -975,19 +1006,19 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 Только пользователи (`role=user`). Параметры:
 - `search` — поиск по ФИО, телефону, логину, email, организации
 - `is_active` — `true` / `false`
-- `sort_by` — `created_at` (по умолч.), `full_name`, `phone`, `email`
+- `sort_by` — `created_at` (по умолч.), `full_name`, `phone`, `email`, `role`
 - `sort_order` — `asc` / `desc`
 - `page`, `size` — пагинация (по умолч. `page=1`, `size=20`, максимум `100`)
 
 ---
 
 ### GET `/admin/operators`
-Только операторы (`role=operator`). Параметры: аналогично `/admin/users`.
+Только операторы (`role=operator`). Параметры: аналогично `/admin/users` (без значения `role` в `sort_by`).
 
 ---
 
 ### GET `/admin/admins`
-Только администраторы (`role=admin`). **Только для суперадмина.** Параметры: аналогично `/admin/users`.
+Только администраторы (`role=admin`). **Только для суперадмина.** Параметры: аналогично `/admin/users` (без значения `role` в `sort_by`).
 
 ---
 
@@ -1016,7 +1047,7 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ---
 
 ### GET `/admin/users/{user_id}`
-Детальная информация о пользователе включая список его ШУ с гарантийным статусом.
+Детальная информация о пользователе включая список его ШУ с гарантийным статусом. Доступно только для пользователей с ролью `user`/`operator` — для администраторов, суперадминов и системных аккаунтов возвращает `404`.
 
 ```json
 {
@@ -1077,6 +1108,10 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 Разблокировка пользователя. Только для администратора. Логируется в `audit_log`.
 
 Ответ: `204 No Content`.
+
+---
+
+`verify`/`unverify`/`ban`/`unban` применимы только к пользователям с ролью `user`/`operator`. При попытке выполнить действие над администратором, суперадмином или системным аккаунтом — `403`.
 
 ---
 
@@ -1236,7 +1271,7 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 
 | Поле | Тип | Обязательно |
 |---|---|---|
-| `file` | файл (jpg/png/webp) | ✅ |
+| `file` | файл (jpg/png/webp; сервер технически также принимает форматы из `/upload/attachment` — pdf/doc/docx/xls/xlsx/mp4/mov, но фронту следует загружать только изображения) | ✅ |
 | `cabinet_id` | int | ✅ |
 | `caption` | string | нет |
 | `sort_order` | int | нет (по умолчанию `0`) |
@@ -1324,7 +1359,7 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ```json
 { "user_message": "Нужен для проверки регламента" }
 ```
-`user_message` необязателен. Ответ: `{ "request_id": 1, "message": "Заявка отправлена" }`.
+`user_message` необязателен. Ответ: `201 Created`, `{ "request_id": 1, "message": "Заявка отправлена" }`.
 
 ---
 
@@ -1356,7 +1391,7 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ---
 
 ### POST `/admin/tags`
-Создать тег вручную.
+Создать тег вручную. Доступно администратору и оператору.
 ```json
 { "name": "паспорт", "scope": "document" }
 ```
@@ -1533,6 +1568,8 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 - `before_id`, `limit` — cursor pagination
 - `search` — поиск по тексту сообщений
 
+Личные чаты пользователя (`chat_type=notes`) недоступны оператору/админу — `403`.
+
 ---
 
 ### POST `/operator/chats/{chat_id}/messages`
@@ -1553,7 +1590,7 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ## Рут `service requests` — сервисные заявки
 
 Типы заявок (`request_type`): `repair`, `maintenance`, `inspection`, `other`.
-Статусы: `open` → `in_progress` → `closed`.
+Статусы: `open`, `in_progress`, `closed`. Переход между статусами не валидируется — администратор/оператор может установить любой статус через `PATCH /admin/service-requests/{req_id}/status` (типичный сценарий: `open → in_progress → closed`).
 
 ### POST `/service-requests`
 Создать заявку. Пользователь должен быть привязан к указанному ШУ.
@@ -1629,11 +1666,13 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 }
 ```
 
-Типы уведомлений (`type`):
-- `chat_message` — новое сообщение от оператора/бота
-- `request_status` — изменился статус заявки (ШУ, документ, сервисная)
+Типы уведомлений (`type`), фактически отправляемые на данный момент:
 - `warranty_expiring` — гарантия истекает через 30/10/1 день
 - `promotional` — рекламное сообщение от администратора
+
+Зарезервированы в настройках уведомлений, но пока не генерируются кодом:
+- `chat_message` — новое сообщение от оператора/бота
+- `request_status` — изменился статус заявки (ШУ, документ, сервисная)
 
 ---
 
@@ -1701,6 +1740,8 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ## Рут `admin: kb` — база знаний (администратор/оператор)
 
 База знаний — файловый репозиторий, организованный по категориям. Каждая запись может содержать несколько файлов любых типов (PDF, Word, Excel, видео, фото). Создание записи = публикация (черновиков нет).
+
+> Просмотр категорий (`GET /admin/kb/categories`) доступен администратору и оператору. Создание/редактирование/удаление категорий и записей, а также добавление/удаление вложений — только для администратора.
 
 ### POST `/admin/kb/categories`
 Создать категорию. Категории могут быть вложенными через `parent_id`.
@@ -1982,10 +2023,11 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
         ↓
 Текст запроса → Yandex Embeddings (text-search-query) → вектор запроса
         ↓
-pgvector cosine search → 3 ближайших чанка из embeddings
-  (если cabinet-чат → сначала ищет в документах конкретного ШУ)
+pgvector cosine search → до 3 ближайших чанков из embeddings
+  (если cabinet-чат → до 2 чанков ищутся среди документов конкретного ШУ,
+   остальные — по всей базе embeddings)
         ↓
-История диалога (6 последних сообщений) + найденные чанки → YandexGPT-lite
+История диалога (до 5 предыдущих сообщений) + текущий вопрос с найденными чанками → YandexGPT-lite
         ↓
 Ответ бота + цитата из источника → сохраняется в messages (sender = "Ася")
 ```
@@ -2145,7 +2187,7 @@ gunzip -c backups/savt_backup_2026-05-18_03-00-00.sql.gz \
 
 **Логика:**
 - Находит все чаты где `bot_active=true`, `follow_up_sent=false`, и последнее сообщение пользователя старше `BOT_FOLLOW_UP_MINUTES` минут (по умолчанию 60).
-- Отправляет от имени Аси: «Здравствуйте! Удалось ли решить вашу проблему?»
+- Отправляет от имени Аси: «Здравствуйте! Удалось ли решить вашу проблему? Если нет — я готов помочь.»
 - Ставит `follow_up_sent=true` — повторно не пишет до нового сообщения от пользователя.
 
 ---

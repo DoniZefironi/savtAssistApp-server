@@ -2,8 +2,9 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import NotFoundError, PermissionDeniedError
 from app.models.audit_log import AuditLog
+from app.models.role import Role
 from app.repositories.cabinet import CabinetRepository, UserCabinetRepository
 from app.repositories.user import UserRepository
 from app.schemas.admin_users import (
@@ -73,6 +74,8 @@ class AdminUserService:
         if row is None:
             raise NotFoundError("Пользователь не найден")
         user, role = row
+        if role.name not in ("user", "operator"):
+            raise NotFoundError("Пользователь не найден")
 
         cabinet_rows = await self.user_cabinet_repo.list_for_user(user_id)
         cabinets = [
@@ -231,6 +234,7 @@ class AdminUserService:
         user = await self.user_repo.get_by_id(user_id)
         if user is None:
             raise NotFoundError("Пользователь не найден")
+        await self._ensure_target_is_manageable(user)
         user.is_active = False
         await self._log(actor_id, actor_role, "user.ban", "user", user_id, {"reason": reason})
         await self.session.commit()
@@ -240,6 +244,7 @@ class AdminUserService:
         user = await self.user_repo.get_by_id(user_id)
         if user is None:
             raise NotFoundError("Пользователь не найден")
+        await self._ensure_target_is_manageable(user)
         user.is_active = True
         await self._log(actor_id, actor_role, "user.unban", "user", user_id, {})
         await self.session.commit()
@@ -282,6 +287,7 @@ class AdminUserService:
         user = await self.user_repo.get_by_id(user_id)
         if user is None:
             raise NotFoundError("Пользователь не найден")
+        await self._ensure_target_is_manageable(user)
         user.is_verified = True
         await self._log(actor_id, actor_role, "user.verify", "user", user_id, {})
         await self.session.commit()
@@ -291,9 +297,16 @@ class AdminUserService:
         user = await self.user_repo.get_by_id(user_id)
         if user is None:
             raise NotFoundError("Пользователь не найден")
+        await self._ensure_target_is_manageable(user)
         user.is_verified = False
         await self._log(actor_id, actor_role, "user.unverify", "user", user_id, {})
         await self.session.commit()
+
+    # Запрещаем действия над администраторами/суперадминами/системными аккаунтами
+    async def _ensure_target_is_manageable(self, user) -> None:
+        role = await self.session.get(Role, user.role_id)
+        if role is None or role.name not in ("user", "operator"):
+            raise PermissionDeniedError("Действие недоступно для этой роли пользователя")
 
     # Лог
     async def _log(

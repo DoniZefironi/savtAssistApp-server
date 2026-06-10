@@ -259,8 +259,11 @@ class ChatService:
         chat = await self.chat_repo.get_by_id(chat_id)
         if chat is None:
             raise NotFoundError("Чат не найден")
-        # Владелец чата или оператор/админ (проверяется на уровне роутера)
+        # Владелец чата или оператор/админ (проверяется на уровне роутера),
+        # но личные заметки ("notes") доступны только владельцу
         if chat.user_id != user_id:
+            if chat.chat_type == "notes":
+                raise PermissionDeniedError("Нет доступа к этому чату")
             from app.repositories.user import UserRepository
             from app.models.role import Role
             user = await UserRepository(self.session).get_by_id(user_id)

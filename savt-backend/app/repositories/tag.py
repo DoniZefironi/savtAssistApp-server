@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.document_tag import DocumentTag
 from app.models.kb_article_tag import KbArticleTag
 from app.models.tag import Tag
+from app.utils.db import escape_like
 
 
 class TagRepository:
@@ -22,7 +23,7 @@ class TagRepository:
 
     async def get_by_name_and_scope(self, name: str, scope: str) -> Tag | None:
         result = await self.session.execute(
-            select(Tag).where(Tag.name.ilike(name), Tag.scope == scope)
+            select(Tag).where(Tag.name.ilike(escape_like(name), escape="\\"), Tag.scope == scope)
         )
         return result.scalar_one_or_none()
 

@@ -245,7 +245,9 @@ async def delete_account(
 
 # Смена номера телефона — запрос кода
 @router.post("/change-phone/start", response_model=RegisterStartOut)
+@limiter.limit("5/minute")
 async def change_phone_start(
+    request: Request,
     payload: ChangePhoneStartIn,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
@@ -256,7 +258,9 @@ async def change_phone_start(
 
 # Смена номера телефона — подтверждение
 @router.post("/change-phone/complete", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("10/minute")
 async def change_phone_complete(
+    request: Request,
     payload: ChangePhoneCompleteIn,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),

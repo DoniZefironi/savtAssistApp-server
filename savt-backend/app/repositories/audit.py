@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit_log import AuditLog
 from app.models.user import User
+from app.utils.db import escape_like
 
 _SORTABLE = {
     "created_at": AuditLog.created_at,
@@ -15,16 +16,16 @@ _SORTABLE = {
 }
 
 _SEARCHABLE = {
-    "action": lambda s: AuditLog.action.ilike(f"%{s}%"),
-    "entity_type": lambda s: AuditLog.entity_type.ilike(f"%{s}%"),
-    "actor_name": lambda s: User.full_name.ilike(f"%{s}%"),
-    "payload": lambda s: cast(AuditLog.payload, String).ilike(f"%{s}%"),
+    "action": lambda s: AuditLog.action.ilike(f"%{escape_like(s)}%", escape="\\"),
+    "entity_type": lambda s: AuditLog.entity_type.ilike(f"%{escape_like(s)}%", escape="\\"),
+    "actor_name": lambda s: User.full_name.ilike(f"%{escape_like(s)}%", escape="\\"),
+    "payload": lambda s: cast(AuditLog.payload, String).ilike(f"%{escape_like(s)}%", escape="\\"),
     "all": lambda s: or_(
-        AuditLog.action.ilike(f"%{s}%"),
-        AuditLog.entity_type.ilike(f"%{s}%"),
-        AuditLog.actor_role.ilike(f"%{s}%"),
-        User.full_name.ilike(f"%{s}%"),
-        cast(AuditLog.payload, String).ilike(f"%{s}%"),
+        AuditLog.action.ilike(f"%{escape_like(s)}%", escape="\\"),
+        AuditLog.entity_type.ilike(f"%{escape_like(s)}%", escape="\\"),
+        AuditLog.actor_role.ilike(f"%{escape_like(s)}%", escape="\\"),
+        User.full_name.ilike(f"%{escape_like(s)}%", escape="\\"),
+        cast(AuditLog.payload, String).ilike(f"%{escape_like(s)}%", escape="\\"),
     ),
 }
 
