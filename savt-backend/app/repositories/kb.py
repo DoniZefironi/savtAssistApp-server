@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.kb_article_attachment import KbArticleAttachment
 from app.models.kb_article_tag import KbArticleTag
+from app.utils.db import escape_like
 from app.models.kbarticle import KbArticle
 from app.models.kbcategory import KbCategory
 from app.models.tag import Tag
@@ -82,9 +83,10 @@ class KbArticleRepository:
             conditions.append(KbArticle.category_id == category_id)
 
         if search:
+            pattern = f"%{escape_like(search)}%"
             conditions.append(or_(
-                KbArticle.title.ilike(f"%{search}%"),
-                KbArticle.content.ilike(f"%{search}%"),
+                KbArticle.title.ilike(pattern, escape="\\"),
+                KbArticle.content.ilike(pattern, escape="\\"),
             ))
 
         if tag_ids:

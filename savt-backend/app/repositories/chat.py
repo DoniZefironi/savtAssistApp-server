@@ -6,6 +6,7 @@ from app.models.message import Message
 from app.models.message_attchment import MessageAttachment
 from app.models.message_reaction import MessageReaction
 from app.models.user import User
+from app.utils.db import escape_like
 
 
 class ChatRepository:
@@ -51,12 +52,13 @@ class ChatRepository:
             .where(or_(Chat.chat_type == "cabinet", Chat.chat_type == "support"))
         )
         if search:
+            pattern = f"%{escape_like(search)}%"
             stmt = stmt.where(or_(
-                User.full_name.ilike(f"%{search}%"),
-                User.phone.ilike(f"%{search}%"),
-                Cabinet.object_number.ilike(f"%{search}%"),
-                Cabinet.admin_internal_name.ilike(f"%{search}%"),
-                Cabinet.type.ilike(f"%{search}%"),
+                User.full_name.ilike(pattern, escape="\\"),
+                User.phone.ilike(pattern, escape="\\"),
+                Cabinet.object_number.ilike(pattern, escape="\\"),
+                Cabinet.admin_internal_name.ilike(pattern, escape="\\"),
+                Cabinet.type.ilike(pattern, escape="\\"),
             ))
         stmt = stmt.order_by(Chat.operator_requested.desc(), Chat.last_message_at.desc().nullslast())
         result = await self.session.execute(stmt)
@@ -113,7 +115,7 @@ class MessageRepository:
         if before_id is not None:
             stmt = stmt.where(Message.id < before_id)
         if search:
-            stmt = stmt.where(Message.text.ilike(f"%{search}%"))
+            stmt = stmt.where(Message.text.ilike(f"%{escape_like(search)}%", escape="\\"))
         stmt = stmt.order_by(Message.id.desc()).limit(limit)
         result = await self.session.execute(stmt)
         return result.all()

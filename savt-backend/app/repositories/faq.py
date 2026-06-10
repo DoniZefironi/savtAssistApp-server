@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.faq_category import FaqCategory
 from app.models.faq_entry import FaqEntry
+from app.utils.db import escape_like
 
 
 class FaqCategoryRepository:
@@ -59,9 +60,10 @@ class FaqEntryRepository:
         if category_id is not None:
             conditions.append(FaqEntry.category_id == category_id)
         if search:
+            pattern = f"%{escape_like(search)}%"
             conditions.append(or_(
-                FaqEntry.question.ilike(f"%{search}%"),
-                FaqEntry.answer.ilike(f"%{search}%"),
+                FaqEntry.question.ilike(pattern, escape="\\"),
+                FaqEntry.answer.ilike(pattern, escape="\\"),
             ))
 
         count_stmt = select(func.count(FaqEntry.id))
