@@ -48,13 +48,19 @@ async def list_my_requests(
 async def list_all_requests(
     status: str | None = Query(None, pattern=_STATUS_PATTERN),
     cabinet_id: int | None = Query(None, gt=0),
+    search: str | None = Query(None, min_length=1, max_length=200),
+    sort_by: str = Query(
+        "created_at",
+        pattern="^(created_at|status|user_full_name|cabinet_object_number|request_type)$",
+    ),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
     return await ServiceRequestService(session).list_admin(
-        status, cabinet_id, page, size
+        status, cabinet_id, page, size, search=search, sort_by=sort_by, sort_order=sort_order
     )
 
 

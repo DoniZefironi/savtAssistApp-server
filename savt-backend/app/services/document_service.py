@@ -139,10 +139,14 @@ class AdminDocumentService:
         await self.session.commit()
 
     async def list_requests(
-        self, status: str | None = None, page: int = 1, size: int = 20
+        self, status: str | None = None, page: int = 1, size: int = 20,
+        search: str | None = None,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
     ) -> PageOut[DocumentRequestOut]:
         rows, total = await self.request_repo.list_admin(
-            status=status, offset=(page - 1) * size, limit=size
+            status=status, search=search, sort_by=sort_by, sort_order=sort_order,
+            offset=(page - 1) * size, limit=size
         )
         items = [
             DocumentRequestOut(

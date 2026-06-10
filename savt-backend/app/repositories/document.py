@@ -7,6 +7,7 @@ from app.models.document_access import DocumentAccess
 from app.models.document_request import DocumentRequest
 from app.models.document_tag import DocumentTag
 from app.models.user import User
+from app.utils.db import escape_like
 
 _SORT_COLUMNS = {
     "title": Document.title,
@@ -215,19 +216,42 @@ class DocumentRequestRepository:
         return result.scalar_one_or_none()
 
     async def list_admin(
-        self, status: str | None = None, offset: int = 0, limit: int = 20
+        self, status: str | None = None,
+        search: str | None = None,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+        offset: int = 0, limit: int = 20
     ) -> tuple[list, int]:
-        count_stmt = select(func.count(DocumentRequest.id))
+        conditions = []
         if status:
-            count_stmt = count_stmt.where(DocumentRequest.status == status)
+            conditions.append(DocumentRequest.status == status)
+        if search:
+            pattern = f"%{escape_like(search)}%"
+            conditions.append(or_(
+                User.full_name.ilike(pattern, escape="\\"),
+                User.phone.ilike(pattern, escape="\\"),
+                User.organization_name.ilike(pattern, escape="\\"),
+                DocumentRequest.doc_type.ilike(pattern, escape="\\"),
+            ))
+
+        count_stmt = select(func.count(DocumentRequest.id)).join(User, User.id == DocumentRequest.user_id)
+        if conditions:
+            count_stmt = count_stmt.where(*conditions)
         total = (await self.session.execute(count_stmt)).scalar() or 0
+
+        _sort_col = {
+            "created_at": DocumentRequest.created_at,
+            "status": DocumentRequest.status,
+            "user_full_name": User.full_name,
+            "doc_type": DocumentRequest.doc_type,
+        }.get(sort_by, DocumentRequest.created_at)
+        order = _sort_col.asc() if sort_order == "asc" else _sort_col.desc()
 
         stmt = (
             select(DocumentRequest, User)
             .join(User, User.id == DocumentRequest.user_id)
-            .order_by(DocumentRequest.created_at.desc())
         )
-        if status:
-            stmt = stmt.where(DocumentRequest.status == status)
-        result = await self.session.execute(stmt.offset(offset).limit(limit))
+        if conditions:
+            stmt = stmt.where(*conditions)
+        result = await self.session.execute(stmt.order_by(order).offset(offset).limit(limit))
         return result.all(), total
