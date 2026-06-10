@@ -1298,7 +1298,12 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ---
 
 ### GET `/admin/document-requests`
-Заявки пользователей на доступ к закрытым документам. Параметры: `status=pending|approved|rejected`, `page`, `size`.
+Заявки пользователей на доступ к закрытым документам. Параметры:
+- `status` — `pending` / `approved` / `rejected`
+- `search` — поиск по ФИО/телефону/организации пользователя, типу документа
+- `sort_by` — `created_at` (по умолч.), `status`, `user_full_name`, `doc_type`
+- `sort_order` — `asc` / `desc`
+- `page`, `size`
 
 ---
 
@@ -1612,7 +1617,12 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ---
 
 ### GET `/admin/service-requests`
-Все заявки (для админа/оператора). Параметры: `status`, `cabinet_id`, `page`, `size`.
+Все заявки (для админа/оператора). Параметры:
+- `status`, `cabinet_id`
+- `search` — поиск по ФИО/телефону/организации пользователя, номеру/названию ШУ, типу и описанию заявки
+- `sort_by` — `created_at` (по умолч.), `status`, `user_full_name`, `cabinet_object_number`, `request_type`
+- `sort_order` — `asc` / `desc`
+- `page`, `size`
 
 ```json
 {

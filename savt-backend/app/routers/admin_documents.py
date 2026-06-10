@@ -141,12 +141,17 @@ async def delete_photo(
 @router.get("/admin/document-requests", response_model=PageOut[DocumentRequestOut])
 async def list_document_requests(
     status: str | None = Query(None, pattern="^(pending|approved|rejected)$"),
+    search: str | None = Query(None, min_length=1, max_length=200),
+    sort_by: str = Query("created_at", pattern="^(created_at|status|user_full_name|doc_type)$"),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
-    return await AdminDocumentService(session).list_requests(status=status, page=page, size=size)
+    return await AdminDocumentService(session).list_requests(
+        status=status, page=page, size=size, search=search, sort_by=sort_by, sort_order=sort_order
+    )
 
 # Одобрить
 @router.post("/admin/document-requests/{request_id}/approve", status_code=status.HTTP_204_NO_CONTENT)

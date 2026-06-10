@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     sms_code_resend_cooldown_seconds: int = 60
 
     # SMS сервис для кодиков
-    sms_provider: str = "mock"  # "mock" | "smscenter"
+    sms_provider: str = "smscenter"  # "mock" | "smscenter"
     smscenter_login: str = ""
     smscenter_password: str = ""
     smscenter_sender: str = ""
