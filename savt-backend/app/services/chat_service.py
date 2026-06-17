@@ -110,6 +110,9 @@ class ChatService:
         return result
 
     async def get_cabinet_chat(self, user_id: int, cabinet_id: int) -> ChatOut:
+        from app.repositories.cabinet import UserCabinetRepository
+        if not await UserCabinetRepository(self.session).find(user_id, cabinet_id):
+            raise PermissionDeniedError("У вас нет доступа к этому ШУ")
         chat = await self.chat_repo.find(user_id, "cabinet", cabinet_id)
         if chat is None:
             chat = await self.chat_repo.create(user_id, "cabinet", cabinet_id)
@@ -147,6 +150,16 @@ class ChatService:
         from app.repositories.user import UserRepository
         sender = await UserRepository(self.session).get_by_id(sender_id)
         result = await self._build_message_out(msg, sender)
+
+        # Push пользователю от оператора
+        if sender_id != chat.user_id:
+            from app.services.push_service import send_push
+            notif_body = (data.text or "Вложение")[:100]
+            sender_name = sender.full_name if sender else "Оператор"
+            await send_push(
+                self.session, chat.user_id, sender_name, notif_body,
+                {"chat_id": str(chat_id), "type": "chat_message"},
+            )
 
         # Бот отвечает только на сообщения владельца чата
         if chat.user_id == sender_id and chat.bot_active and chat.chat_type != "notes":
@@ -239,6 +252,40 @@ class ChatService:
         await self.session.delete(rxn)
         await self.session.commit()
 
+    async def delete_chat(self, chat_id: int, user_id: int) -> None:
+        chat = await self.chat_repo.get_by_id(chat_id)
+        if chat is None:
+            raise NotFoundError("Чат не найден")
+        if chat.user_id != user_id:
+            raise PermissionDeniedError("Нет доступа к этому чату")
+        if chat.chat_type == "support":
+            raise PermissionDeniedError("Чат поддержки нельзя удалить")
+        await self.session.delete(chat)
+        await self.session.commit()
+
+    async def set_wallpaper(self, chat_id: int, user_id: int, wallpaper_url: str | None) -> ChatOut:
+        chat = await self._get_chat_or_403(chat_id, user_id)
+        if chat.user_id != user_id:
+            raise PermissionDeniedError("Нет доступа к этому чату")
+        chat.wallpaper_url = wallpaper_url
+        await self.session.commit()
+        return _to_chat_out(chat)
+
+    async def pin_message(self, chat_id: int, msg_id: int, user_id: int) -> ChatOut:
+        chat = await self._get_chat_or_403(chat_id, user_id)
+        msg = await self.msg_repo.get_by_id(msg_id)
+        if msg is None or msg.chat_id != chat_id:
+            raise NotFoundError("Сообщение не найдено")
+        chat.pinned_message_id = msg_id
+        await self.session.commit()
+        return _to_chat_out(chat)
+
+    async def unpin_message(self, chat_id: int, user_id: int) -> ChatOut:
+        chat = await self._get_chat_or_403(chat_id, user_id)
+        chat.pinned_message_id = None
+        await self.session.commit()
+        return _to_chat_out(chat)
+
     async def operator_take_chat(self, chat_id: int) -> None:
         chat = await self.chat_repo.get_by_id(chat_id)
         if chat is None:
@@ -288,6 +335,8 @@ def _to_chat_out(chat: Chat) -> ChatOut:
         problem_status=chat.problem_status,
         bot_active=chat.bot_active,
         operator_requested=chat.operator_requested,
+        wallpaper_url=chat.wallpaper_url,
+        pinned_message_id=chat.pinned_message_id,
         created_at=chat.created_at,
     )
 

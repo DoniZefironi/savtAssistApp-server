@@ -319,6 +319,38 @@ POST /chats/{chat_id}/read
 Убрать:    DELETE /chats/{chat_id}/messages/{msg_id}/reactions/{emoji}
 ```
 
+### Закрепить сообщение
+```
+Закрепить:  PUT    /chats/{chat_id}/pin/{msg_id}
+Открепить:  DELETE /chats/{chat_id}/pin
+→ Ответ: ChatOut с обновлённым pinned_message_id
+```
+
+### Обои чата
+```
+Установить: PATCH /chats/{chat_id}/wallpaper
+Тело: { "wallpaper_url": "/static/photos/bg.jpg" }
+Сбросить:   { "wallpaper_url": null }
+→ Ответ: ChatOut с обновлённым wallpaper_url
+```
+
+### Удалить чат
+```
+DELETE /chats/{chat_id}
+→ Только cabinet и notes. Чат поддержки нельзя удалить (403).
+→ 204 No Content
+```
+
+### Голосовое сообщение → текст
+```
+1. Загрузить: POST /upload/voice (multipart, file)
+   Ответ: { url: "/static/voices/abc.ogg" }
+
+2. Распознать: POST /upload/transcribe
+   Тело: { "file_url": "/static/voices/abc.ogg" }
+   Ответ: { "text": "распознанный текст" }
+```
+
 ---
 
 ## 4. Уведомления
@@ -347,6 +379,18 @@ POST /notifications/read-all    → прочитать все
 1. GET /notifications/settings → предзаполнить переключатели
 2. PATCH /notifications/settings
    Тело: { promotional: false }  ← только изменённые поля
+```
+
+### Push при новом сообщении
+```
+Когда оператор или бот пишет пользователю — сервер автоматически
+отправляет FCM push на все зарегистрированные устройства пользователя:
+  title: имя отправителя ("Ася" / "Оператор Иванов")
+  body:  текст сообщения (до 100 символов)
+  data:  { chat_id: "3", type: "chat_message" }
+
+Условие: тип уведомления chat_message должен быть включён
+в настройках пользователя (по умолчанию — включён).
 ```
 
 ---
@@ -424,6 +468,10 @@ POST /upload/attachment (multipart/form-data, поле: file)
 Голосовое сообщение:
 POST /upload/voice (multipart/form-data, поле: file)
 Ответ: { url: "/static/voices/abc.ogg" }
+
+Голосовое → текст:
+POST /upload/transcribe (JSON: { file_url: "/static/voices/abc.ogg" })
+Ответ: { text: "распознанный текст" }
 ```
 
 ---
@@ -718,6 +766,28 @@ POST /upload/voice (multipart/form-data, поле: file)
 
 - `400` — URL не указывает на загруженный файл
 - `404` — файл не найден на диске
+
+---
+
+### POST `/upload/transcribe`
+Распознать голосовое сообщение в текст через Yandex SpeechKit. Требует настроенных `YANDEX_FOLDER_ID` и `YANDEX_API_KEY`.
+
+Тело запроса (JSON):
+```json
+{ "file_url": "/static/voices/abc123.ogg" }
+```
+
+Ответ:
+```json
+{ "text": "распознанный текст сообщения" }
+```
+
+Поддерживаемые форматы: `ogg/opus`, `mp3`. Файл должен быть предварительно загружен через `POST /upload/voice`.
+
+Ошибки:
+- `400` — некорректный URL
+- `404` — файл не найден
+- `503` — Yandex SpeechKit недоступен или не настроен
 
 ---
 
@@ -1476,10 +1546,20 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ]
 ```
 
+`ChatOut` (возвращается при `GET /cabinets/{cabinet_id}/chat`, `PATCH wallpaper`, `PUT/DELETE pin`) содержит дополнительные поля:
+```json
+{
+  "wallpaper_url": "/static/photos/bg.jpg",
+  "pinned_message_id": 42
+}
+```
+
 ---
 
 ### GET `/cabinets/{cabinet_id}/chat`
 Получить или создать чат для конкретного ШУ. Чат создаётся автоматически если его ещё нет.
+
+> Требует, чтобы пользователь был привязан к ШУ (`user_cabinets`). Pending-заявка доступа не даёт — вернёт `403`.
 
 ---
 
@@ -1554,6 +1634,30 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 
 ### DELETE `/chats/{chat_id}/messages/{msg_id}/reactions/{emoji}`
 Убрать реакцию. `204 No Content`.
+
+---
+
+### DELETE `/chats/{chat_id}`
+Удалить чат. Доступно только владельцу. Чат `support` удалить нельзя (403). Каскадно удаляет все сообщения. `204 No Content`.
+
+---
+
+### PATCH `/chats/{chat_id}/wallpaper`
+Установить или сбросить обои чата. Доступно только владельцу.
+```json
+{ "wallpaper_url": "/static/photos/bg.jpg" }
+```
+Для сброса: `{ "wallpaper_url": null }`. Ответ: `ChatOut`.
+
+---
+
+### PUT `/chats/{chat_id}/pin/{msg_id}`
+Закрепить сообщение. Ответ: `ChatOut` с обновлённым `pinned_message_id`.
+
+---
+
+### DELETE `/chats/{chat_id}/pin`
+Открепить сообщение. Ответ: `ChatOut` с `pinned_message_id: null`.
 
 ---
 
