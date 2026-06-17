@@ -73,6 +73,10 @@ class ChatListOut(BaseModel):
     operator_requested: bool
 
 
+class WallpaperIn(BaseModel):
+    wallpaper_url: str | None = Field(None, max_length=500)
+
+
 class ChatOut(BaseModel):
     id: int
     chat_type: str
@@ -80,4 +84,6 @@ class ChatOut(BaseModel):
     problem_status: str
     bot_active: bool
     operator_requested: bool
+    wallpaper_url: str | None
+    pinned_message_id: int | None
     created_at: datetime

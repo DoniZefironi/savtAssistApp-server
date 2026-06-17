@@ -31,6 +31,11 @@ _NEGATIVE_KEYWORDS = {
     "нет", "не помогло", "не работает", "не решило", "не то",
     "всё равно", "по-прежнему", "проблема осталась", "не помог",
 }
+_POSITIVE_KEYWORDS = {
+    "спасибо", "благодарю", "решено", "решил", "решила", "работает",
+    "всё хорошо", "всё работает", "всё нормально", "помогло", "помог",
+    "разобрался", "разобралась", "понял", "поняла", "ок", "окей",
+}
 
 
 async def get_bot_user_id(session: AsyncSession) -> int | None:
@@ -127,6 +132,11 @@ def _is_negative(text: str) -> bool:
     return any(kw in low for kw in _NEGATIVE_KEYWORDS)
 
 
+def _is_positive(text: str) -> bool:
+    low = text.lower()
+    return any(kw in low for kw in _POSITIVE_KEYWORDS)
+
+
 async def _send_bot_message(session: AsyncSession, chat: Chat, bot_user_id: int, text: str) -> None:
     msg = Message(
         chat_id=chat.id,
@@ -137,6 +147,11 @@ async def _send_bot_message(session: AsyncSession, chat: Chat, bot_user_id: int,
     session.add(msg)
     chat.last_message_at = datetime.now(timezone.utc)
     await session.flush()
+    from app.services.push_service import send_push
+    await send_push(
+        session, chat.user_id, _BOT_NAME, text[:100],
+        {"chat_id": str(chat.id), "type": "chat_message"},
+    )
 
 
 async def handle_message(
@@ -153,6 +168,18 @@ async def handle_message(
 
     bot_user_id = await get_bot_user_id(session)
     if bot_user_id is None:
+        return
+
+    # Проблема решена — пользователь доволен
+    if _is_positive(user_text) and chat.problem_status == "open":
+        chat.problem_status = "resolved"
+        chat.follow_up_sent = True
+        chat.bot_no_count = 0
+        await _send_bot_message(
+            session, chat, bot_user_id,
+            "Рад, что удалось помочь! Если возникнут новые вопросы — обращайтесь.",
+        )
+        await session.commit()
         return
 
     # Пользователь хочет оператора после предложения
@@ -218,10 +245,10 @@ async def handle_message(
     # Обновляем счётчик если пользователь недоволен
     if _is_negative(user_text):
         chat.bot_no_count += 1
+        chat.follow_up_sent = False  # после негатива разрешаем ещё один follow-up
     else:
         chat.bot_no_count = 0
-
-    chat.follow_up_sent = False
+        # follow_up_sent не сбрасываем — бот не будет слать follow-up каждые N минут
 
     # Если исчерпаны попытки — предлагаем оператора
     if chat.bot_no_count >= settings.bot_max_attempts:
@@ -242,6 +269,7 @@ async def send_follow_up(session: AsyncSession) -> None:
             and_(
                 Chat.bot_active == True,
                 Chat.follow_up_sent == False,
+                Chat.problem_status == "open",
                 Chat.chat_type != "notes",
                 Chat.last_user_message_at.isnot(None),
                 Chat.last_user_message_at < cutoff,

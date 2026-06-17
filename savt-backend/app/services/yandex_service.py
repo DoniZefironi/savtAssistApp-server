@@ -78,3 +78,29 @@ async def complete(system_prompt: str, messages: list[dict]) -> str:
     if not resp.is_success:
         raise RuntimeError(f"Yandex complete {resp.status_code}: {resp.text}")
     return resp.json()["result"]["alternatives"][0]["message"]["text"]
+
+
+_STT_URL = "https://stt.api.cloud.yandex.net/speech/v1/stt:recognize"
+
+
+async def transcribe_voice(audio_bytes: bytes, format: str = "oggopus") -> str:
+    """Распознаёт голосовое сообщение через Yandex SpeechKit v1."""
+    if not settings.yandex_folder_id or not settings.yandex_api_key:
+        raise RuntimeError("Yandex API не настроен")
+    client = _get_client()
+    resp = await client.post(
+        _STT_URL,
+        content=audio_bytes,
+        params={
+            "folderId": settings.yandex_folder_id,
+            "lang": "ru-RU",
+            "format": format,
+        },
+        headers={
+            "Authorization": f"Api-Key {settings.yandex_api_key}",
+            "Content-Type": "application/octet-stream",
+        },
+    )
+    if not resp.is_success:
+        raise RuntimeError(f"Yandex STT {resp.status_code}: {resp.text}")
+    return resp.json().get("result", "")

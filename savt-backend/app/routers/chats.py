@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user, get_session
 from app.models.user import User
-from app.schemas.chat import ChatListOut, ChatOut, MessageCreateIn, MessageOut
+from app.schemas.chat import ChatListOut, ChatOut, MessageCreateIn, MessageOut, WallpaperIn
 from app.services.chat_service import ChatService
 
 router = APIRouter(tags=["chats"])
@@ -103,3 +103,45 @@ async def remove_reaction(
     session: AsyncSession = Depends(get_session),
 ):
     await ChatService(session).remove_reaction(chat_id, msg_id, current_user.id, emoji)
+
+
+# Удалить чат
+@router.delete("/chats/{chat_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_chat(
+    chat_id: int,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    await ChatService(session).delete_chat(chat_id, current_user.id)
+
+
+# Обои чата
+@router.patch("/chats/{chat_id}/wallpaper", response_model=ChatOut)
+async def set_wallpaper(
+    chat_id: int,
+    payload: WallpaperIn,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await ChatService(session).set_wallpaper(chat_id, current_user.id, payload.wallpaper_url)
+
+
+# Закрепить сообщение
+@router.put("/chats/{chat_id}/pin/{msg_id}", response_model=ChatOut)
+async def pin_message(
+    chat_id: int,
+    msg_id: int,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await ChatService(session).pin_message(chat_id, msg_id, current_user.id)
+
+
+# Открепить сообщение
+@router.delete("/chats/{chat_id}/pin", response_model=ChatOut)
+async def unpin_message(
+    chat_id: int,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await ChatService(session).unpin_message(chat_id, current_user.id)
