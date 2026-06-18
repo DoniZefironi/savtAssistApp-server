@@ -58,6 +58,11 @@ class DocumentRequestOut(BaseModel):
     id: int
     user_id: int
     user_full_name: str | None
+    user_phone: str | None
+    user_type: str | None
+    organization_name: str | None
+    user_is_verified: bool
+    user_registered_at: datetime
     document_id: int | None
     cabinet_id: int | None
     doc_type: str

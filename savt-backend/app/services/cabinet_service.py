@@ -109,6 +109,11 @@ class CabinetService:
         self,
         query: str | None = None,
         tag_ids: list[int] | None = None,
+        has_documents: bool | None = None,
+        has_photos: bool | None = None,
+        has_users: bool | None = None,
+        has_service_requests: bool | None = None,
+        warranty_status: str | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
         page: int = 1,
@@ -116,7 +121,11 @@ class CabinetService:
     ) -> PageOut[CabinetListOut]:
         offset = (page - 1) * size
         cabinets, total = await self.repo.search(
-            query=query, tag_ids=tag_ids, sort_by=sort_by, sort_order=sort_order,
+            query=query, tag_ids=tag_ids,
+            has_documents=has_documents, has_photos=has_photos,
+            has_users=has_users, has_service_requests=has_service_requests,
+            warranty_status=warranty_status,
+            sort_by=sort_by, sort_order=sort_order,
             offset=offset, limit=size,
         )
         cabinet_ids = [c.id for c in cabinets]

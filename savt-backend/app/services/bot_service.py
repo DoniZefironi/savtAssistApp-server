@@ -154,6 +154,26 @@ async def _send_bot_message(session: AsyncSession, chat: Chat, bot_user_id: int,
     )
 
 
+async def _notify_operators(session: AsyncSession, chat_id: int) -> None:
+    from app.models.role import Role
+    from app.models.user import User
+    from app.services.push_service import send_push
+
+    operators = (await session.execute(
+        select(User)
+        .join(Role, Role.id == User.role_id)
+        .where(Role.name.in_(["operator", "admin"]), User.is_active == True)
+    )).scalars().all()
+
+    for op in operators:
+        await send_push(
+            session, op.id,
+            "Запрос оператора",
+            f"Пользователь ожидает оператора в чате #{chat_id}",
+            {"chat_id": str(chat_id), "type": "operator_requested"},
+        )
+
+
 async def handle_message(
     session: AsyncSession,
     chat_id: int,
@@ -193,6 +213,7 @@ async def handle_message(
                 "Понял, передаю вас оператору. Ожидайте — скоро с вами свяжутся.",
             )
             await session.commit()
+            await _notify_operators(session, chat.id)
             return
         elif any(w in low for w in ("нет", "не нужен", "не надо", "сам")):
             chat.bot_no_count = 0
