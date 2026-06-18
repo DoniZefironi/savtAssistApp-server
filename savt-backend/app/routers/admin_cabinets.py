@@ -26,6 +26,11 @@ async def create_cabinet(
 async def list_cabinets(
     search: str | None = Query(None),
     tag_ids: list[int] = Query(default=[]),
+    has_documents: bool | None = Query(None),
+    has_photos: bool | None = Query(None),
+    has_users: bool | None = Query(None),
+    has_service_requests: bool | None = Query(None),
+    warranty_status: str | None = Query(None, pattern="^(active|expired|none)$"),
     sort_by: str = Query("created_at", pattern="^(type|warranty_ends_at|object_number|admin_internal_name|created_at)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
@@ -35,6 +40,9 @@ async def list_cabinets(
 ):
     return await CabinetService(session).list_all(
         query=search, tag_ids=tag_ids or None,
+        has_documents=has_documents, has_photos=has_photos,
+        has_users=has_users, has_service_requests=has_service_requests,
+        warranty_status=warranty_status,
         sort_by=sort_by, sort_order=sort_order, page=page, size=size,
     )
 

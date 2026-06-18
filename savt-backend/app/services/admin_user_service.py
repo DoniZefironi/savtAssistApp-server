@@ -39,6 +39,8 @@ class AdminUserService:
         self,
         query: str | None = None,
         is_active: bool | None = None,
+        is_verified: bool | None = None,
+        is_phone_verified: bool | None = None,
         role: str | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
@@ -46,8 +48,9 @@ class AdminUserService:
         size: int = 20,
     ) -> PageOut[AdminUserListOut]:
         rows, total = await self.user_repo.admin_search(
-            query=query, is_active=is_active, role=role,
-            sort_by=sort_by, sort_order=sort_order,
+            query=query, is_active=is_active,
+            is_verified=is_verified, is_phone_verified=is_phone_verified,
+            role=role, sort_by=sort_by, sort_order=sort_order,
             offset=(page - 1) * size, limit=size,
         )
         items = [

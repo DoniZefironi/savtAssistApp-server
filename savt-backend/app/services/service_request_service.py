@@ -42,6 +42,10 @@ def _to_detail(req, user, cabinet) -> ServiceRequestDetailOut:
         closed_at=req.closed_at,
         user_full_name=user.full_name,
         user_phone=user.phone,
+        user_type=user.user_type,
+        organization_name=user.organization_name,
+        user_is_verified=user.is_verified,
+        user_registered_at=user.created_at,
     )
 
 

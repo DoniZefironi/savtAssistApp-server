@@ -27,6 +27,10 @@ class ServiceRequestOut(BaseModel):
 class ServiceRequestDetailOut(ServiceRequestOut):
     user_full_name: str | None
     user_phone: str | None
+    user_type: str | None
+    organization_name: str | None
+    user_is_verified: bool
+    user_registered_at: datetime
 
 
 class ServiceRequestStatusIn(BaseModel):

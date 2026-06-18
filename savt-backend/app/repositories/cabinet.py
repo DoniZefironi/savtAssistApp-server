@@ -1,10 +1,15 @@
-from sqlalchemy import delete, func, select, or_
+from datetime import datetime, timezone
+
+from sqlalchemy import delete, exists, func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.cabinet_addition_request import CabinetAdditionRequest
 from app.models.cabinet_share_request import CabinetShareRequest
 from app.models.cabinet_tag import CabinetTag
 from app.models.cabinets import Cabinet
+from app.models.cabinet_photo import CabinetPhoto
+from app.models.document import Document
+from app.models.service_request import ServiceRequest
 from app.models.tag import Tag
 from app.utils.db import escape_like
 from app.models.user import User
@@ -26,6 +31,11 @@ class CabinetRepository(BaseRepository[Cabinet]):
         self,
         query: str | None = None,
         tag_ids: list[int] | None = None,
+        has_documents: bool | None = None,
+        has_photos: bool | None = None,
+        has_users: bool | None = None,
+        has_service_requests: bool | None = None,
+        warranty_status: str | None = None,  # "active" | "expired" | "none"
         sort_by: str = "created_at",
         sort_order: str = "desc",
         offset: int = 0,
@@ -50,6 +60,39 @@ class CabinetRepository(BaseRepository[Cabinet]):
                 .scalar_subquery()
             )
             conditions.append(Cabinet.id.in_(tag_subq))
+
+        if has_documents is not None:
+            doc_exists = exists(
+                select(Document.id).where(Document.cabinet_id == Cabinet.id)
+            )
+            conditions.append(doc_exists if has_documents else ~doc_exists)
+
+        if has_photos is not None:
+            photo_exists = exists(
+                select(CabinetPhoto.id).where(CabinetPhoto.cabinet_id == Cabinet.id)
+            )
+            conditions.append(photo_exists if has_photos else ~photo_exists)
+
+        if has_users is not None:
+            user_exists = exists(
+                select(UserCabinet.id).where(UserCabinet.cabinet_id == Cabinet.id)
+            )
+            conditions.append(user_exists if has_users else ~user_exists)
+
+        if has_service_requests is not None:
+            sr_exists = exists(
+                select(ServiceRequest.id).where(ServiceRequest.cabinet_id == Cabinet.id)
+            )
+            conditions.append(sr_exists if has_service_requests else ~sr_exists)
+
+        if warranty_status == "active":
+            conditions.append(Cabinet.warranty_ends_at.isnot(None))
+            conditions.append(Cabinet.warranty_ends_at >= datetime.now(timezone.utc))
+        elif warranty_status == "expired":
+            conditions.append(Cabinet.warranty_ends_at.isnot(None))
+            conditions.append(Cabinet.warranty_ends_at < datetime.now(timezone.utc))
+        elif warranty_status == "none":
+            conditions.append(Cabinet.warranty_ends_at.is_(None))
 
         count_stmt = select(func.count(Cabinet.id))
         if conditions:

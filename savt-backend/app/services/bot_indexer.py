@@ -124,21 +124,41 @@ async def index_document(session: AsyncSession, doc: Document) -> None:
     )
 
 
-async def reindex_all(session: AsyncSession) -> dict:
-    stats = {"faq": 0, "kb_article": 0, "document": 0}
+async def reindex_all(session: AsyncSession, force: bool = False) -> dict:
+    """Индексирует только ещё не проиндексированные записи.
+    force=True — переиндексирует всё (старое поведение).
+    """
+    stats = {"faq": 0, "kb_article": 0, "document": 0, "skipped": 0}
+
+    if not force:
+        rows = (await session.execute(
+            select(Embedding.source_type, Embedding.source_id).distinct()
+        )).all()
+        already = {(r[0], r[1]) for r in rows}
+    else:
+        already = set()
 
     entries = (await session.execute(select(FaqEntry))).scalars().all()
     for e in entries:
+        if ("faq", e.id) in already:
+            stats["skipped"] += 1
+            continue
         await index_faq_entry(session, e)
         stats["faq"] += 1
 
     articles = (await session.execute(select(KbArticle))).scalars().all()
     for a in articles:
+        if ("kb_article", a.id) in already:
+            stats["skipped"] += 1
+            continue
         await index_kb_article(session, a)
         stats["kb_article"] += 1
 
     docs = (await session.execute(select(Document))).scalars().all()
     for d in docs:
+        if ("document", d.id) in already:
+            stats["skipped"] += 1
+            continue
         await index_document(session, d)
         stats["document"] += 1
 

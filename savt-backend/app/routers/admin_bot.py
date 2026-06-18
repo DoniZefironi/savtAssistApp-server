@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleName
@@ -11,8 +11,9 @@ router = APIRouter(prefix="/admin/bot", tags=["admin: bot"])
 
 @router.post("/reindex")
 async def reindex(
+    force: bool = Query(False, description="true — переиндексировать всё, false — только новое"),
     _: User = Depends(require_role(RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
-    stats = await reindex_all(session)
+    stats = await reindex_all(session, force=force)
     return {"status": "ok", "indexed": stats}

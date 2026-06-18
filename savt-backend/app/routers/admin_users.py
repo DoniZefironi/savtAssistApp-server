@@ -45,6 +45,8 @@ async def create_operator(
 async def list_users(
     search: str | None = Query(None),
     is_active: bool | None = Query(None),
+    is_verified: bool | None = Query(None),
+    is_phone_verified: bool | None = Query(None),
     sort_by: str = Query("created_at", pattern="^(created_at|full_name|phone|email|role)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
@@ -53,8 +55,9 @@ async def list_users(
     session: AsyncSession = Depends(get_session),
 ):
     return await AdminUserService(session).list_users(
-        query=search, is_active=is_active, role="user",
-        sort_by=sort_by, sort_order=sort_order,
+        query=search, is_active=is_active,
+        is_verified=is_verified, is_phone_verified=is_phone_verified,
+        role="user", sort_by=sort_by, sort_order=sort_order,
         page=page, size=size,
     )
 
@@ -64,6 +67,8 @@ async def list_users(
 async def list_operators(
     search: str | None = Query(None),
     is_active: bool | None = Query(None),
+    is_verified: bool | None = Query(None),
+    is_phone_verified: bool | None = Query(None),
     sort_by: str = Query("created_at", pattern="^(created_at|full_name|phone|email)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
@@ -72,8 +77,9 @@ async def list_operators(
     session: AsyncSession = Depends(get_session),
 ):
     return await AdminUserService(session).list_users(
-        query=search, is_active=is_active, role="operator",
-        sort_by=sort_by, sort_order=sort_order,
+        query=search, is_active=is_active,
+        is_verified=is_verified, is_phone_verified=is_phone_verified,
+        role="operator", sort_by=sort_by, sort_order=sort_order,
         page=page, size=size,
     )
 
@@ -83,6 +89,8 @@ async def list_operators(
 async def list_admins(
     search: str | None = Query(None),
     is_active: bool | None = Query(None),
+    is_verified: bool | None = Query(None),
+    is_phone_verified: bool | None = Query(None),
     sort_by: str = Query("created_at", pattern="^(created_at|full_name|phone|email)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
@@ -91,8 +99,9 @@ async def list_admins(
     session: AsyncSession = Depends(get_session),
 ):
     return await AdminUserService(session).list_users(
-        query=search, is_active=is_active, role="admin",
-        sort_by=sort_by, sort_order=sort_order,
+        query=search, is_active=is_active,
+        is_verified=is_verified, is_phone_verified=is_phone_verified,
+        role="admin", sort_by=sort_by, sort_order=sort_order,
         page=page, size=size,
     )
 
