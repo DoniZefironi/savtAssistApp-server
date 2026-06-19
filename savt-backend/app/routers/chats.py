@@ -3,10 +3,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user, get_session
 from app.models.user import User
-from app.schemas.chat import ChatListOut, ChatOut, MessageCreateIn, MessageOut, WallpaperIn
+from app.schemas.chat import ChatListOut, ChatOut, ChatSettingsIn, ChatSettingsOut, MessageCreateIn, MessageOut, WallpaperIn
 from app.services.chat_service import ChatService
 
 router = APIRouter(tags=["chats"])
+
+
+# Глобальные настройки вида чата (цвета, шрифт) — ДОЛЖНЫ быть ДО /chats/{chat_id}
+@router.get("/chats/settings", response_model=ChatSettingsOut)
+async def get_global_chat_settings(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await ChatService(session).get_chat_settings(current_user.id, None)
+
+
+@router.patch("/chats/settings", response_model=ChatSettingsOut)
+async def update_global_chat_settings(
+    payload: ChatSettingsIn,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await ChatService(session).update_chat_settings(current_user.id, None, payload)
+
 
 # Список чатов пользователя
 @router.get("/chats", response_model=list[ChatListOut])
@@ -145,3 +164,32 @@ async def unpin_message(
     session: AsyncSession = Depends(get_session),
 ):
     return await ChatService(session).unpin_message(chat_id, current_user.id)
+
+
+# Настройки вида конкретного чата (цвета, шрифт) — per-chat override
+@router.get("/chats/{chat_id}/settings", response_model=ChatSettingsOut)
+async def get_chat_settings(
+    chat_id: int,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await ChatService(session).get_chat_settings(current_user.id, chat_id)
+
+
+@router.patch("/chats/{chat_id}/settings", response_model=ChatSettingsOut)
+async def update_chat_settings(
+    chat_id: int,
+    payload: ChatSettingsIn,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await ChatService(session).update_chat_settings(current_user.id, chat_id, payload)
+
+
+@router.delete("/chats/{chat_id}/settings", status_code=status.HTTP_204_NO_CONTENT)
+async def reset_chat_settings(
+    chat_id: int,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    await ChatService(session).reset_chat_settings(current_user.id, chat_id)

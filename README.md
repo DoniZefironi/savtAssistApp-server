@@ -336,14 +336,52 @@ POST /chats/{chat_id}/read
 
 ### Удалить чат
 ```
-DELETE /chats/{chat_id}
-→ Только cabinet и notes. Чат поддержки нельзя удалить (403).
+DELETE /chats/{chat_id}          — пользователь (только cabinet и notes; поддержку удалить нельзя)
+DELETE /operator/chats/{chat_id} — оператор/админ (любой чат)
 → 204 No Content
 ```
+
+### Очистить историю сообщений (только оператор)
+```
+DELETE /operator/chats/{chat_id}/messages
+→ Soft-delete всех сообщений (тексты обнуляются)
+→ 204 No Content
+```
+
+### Настройки вида чата (цвета, шрифт)
+Глобальные настройки (применяются ко всем чатам пользователя):
+```
+GET   /chats/settings          → ChatSettingsOut
+PATCH /chats/settings          → ChatSettingsOut
+```
+
+Per-chat override (приоритет над глобальными):
+```
+GET    /chats/{chat_id}/settings   → возвращает per-chat если есть, иначе global
+PATCH  /chats/{chat_id}/settings   → создаёт/обновляет override для конкретного чата
+DELETE /chats/{chat_id}/settings   → сбрасывает override (откат к глобальным)
+→ 204 No Content для DELETE
+```
+
+Тело запроса `ChatSettingsIn` (все поля опциональны):
+```json
+{
+  "own_bubble_color": "#DCF8C6",
+  "other_bubble_color": "#FFFFFF",
+  "bot_bubble_color": "#E8E8E8",
+  "own_text_color": "#000000",
+  "other_text_color": "#000000",
+  "bot_text_color": "#555555",
+  "nick_color": "#128C7E",
+  "font_size": 14
+}
+```
+Цвета — HEX `#RRGGBB`. `font_size` — от 8 до 24.
 
 ### Голосовое сообщение → текст
 ```
 1. Загрузить: POST /upload/voice (multipart, file)
+   Форматы: ogg, mp3, m4a, wav, webm, aac
    Ответ: { url: "/static/voices/abc.ogg" }
 
 2. Распознать: POST /upload/transcribe
@@ -720,15 +758,13 @@ POST /upload/transcribe (JSON: { file_url: "/static/voices/abc.ogg" })
 Все эндпоинты требуют Bearer-токен. Принимают `multipart/form-data`.
 
 ### POST `/upload/attachment`
-Загрузка вложения (фото, документ, видео).
+Загрузка вложения. Принимает **любой MIME-тип** — лимитов по формату нет. Лимит размера — 500 МБ.
 
-| Тип | Форматы | Лимит |
-|---|---|---|
-| Изображение | jpg, png, webp | 500 МБ |
-| Документ | pdf, doc, docx, xls, xlsx | 500 МБ |
-| Видео | mp4, mov | 500 МБ |
-
-Единый лимит на все типы вложений — 500 МБ.
+Директория сохранения определяется по MIME-типу:
+- `image/*` → `/static/photos/`
+- `video/*` → `/static/videos/`
+- `audio/*` → `/static/voices/`
+- всё остальное → `/static/files/`
 
 Ответ:
 ```json
@@ -736,8 +772,7 @@ POST /upload/transcribe (JSON: { file_url: "/static/voices/abc.ogg" })
 ```
 
 Ошибки:
-- `415` — неподдерживаемый MIME-тип файла
-- `413` — файл превышает лимит размера
+- `413` — файл превышает 500 МБ
 
 ---
 
@@ -746,7 +781,9 @@ POST /upload/transcribe (JSON: { file_url: "/static/voices/abc.ogg" })
 
 | Форматы | Лимит |
 |---|---|
-| ogg, mp3, m4a, wav | 25 МБ |
+| ogg, mp3, m4a, wav, webm, aac | 25 МБ |
+
+`audio/webm` и `video/webm` (Chrome/Firefox запись) поддерживаются напрямую.
 
 Ответ:
 ```json
@@ -782,7 +819,7 @@ POST /upload/transcribe (JSON: { file_url: "/static/voices/abc.ogg" })
 { "text": "распознанный текст сообщения" }
 ```
 
-Поддерживаемые форматы: `ogg/opus`, `mp3`. Файл должен быть предварительно загружен через `POST /upload/voice`.
+Поддерживаемые форматы для распознавания: `ogg/opus`, `webm` (opus codec), `mp3`, `m4a`, `aac`, `wav`. Файл должен быть предварительно загружен через `POST /upload/voice`.
 
 Ошибки:
 - `400` — некорректный URL
@@ -1694,6 +1731,40 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 
 ---
 
+### GET `/chats/settings`
+Глобальные настройки вида чатов текущего пользователя (цвета пузырей, текста, шрифт). Если не настраивались — все поля `null`.
+
+### PATCH `/chats/settings`
+Обновить глобальные настройки. Все поля опциональны — устанавливаются только переданные. Ответ: `ChatSettingsOut`.
+
+### GET `/chats/{chat_id}/settings`
+Настройки для конкретного чата. Если per-chat override не создан — возвращает глобальные. Ответ: `ChatSettingsOut`.
+
+### PATCH `/chats/{chat_id}/settings`
+Создать или обновить per-chat override настроек. Приоритет над глобальными. Ответ: `ChatSettingsOut`.
+
+### DELETE `/chats/{chat_id}/settings`
+Удалить per-chat override (откат к глобальным настройкам). `204 No Content`.
+
+`ChatSettingsOut`:
+```json
+{
+  "user_id": 8,
+  "chat_id": 7,
+  "own_bubble_color": "#DCF8C6",
+  "other_bubble_color": "#FFFFFF",
+  "bot_bubble_color": "#E8E8E8",
+  "own_text_color": "#000000",
+  "other_text_color": "#000000",
+  "bot_text_color": "#555555",
+  "nick_color": "#128C7E",
+  "font_size": 14
+}
+```
+`chat_id: null` — глобальные настройки.
+
+---
+
 ## Рут `operator` — операторский интерфейс
 
 ### GET `/operator/chats`
@@ -1727,6 +1798,54 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 
 ### POST `/operator/chats/{chat_id}/return-to-bot`
 Вернуть чат боту (`bot_active=true`, `bot_no_count=0`). `204 No Content`.
+
+---
+
+### DELETE `/operator/chats/{chat_id}`
+Удалить чат (оператор/админ). `204 No Content`.
+
+---
+
+### DELETE `/operator/chats/{chat_id}/messages`
+Очистить историю чата — soft-delete всех сообщений (тексты обнуляются, `deleted_at` проставляется). `204 No Content`.
+
+---
+
+### PUT `/operator/chats/{chat_id}/pin/{msg_id}`
+Закрепить сообщение в чате. Возвращает обновлённый `ChatOut` с `pinned_message_id`.
+
+---
+
+### DELETE `/operator/chats/{chat_id}/pin`
+Открепить сообщение. Возвращает обновлённый `ChatOut`.
+
+---
+
+### GET `/operator/messages?q=...`
+Поиск сообщений по тексту **во всех** `cabinet` и `support` чатах. Параметры:
+- `q` — строка поиска (обязателен, 1–200 символов)
+- `page`, `size`
+
+Ответ (`PageOut[MessageSearchOut]`):
+```json
+{
+  "items": [
+    {
+      "id": 42,
+      "chat_id": 7,
+      "chat_type": "cabinet",
+      "cabinet_object_number": "29_099",
+      "chat_user_id": 8,
+      "sender_id": 8,
+      "sender_name": "Иванов Иван",
+      "text": "...найденный текст...",
+      "created_at": "2026-06-10T14:30:00Z",
+      "attachments": []
+    }
+  ],
+  "total": 3, "page": 1, "size": 20, "pages": 1
+}
+```
 
 ---
 

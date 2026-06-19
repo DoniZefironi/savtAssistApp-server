@@ -2,6 +2,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chat import Chat
+from app.models.chat_user_settings import ChatUserSettings
 from app.models.message import Message
 from app.models.message_attchment import MessageAttachment
 from app.models.message_reaction import MessageReaction
@@ -176,3 +177,55 @@ class MessageRepository:
         self.session.add(rxn)
         await self.session.flush()
         return rxn
+
+    async def search_global(
+        self, query: str, offset: int = 0, limit: int = 30
+    ) -> tuple[list, int]:
+        pattern = f"%{escape_like(query)}%"
+        base_stmt = (
+            select(Message, User, Chat)
+            .outerjoin(User, User.id == Message.sender_id)
+            .join(Chat, Chat.id == Message.chat_id)
+            .where(
+                Message.deleted_at.is_(None),
+                Message.text.ilike(pattern, escape="\\"),
+                Chat.chat_type.in_(["cabinet", "support"]),
+            )
+        )
+        total = (await self.session.execute(
+            select(func.count()).select_from(base_stmt.subquery())
+        )).scalar() or 0
+        result = await self.session.execute(
+            base_stmt.order_by(Message.id.desc()).offset(offset).limit(limit)
+        )
+        return result.all(), total
+
+
+class ChatSettingsRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def get(self, user_id: int, chat_id: int | None) -> ChatUserSettings | None:
+        stmt = select(ChatUserSettings).where(ChatUserSettings.user_id == user_id)
+        if chat_id is None:
+            stmt = stmt.where(ChatUserSettings.chat_id.is_(None))
+        else:
+            stmt = stmt.where(ChatUserSettings.chat_id == chat_id)
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def upsert(self, user_id: int, chat_id: int | None, data: dict) -> ChatUserSettings:
+        obj = await self.get(user_id, chat_id)
+        if obj is None:
+            obj = ChatUserSettings(user_id=user_id, chat_id=chat_id, **data)
+            self.session.add(obj)
+        else:
+            for k, v in data.items():
+                setattr(obj, k, v)
+        await self.session.flush()
+        return obj
+
+    async def delete_chat_override(self, user_id: int, chat_id: int) -> None:
+        obj = await self.get(user_id, chat_id)
+        if obj:
+            await self.session.delete(obj)
+            await self.session.flush()
