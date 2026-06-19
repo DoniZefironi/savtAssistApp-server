@@ -40,6 +40,18 @@ class MessageOut(BaseModel):
     reactions: list[ReactionOut] = []
 
 
+class ChatAttachmentOut(BaseModel):
+    id: int
+    message_id: int
+    attachment_type: str
+    file_url: str
+    file_name: str
+    file_size_bytes: int
+    mime_type: str
+    duration_seconds: int | None
+    created_at: datetime
+
+
 class MessageSearchOut(BaseModel):
     id: int
     chat_id: int

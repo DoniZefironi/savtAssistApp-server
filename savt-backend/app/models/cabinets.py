@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import String, DateTime, func, Text
+from sqlalchemy import Double, String, DateTime, func, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -15,7 +15,7 @@ class Cabinet(Base):
     type: Mapped[str] = mapped_column(String(100), index=True)
     # номер объекта
     object_number: Mapped[str] = mapped_column(String(100))
-    # описание 
+    # описание
     description: Mapped[str | None] = mapped_column(Text)
     # начало гарантии
     warranty_starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -27,6 +27,9 @@ class Cabinet(Base):
     admin_comment: Mapped[str | None] = mapped_column(Text)
     #
     purpose: Mapped[str | None] = mapped_column(String(200))
+    # геолокация ШУ
+    latitude: Mapped[float | None] = mapped_column(Double)
+    longitude: Mapped[float | None] = mapped_column(Double)
     # дата создания
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

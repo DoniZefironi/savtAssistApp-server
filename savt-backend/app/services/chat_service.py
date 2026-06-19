@@ -8,6 +8,7 @@ from app.models.message import Message
 from app.repositories.chat import ChatRepository, ChatSettingsRepository, MessageRepository
 from app.schemas.chat import (
     AttachmentOut,
+    ChatAttachmentOut,
     ChatListOut,
     ChatOut,
     ChatSettingsIn,
@@ -305,6 +306,26 @@ class ChatService:
         chat.bot_active = True
         chat.bot_no_count = 0
         await self.session.commit()
+
+    async def get_chat_attachments(
+        self, chat_id: int, user_id: int, attachment_type: str | None = None
+    ) -> list[ChatAttachmentOut]:
+        await self._get_chat_or_403(chat_id, user_id)
+        rows = await self.msg_repo.get_chat_attachments(chat_id, attachment_type)
+        return [
+            ChatAttachmentOut(
+                id=att.id,
+                message_id=att.message_id,
+                attachment_type=att.attachment_type,
+                file_url=att.file_url,
+                file_name=att.file_name,
+                file_size_bytes=att.file_size_bytes,
+                mime_type=att.mime_type,
+                duration_seconds=att.duration_seconds,
+                created_at=msg.created_at,
+            )
+            for att, msg in rows
+        ]
 
     async def operator_delete_chat(self, chat_id: int) -> None:
         chat = await self.chat_repo.get_by_id(chat_id)
