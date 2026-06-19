@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user, get_session
 from app.models.user import User
-from app.schemas.chat import ChatListOut, ChatOut, ChatSettingsIn, ChatSettingsOut, MessageCreateIn, MessageOut, WallpaperIn
+from app.schemas.chat import ChatAttachmentOut, ChatListOut, ChatOut, ChatSettingsIn, ChatSettingsOut, MessageCreateIn, MessageOut, WallpaperIn
 from app.services.chat_service import ChatService
 
 router = APIRouter(tags=["chats"])
@@ -193,3 +193,14 @@ async def reset_chat_settings(
     session: AsyncSession = Depends(get_session),
 ):
     await ChatService(session).reset_chat_settings(current_user.id, chat_id)
+
+
+# Все вложения чата (изображения, голосовые, файлы, видео)
+@router.get("/chats/{chat_id}/attachments", response_model=list[ChatAttachmentOut])
+async def get_chat_attachments(
+    chat_id: int,
+    type: str | None = Query(None, pattern="^(image|voice|document|video)$"),
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await ChatService(session).get_chat_attachments(chat_id, current_user.id, type)

@@ -841,9 +841,12 @@ POST /upload/transcribe (JSON: { file_url: "/static/voices/abc.ogg" })
   "warranty_ends_at": "2027-01-01T00:00:00Z",
   "admin_internal_name": "ШУ-18К",
   "admin_comment": "Комментарий для внутреннего использования",
-  "purpose": "Вентиляция"
+  "purpose": "Вентиляция",
+  "latitude": 53.9045,
+  "longitude": 27.5615
 }
 ```
+`latitude` (-90…90) и `longitude` (-180…180) — необязательны, геолокация ШУ на карте.
 
 **Поле `type`:**
 - Приводится к нижнему регистру автоматически (`"Вентиляция"` = `"вентиляция"`)
@@ -903,7 +906,7 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ---
 
 ### PATCH `/admin/cabinets/{cabinet_id}`
-Обновление данных ШУ (все поля опциональны). Возвращает обновлённый ШУ с тегами.
+Обновление данных ШУ (все поля опциональны, в т.ч. `latitude` и `longitude`). Возвращает обновлённый ШУ с тегами.
 
 ---
 
@@ -1306,11 +1309,14 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
   "warranty_starts_at": "2025-01-01T00:00:00Z",
   "warranty_ends_at": "2027-01-01T00:00:00Z",
   "warranty_status": "active",
+  "latitude": 53.9045,
+  "longitude": 27.5615,
   "custom_name": "Мой шкаф",
   "custom_comment": "Комментарий",
   "is_primary": true
 }
 ```
+`latitude`/`longitude` — `null` если геолокация не задана. Используется для отображения ШУ на карте.
 
 ---
 
@@ -1746,6 +1752,32 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ### DELETE `/chats/{chat_id}/settings`
 Удалить per-chat override (откат к глобальным настройкам). `204 No Content`.
 
+### GET `/chats/{chat_id}/attachments`
+Все вложения чата: изображения, голосовые, документы, видео. Параметр `type` — фильтр по типу:
+- `image` — изображения
+- `voice` — голосовые сообщения
+- `document` — документы
+- `video` — видео
+
+```json
+[
+  {
+    "id": 5,
+    "message_id": 42,
+    "attachment_type": "image",
+    "file_url": "/static/photos/abc.jpg",
+    "file_name": "photo.jpg",
+    "file_size_bytes": 204800,
+    "mime_type": "image/jpeg",
+    "duration_seconds": null,
+    "created_at": "2026-06-10T14:30:00Z"
+  }
+]
+```
+Без `type` — возвращаются все вложения. Отсортированы от новых к старым.
+
+---
+
 `ChatSettingsOut`:
 ```json
 {
@@ -1766,6 +1798,11 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ---
 
 ## Рут `operator` — операторский интерфейс
+
+### GET `/operator/chats/{chat_id}/attachments`
+Все вложения чата. Параметр `type`: `image` / `voice` / `document` / `video`. Ответ — такой же список `ChatAttachmentOut` как в `/chats/{chat_id}/attachments`.
+
+---
 
 ### GET `/operator/chats`
 Все `cabinet` и `support` чаты. Параметры:

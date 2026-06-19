@@ -52,6 +52,8 @@ class CabinetService:
             admin_internal_name=data.admin_internal_name,
             admin_comment=data.admin_comment,
             purpose=data.purpose,
+            latitude=data.latitude,
+            longitude=data.longitude,
         )
         await self.session.flush()
         self.audit.log("cabinet.create", "cabinet", cabinet.id, actor_id, actor_role,
@@ -76,6 +78,8 @@ class CabinetService:
             admin_internal_name=cabinet.admin_internal_name,
             admin_comment=cabinet.admin_comment,
             purpose=cabinet.purpose,
+            latitude=cabinet.latitude,
+            longitude=cabinet.longitude,
             tags=[TagOut.model_validate(t) for t in tags_map.get(cabinet_id, [])],
             created_at=cabinet.created_at,
             updated_at=cabinet.updated_at,

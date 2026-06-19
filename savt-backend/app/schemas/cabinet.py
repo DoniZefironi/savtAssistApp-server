@@ -13,6 +13,8 @@ class CabinetCreateIn(BaseModel):
     admin_internal_name: str | None = Field(None, min_length=1, max_length=200)
     admin_comment: str | None = Field(None, max_length=2000)
     purpose: str | None = Field(None, min_length=1, max_length=200)
+    latitude: float | None = Field(None, ge=-90.0, le=90.0)
+    longitude: float | None = Field(None, ge=-180.0, le=180.0)
 
     @model_validator(mode="after")
     def validate_warranty_dates(self) -> "CabinetCreateIn":
@@ -30,6 +32,8 @@ class CabinetUpdateIn(BaseModel):
     admin_internal_name: str | None = Field(None, min_length=1, max_length=200)
     admin_comment: str | None = Field(None, max_length=2000)
     purpose: str | None = Field(None, min_length=1, max_length=200)
+    latitude: float | None = Field(None, ge=-90.0, le=90.0)
+    longitude: float | None = Field(None, ge=-180.0, le=180.0)
 
     @model_validator(mode="after")
     def validate_warranty_dates(self) -> "CabinetUpdateIn":
@@ -50,6 +54,8 @@ class CabinetOut(BaseModel):
     admin_internal_name: str | None
     admin_comment: str | None
     purpose: str | None
+    latitude: float | None
+    longitude: float | None
     tags: list[TagOut] = []
     created_at: datetime
     updated_at: datetime
@@ -94,6 +100,8 @@ class UserCabinetDetailOut(BaseModel):
     warranty_starts_at: datetime
     warranty_ends_at: datetime
     warranty_status: str
+    latitude: float | None
+    longitude: float | None
     custom_name: str | None
     custom_comment: str | None
     is_primary: bool

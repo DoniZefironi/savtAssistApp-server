@@ -178,6 +178,24 @@ class MessageRepository:
         await self.session.flush()
         return rxn
 
+    async def get_chat_attachments(
+        self, chat_id: int, attachment_type: str | None = None
+    ) -> list[tuple]:
+        from app.models.message_attchment import MessageAttachment
+        stmt = (
+            select(MessageAttachment, Message)
+            .join(Message, Message.id == MessageAttachment.message_id)
+            .where(
+                Message.chat_id == chat_id,
+                Message.deleted_at.is_(None),
+            )
+        )
+        if attachment_type:
+            stmt = stmt.where(MessageAttachment.attachment_type == attachment_type)
+        stmt = stmt.order_by(Message.created_at.desc())
+        result = await self.session.execute(stmt)
+        return result.all()
+
     async def search_global(
         self, query: str, offset: int = 0, limit: int = 30
     ) -> tuple[list, int]:

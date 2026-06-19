@@ -64,6 +64,8 @@ class UserCabinetService:
             warranty_starts_at=cab.warranty_starts_at,
             warranty_ends_at=cab.warranty_ends_at,
             warranty_status=_warranty_status(cab.warranty_ends_at),
+            latitude=cab.latitude,
+            longitude=cab.longitude,
             custom_name=uc.custom_name or cab.admin_internal_name or cab.object_number,
             custom_comment=uc.custom_comment,
             is_primary=uc.is_primary,

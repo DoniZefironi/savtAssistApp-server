@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.constants import RoleName
 from app.core.dependencies import get_session, require_role
 from app.models.user import User
-from app.schemas.chat import ChatListOut, ChatOut, MessageCreateIn, MessageOut, MessageSearchOut
+from app.schemas.chat import ChatAttachmentOut, ChatListOut, ChatOut, MessageCreateIn, MessageOut, MessageSearchOut
 from app.schemas.pagination import PageOut
 from app.services.chat_service import ChatService
 
@@ -116,3 +116,14 @@ async def unpin_message(
     session: AsyncSession = Depends(get_session),
 ):
     return await ChatService(session).unpin_message(chat_id, operator.id)
+
+
+# Все вложения чата
+@router.get("/chats/{chat_id}/attachments", response_model=list[ChatAttachmentOut])
+async def get_chat_attachments(
+    chat_id: int,
+    type: str | None = Query(None, pattern="^(image|voice|document|video)$"),
+    operator: User = Depends(require_role(RoleName.OPERATOR, RoleName.ADMIN)),
+    session: AsyncSession = Depends(get_session),
+):
+    return await ChatService(session).get_chat_attachments(chat_id, operator.id, type)
