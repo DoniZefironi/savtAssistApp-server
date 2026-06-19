@@ -56,7 +56,11 @@ async def transcribe_voice(
     if not file_path.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Файл не найден")
     ext = file_path.suffix.lower()
-    fmt = "mp3" if ext == ".mp3" else "oggopus"
+    _EXT_TO_STT_FMT = {
+        ".mp3": "mp3", ".m4a": "mp3", ".aac": "mp3",
+        ".ogg": "oggopus", ".oga": "oggopus", ".webm": "oggopus",
+    }
+    fmt = _EXT_TO_STT_FMT.get(ext, "oggopus")
     try:
         text = await yandex_service.transcribe_voice(file_path.read_bytes(), format=fmt)
     except RuntimeError as e:

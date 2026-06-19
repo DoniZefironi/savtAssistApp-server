@@ -32,6 +32,7 @@ from app.models.kb_article_attachment import KbArticleAttachment
 from app.models.user_favorite import UserFavorite
 from app.models.warranty_notif_log import WarrantyNotifLog
 from app.models.embedding import Embedding
+from app.models.chat_user_settings import ChatUserSettings
 
 __all__ = [
     "Role", "User", "RefreshToken", "PhoneVerificationCode",
@@ -42,5 +43,5 @@ __all__ = [
     "Tag", "KbCategory", "KbArticle", "FaqCategory", "FaqEntry",
     "DeviceToken", "NotificationSettings", "AuditLog", "Notification",
     "DocumentTag", "KbArticleTag", "CabinetTag", "KbArticleAttachment", "UserFavorite",
-    "WarrantyNotifLog", "Embedding",
+    "WarrantyNotifLog", "Embedding", "ChatUserSettings",
 ]

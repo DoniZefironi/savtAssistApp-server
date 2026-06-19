@@ -4,13 +4,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AlreadyExistsError, NotFoundError, PermissionDeniedError
 from app.models.chat import Chat
-from app.repositories.chat import ChatRepository, MessageRepository
+from app.models.message import Message
+from app.repositories.chat import ChatRepository, ChatSettingsRepository, MessageRepository
 from app.schemas.chat import (
     AttachmentOut,
     ChatListOut,
     ChatOut,
+    ChatSettingsIn,
+    ChatSettingsOut,
     MessageCreateIn,
     MessageOut,
+    MessageSearchOut,
     ReactionOut,
 )
 
@@ -301,6 +305,91 @@ class ChatService:
         chat.bot_active = True
         chat.bot_no_count = 0
         await self.session.commit()
+
+    async def operator_delete_chat(self, chat_id: int) -> None:
+        chat = await self.chat_repo.get_by_id(chat_id)
+        if chat is None:
+            raise NotFoundError("Чат не найден")
+        await self.session.delete(chat)
+        await self.session.commit()
+
+    async def clear_chat_messages(self, chat_id: int) -> None:
+        from sqlalchemy import update as sa_update
+        chat = await self.chat_repo.get_by_id(chat_id)
+        if chat is None:
+            raise NotFoundError("Чат не найден")
+        now = datetime.now(timezone.utc)
+        await self.session.execute(
+            sa_update(Message)
+            .where(Message.chat_id == chat_id, Message.deleted_at.is_(None))
+            .values(deleted_at=now, text=None)
+        )
+        await self.session.commit()
+
+    async def get_chat_settings(self, user_id: int, chat_id: int | None) -> ChatSettingsOut:
+        if chat_id is not None:
+            chat = await self.chat_repo.get_by_id(chat_id)
+            if chat is None:
+                raise NotFoundError("Чат не найден")
+        repo = ChatSettingsRepository(self.session)
+        obj = await repo.get(user_id, chat_id)
+        if obj is None and chat_id is not None:
+            obj = await repo.get(user_id, None)
+        if obj is None:
+            from app.models.chat_user_settings import ChatUserSettings
+            obj = ChatUserSettings(user_id=user_id, chat_id=chat_id)
+        return ChatSettingsOut.model_validate(obj)
+
+    async def update_chat_settings(
+        self, user_id: int, chat_id: int | None, data: ChatSettingsIn
+    ) -> ChatSettingsOut:
+        if chat_id is not None:
+            chat = await self.chat_repo.get_by_id(chat_id)
+            if chat is None:
+                raise NotFoundError("Чат не найден")
+        repo = ChatSettingsRepository(self.session)
+        obj = await repo.upsert(user_id, chat_id, data.model_dump(exclude_unset=True))
+        await self.session.commit()
+        return ChatSettingsOut.model_validate(obj)
+
+    async def reset_chat_settings(self, user_id: int, chat_id: int) -> None:
+        chat = await self.chat_repo.get_by_id(chat_id)
+        if chat is None:
+            raise NotFoundError("Чат не найден")
+        repo = ChatSettingsRepository(self.session)
+        await repo.delete_chat_override(user_id, chat_id)
+        await self.session.commit()
+
+    async def search_messages_global(
+        self, query: str, page: int, size: int
+    ) -> object:
+        from app.schemas.pagination import make_page
+        from app.repositories.cabinet import CabinetRepository
+        offset = (page - 1) * size
+        rows, total = await self.msg_repo.search_global(query, offset, size)
+        cab_cache: dict[int, str | None] = {}
+        items: list[MessageSearchOut] = []
+        for msg, sender, chat in rows:
+            cab_obj_num: str | None = None
+            if chat.cabinet_id:
+                if chat.cabinet_id not in cab_cache:
+                    cab = await CabinetRepository(self.session).get_by_id(chat.cabinet_id)
+                    cab_cache[chat.cabinet_id] = cab.object_number if cab else None
+                cab_obj_num = cab_cache[chat.cabinet_id]
+            atts = (await self.msg_repo.get_attachments([msg.id])).get(msg.id, [])
+            items.append(MessageSearchOut(
+                id=msg.id,
+                chat_id=chat.id,
+                chat_type=chat.chat_type,
+                cabinet_object_number=cab_obj_num,
+                chat_user_id=chat.user_id,
+                sender_id=msg.sender_id,
+                sender_name=sender.full_name if sender else None,
+                text=msg.text,
+                created_at=msg.created_at,
+                attachments=[AttachmentOut.model_validate(a) for a in atts],
+            ))
+        return make_page(items, total, page, size)
 
     async def _get_chat_or_403(self, chat_id: int, user_id: int) -> Chat:
         chat = await self.chat_repo.get_by_id(chat_id)

@@ -24,6 +24,10 @@ _VOICE_TYPES: dict[str, str] = {
     "audio/mpeg":  "mp3",
     "audio/mp4":   "m4a",
     "audio/wav":   "wav",
+    "audio/webm":  "webm",
+    "video/webm":  "webm",   # Chrome иногда отдаёт video/webm для записи голоса
+    "audio/aac":   "aac",
+    "audio/x-m4a": "m4a",
 }
 
 # doc_type определяется автоматически по mime-типу
@@ -57,24 +61,37 @@ async def save_attachment(file: UploadFile) -> str:
 
 
 async def save_attachment_with_meta(file: UploadFile) -> FileInfo:
-    if file.content_type not in _ATTACHMENT_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=f"Неподдерживаемый тип файла: {file.content_type}",
-        )
-    folder, ext = _ATTACHMENT_TYPES[file.content_type]
+    mime = file.content_type or "application/octet-stream"
+    if mime in _ATTACHMENT_TYPES:
+        folder, ext = _ATTACHMENT_TYPES[mime]
+    elif mime.startswith("image/"):
+        sub = mime.split("/", 1)[1].split(";")[0].strip() or "bin"
+        folder, ext = "photos", sub
+    elif mime.startswith("video/"):
+        sub = mime.split("/", 1)[1].split(";")[0].strip() or "bin"
+        folder, ext = "videos", sub
+    elif mime.startswith("audio/"):
+        sub = mime.split("/", 1)[1].split(";")[0].strip() or "bin"
+        folder, ext = "voices", sub
+    else:
+        folder = "files"
+        ext = Path(file.filename).suffix.lstrip(".") if file.filename else ""
+        if not ext:
+            ext = "bin"
     url, size = await _save(file, folder, ext, MAX_ATTACHMENT_SIZE)
-    doc_type = _MIME_TO_DOC_TYPE.get(file.content_type, "other")
-    return FileInfo(url=url, file_size_bytes=size, mime_type=file.content_type, doc_type=doc_type)
+    doc_type = _MIME_TO_DOC_TYPE.get(mime, "other")
+    return FileInfo(url=url, file_size_bytes=size, mime_type=mime, doc_type=doc_type)
 
 
 async def save_voice(file: UploadFile) -> str:
-    if file.content_type not in _VOICE_TYPES:
+    mime = file.content_type or ""
+    if mime not in _VOICE_TYPES:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=f"Неподдерживаемый формат голосового сообщения: {file.content_type}",
+            detail=f"Неподдерживаемый формат голосового сообщения: {mime}. "
+                   f"Поддерживаются: {', '.join(_VOICE_TYPES.keys())}",
         )
-    ext = _VOICE_TYPES[file.content_type]
+    ext = _VOICE_TYPES[mime]
     url, _ = await _save(file, "voices", ext, MAX_VOICE_SIZE)
     return url
 

@@ -1,5 +1,8 @@
+import re
 from datetime import datetime
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+_HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
 
 class AttachmentOut(BaseModel):
@@ -35,6 +38,19 @@ class MessageOut(BaseModel):
     deleted_at: datetime | None
     attachments: list[AttachmentOut] = []
     reactions: list[ReactionOut] = []
+
+
+class MessageSearchOut(BaseModel):
+    id: int
+    chat_id: int
+    chat_type: str
+    cabinet_object_number: str | None
+    chat_user_id: int
+    sender_id: int
+    sender_name: str | None
+    text: str | None
+    created_at: datetime
+    attachments: list[AttachmentOut] = []
 
 
 class AttachmentIn(BaseModel):
@@ -87,3 +103,42 @@ class ChatOut(BaseModel):
     wallpaper_url: str | None
     pinned_message_id: int | None
     created_at: datetime
+
+
+_COLOR_FIELDS = (
+    "own_bubble_color", "other_bubble_color", "bot_bubble_color",
+    "own_text_color", "other_text_color", "bot_text_color", "nick_color",
+)
+
+
+class ChatSettingsIn(BaseModel):
+    own_bubble_color: str | None = Field(None, max_length=7)
+    other_bubble_color: str | None = Field(None, max_length=7)
+    bot_bubble_color: str | None = Field(None, max_length=7)
+    own_text_color: str | None = Field(None, max_length=7)
+    other_text_color: str | None = Field(None, max_length=7)
+    bot_text_color: str | None = Field(None, max_length=7)
+    nick_color: str | None = Field(None, max_length=7)
+    font_size: int | None = Field(None, ge=8, le=24)
+
+    @field_validator(*_COLOR_FIELDS, mode="before")
+    @classmethod
+    def validate_hex_color(cls, v: object) -> object:
+        if v is not None and not _HEX_COLOR_RE.match(str(v)):
+            raise ValueError("Цвет должен быть в формате #RRGGBB")
+        return v
+
+
+class ChatSettingsOut(BaseModel):
+    user_id: int
+    chat_id: int | None
+    own_bubble_color: str | None
+    other_bubble_color: str | None
+    bot_bubble_color: str | None
+    own_text_color: str | None
+    other_text_color: str | None
+    bot_text_color: str | None
+    nick_color: str | None
+    font_size: int | None
+
+    model_config = {"from_attributes": True}
