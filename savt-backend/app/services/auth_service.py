@@ -215,7 +215,7 @@ class AuthService:
         ip_address: str | None,
     ) -> tuple[str, str]:
         token_hash = hash_token(refresh_token)
-        stored = await self.token_repo.find_by_hash(token_hash)
+        stored = await self.token_repo.find_by_hash(token_hash, for_update=True)
 
         if stored is None:
             raise AuthenticationError("Refresh-токен не найден")
