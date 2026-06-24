@@ -102,7 +102,9 @@ class CabinetService:
 
     # Удаление ШУ
     async def delete(self, cabinet_id: int, actor_id: int, actor_role: str) -> None:
-        cabinet = await self.get(cabinet_id)
+        cabinet = await self.repo.get_by_id(cabinet_id)
+        if cabinet is None:
+            raise NotFoundError("ШУ не найден")
         self.audit.log("cabinet.delete", "cabinet", cabinet_id, actor_id, actor_role,
                        {"object_number": cabinet.object_number})
         await self.repo.delete(cabinet)
