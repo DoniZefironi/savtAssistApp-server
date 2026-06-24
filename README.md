@@ -1812,6 +1812,8 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 
 Каждый чат содержит `user_id`, `user_name`, `cabinet_object_number`.
 
+> **Оптимизация:** запрос выполняется за 3 DB-запроса независимо от числа чатов (JOIN на User+Cabinet + batch unread counts + batch last messages), вместо 4N+1 в предыдущей версии.
+
 ---
 
 ### GET `/operator/chats/{chat_id}/messages`
@@ -1883,6 +1885,51 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
   "total": 3, "page": 1, "size": 20, "pages": 1
 }
 ```
+
+---
+
+### GET `/operator/chats/unread-count`
+Быстрый бейдж — количество чатов (`cabinet` + `support`), в которых есть хотя бы одно непрочитанное сообщение от пользователя.
+
+Ответ:
+```json
+{ "count": 3 }
+```
+
+---
+
+## Рут `admin/dashboard` — дашборд
+
+### GET `/admin/dashboard`
+Единый endpoint для главного экрана администратора/оператора. Возвращает все счётчики одним запросом (5 DB-запросов) и последние 10 действий по всем типам заявок.
+
+**Доступ:** `operator`, `admin`.
+
+Ответ (`DashboardOut`):
+```json
+{
+  "stats": {
+    "unread_chats": 2,
+    "open_service_requests": 5,
+    "pending_document_requests": 3,
+    "pending_share_requests": 1,
+    "pending_addition_requests": 4
+  },
+  "recent_activity": [
+    {
+      "id": 12,
+      "type": "service",
+      "status": "open",
+      "user_id": 8,
+      "user_full_name": "Иванов Иван",
+      "cabinet_id": 3,
+      "created_at": "2026-06-24T10:00:00Z"
+    }
+  ]
+}
+```
+
+Поле `type`: `service` | `document` | `share` | `addition`.
 
 ---
 

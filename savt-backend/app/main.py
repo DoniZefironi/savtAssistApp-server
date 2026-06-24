@@ -42,6 +42,7 @@ from app.routers import faq as faq_router
 from app.routers import cabinets as cabinets_router
 from app.routers import upload as upload_router
 from app.routers import admin_bot as admin_bot_router
+from app.routers import admin_dashboard as admin_dashboard_router
 from app.services.sms_service import SmsSendError
 from app.core.firebase import init_firebase
 from app.services.warranty_scheduler import check_warranty_expiry
@@ -160,6 +161,7 @@ app.include_router(faq_router.router)
 app.include_router(cabinets_router.router)
 app.include_router(upload_router.router)
 app.include_router(admin_bot_router.router)
+app.include_router(admin_dashboard_router.router)
 app.mount("/static", StaticFiles(directory="/code/uploads"), name="static")
 
 # Бэзик эндпоинты

@@ -23,6 +23,17 @@ async def search_messages_global(
     return await ChatService(session).search_messages_global(q, page, size)
 
 
+# Количество чатов с непрочитанными — ДОЛЖЕН быть ДО /chats/{chat_id}
+@router.get("/chats/unread-count")
+async def get_unread_chats_count(
+    operator: User = Depends(require_role(RoleName.OPERATOR, RoleName.ADMIN)),
+    session: AsyncSession = Depends(get_session),
+):
+    from app.repositories.chat import ChatRepository
+    count = await ChatRepository(session).count_unread_chats(operator.id)
+    return {"count": count}
+
+
 # Все чаты
 @router.get("/chats", response_model=list[ChatListOut])
 async def list_operator_chats(

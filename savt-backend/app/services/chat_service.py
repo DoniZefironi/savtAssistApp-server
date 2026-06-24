@@ -74,28 +74,24 @@ class ChatService:
         return result
 
     async def list_operator_chats(self, operator_id: int, search: str | None = None) -> list[ChatListOut]:
-        chats = await self.chat_repo.list_for_operator(search)
-        result = []
-        for chat in chats:
-            unread = await self.chat_repo.get_unread_count(chat.id, operator_id)
+        rows = await self.chat_repo.list_for_operator(search)
+        if not rows:
+            return []
 
+        chat_ids = [chat.id for chat, _, _ in rows]
+        unread_counts = await self.chat_repo.get_unread_counts_batch(chat_ids, operator_id)
+        last_msgs = await self.msg_repo.get_last_messages_batch(chat_ids)
+
+        result = []
+        for chat, user, cabinet in rows:
             cabinet_name = None
             cabinet_object_number = None
-            if chat.cabinet_id:
-                from app.repositories.cabinet import CabinetRepository
-                cab = await CabinetRepository(self.session).get_by_id(chat.cabinet_id)
-                if cab:
-                    cabinet_name = cab.admin_internal_name or cab.object_number
-                    cabinet_object_number = cab.object_number
+            if cabinet:
+                cabinet_name = cabinet.admin_internal_name or cabinet.object_number
+                cabinet_object_number = cabinet.object_number
 
-            from app.repositories.user import UserRepository
-            user = await UserRepository(self.session).get_by_id(chat.user_id)
-
-            last_text = None
-            msgs = await self.msg_repo.get_messages(chat.id, limit=1)
-            if msgs:
-                msg, _ = msgs[0]
-                last_text = msg.text if not msg.deleted_at else "Сообщение удалено"
+            last_msg = last_msgs.get(chat.id)
+            last_text = last_msg.text if last_msg else None
 
             result.append(ChatListOut(
                 id=chat.id,
@@ -107,7 +103,7 @@ class ChatService:
                 user_name=user.full_name if user else None,
                 last_message_text=last_text,
                 last_message_at=chat.last_message_at,
-                unread_count=unread,
+                unread_count=unread_counts.get(chat.id, 0),
                 problem_status=chat.problem_status,
                 bot_active=chat.bot_active,
                 operator_requested=chat.operator_requested,

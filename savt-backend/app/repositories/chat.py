@@ -43,14 +43,14 @@ class ChatRepository:
         )
         return list(result.scalars().all())
 
-    async def list_for_operator(self, search: str | None = None) -> list[Chat]:
+    async def list_for_operator(self, search: str | None = None) -> list[tuple]:
         from sqlalchemy import or_
         from app.models.cabinets import Cabinet
         stmt = (
-            select(Chat)
+            select(Chat, User, Cabinet)
             .outerjoin(User, User.id == Chat.user_id)
             .outerjoin(Cabinet, Cabinet.id == Chat.cabinet_id)
-            .where(or_(Chat.chat_type == "cabinet", Chat.chat_type == "support"))
+            .where(Chat.chat_type.in_(["cabinet", "support"]))
         )
         if search:
             pattern = f"%{escape_like(search)}%"
@@ -63,7 +63,7 @@ class ChatRepository:
             ))
         stmt = stmt.order_by(Chat.operator_requested.desc(), Chat.last_message_at.desc().nullslast())
         result = await self.session.execute(stmt)
-        return list(result.scalars().all())
+        return result.all()
 
     async def get_unread_count(self, chat_id: int, user_id: int) -> int:
         result = await self.session.execute(
@@ -72,6 +72,36 @@ class ChatRepository:
                 Message.sender_id != user_id,
                 Message.is_read == False,
                 Message.deleted_at.is_(None),
+            )
+        )
+        return result.scalar() or 0
+
+    async def get_unread_counts_batch(
+        self, chat_ids: list[int], reader_id: int
+    ) -> dict[int, int]:
+        if not chat_ids:
+            return {}
+        result = await self.session.execute(
+            select(Message.chat_id, func.count(Message.id))
+            .where(
+                Message.chat_id.in_(chat_ids),
+                Message.sender_id != reader_id,
+                Message.is_read == False,
+                Message.deleted_at.is_(None),
+            )
+            .group_by(Message.chat_id)
+        )
+        return {row[0]: row[1] for row in result.all()}
+
+    async def count_unread_chats(self, reader_id: int) -> int:
+        result = await self.session.execute(
+            select(func.count(func.distinct(Message.chat_id)))
+            .join(Chat, Chat.id == Message.chat_id)
+            .where(
+                Message.sender_id != reader_id,
+                Message.is_read == False,
+                Message.deleted_at.is_(None),
+                Chat.chat_type.in_(["cabinet", "support"]),
             )
         )
         return result.scalar() or 0
@@ -195,6 +225,20 @@ class MessageRepository:
         stmt = stmt.order_by(Message.created_at.desc())
         result = await self.session.execute(stmt)
         return result.all()
+
+    async def get_last_messages_batch(self, chat_ids: list[int]) -> dict[int, Message]:
+        if not chat_ids:
+            return {}
+        subq = (
+            select(func.max(Message.id).label("max_id"))
+            .where(Message.chat_id.in_(chat_ids), Message.deleted_at.is_(None))
+            .group_by(Message.chat_id)
+            .subquery()
+        )
+        result = await self.session.execute(
+            select(Message).where(Message.id.in_(select(subq.c.max_id)))
+        )
+        return {msg.chat_id: msg for msg in result.scalars().all()}
 
     async def search_global(
         self, query: str, offset: int = 0, limit: int = 30
