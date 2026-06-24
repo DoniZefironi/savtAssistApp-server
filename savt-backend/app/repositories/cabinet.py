@@ -116,6 +116,26 @@ class CabinetRepository(BaseRepository[Cabinet]):
         result = await self.session.execute(stmt)
         return list(result.scalars().all()), total
 
+    async def get_geo(self) -> list[tuple]:
+        open_sr = exists(
+            select(ServiceRequest.id).where(
+                ServiceRequest.cabinet_id == Cabinet.id,
+                ServiceRequest.status == "open",
+            )
+        ).label("has_open_requests")
+        result = await self.session.execute(
+            select(
+                Cabinet.id,
+                Cabinet.object_number,
+                Cabinet.admin_internal_name,
+                Cabinet.warranty_ends_at,
+                Cabinet.latitude,
+                Cabinet.longitude,
+                open_sr,
+            )
+        )
+        return result.all()
+
     async def get_tags(self, cabinet_ids: list[int]) -> dict[int, list[Tag]]:
         if not cabinet_ids:
             return {}

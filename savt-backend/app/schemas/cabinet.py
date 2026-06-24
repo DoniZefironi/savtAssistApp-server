@@ -4,6 +4,16 @@ from pydantic import BaseModel, Field, model_validator
 from app.schemas.tags import TagOut
 
 
+class CabinetGeoItem(BaseModel):
+    id: int
+    object_number: str
+    admin_internal_name: str | None
+    warranty_status: str
+    latitude: float | None
+    longitude: float | None
+    has_open_requests: bool
+
+
 class CabinetCreateIn(BaseModel):
     type: str = Field(..., min_length=1, max_length=100)
     object_number: str = Field(..., min_length=1, max_length=100)

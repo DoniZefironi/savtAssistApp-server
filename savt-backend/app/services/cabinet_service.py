@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import NotFoundError
 from app.repositories.cabinet import CabinetRepository
 from app.repositories.tag import TagRepository
-from app.schemas.cabinet import CabinetCreateIn, CabinetListOut, CabinetOut, CabinetUpdateIn
+from app.schemas.cabinet import CabinetCreateIn, CabinetGeoItem, CabinetListOut, CabinetOut, CabinetUpdateIn
 from app.schemas.tags import TagOut
 from app.schemas.pagination import PageOut, make_page
 from app.services.audit_service import AuditLogger
@@ -161,6 +161,21 @@ class CabinetService:
         await self.repo.set_tags(cabinet_id, tag_ids)
         self.audit.log("cabinet.set_tags", "cabinet", cabinet_id, actor_id, actor_role, {"tag_ids": tag_ids})
         await self.session.commit()
+
+    async def get_geo(self) -> list[CabinetGeoItem]:
+        rows = await self.repo.get_geo()
+        return [
+            CabinetGeoItem(
+                id=row.id,
+                object_number=row.object_number,
+                admin_internal_name=row.admin_internal_name,
+                warranty_status=_warranty_status(row.warranty_ends_at),
+                latitude=row.latitude,
+                longitude=row.longitude,
+                has_open_requests=row.has_open_requests,
+            )
+            for row in rows
+        ]
 
     # Генерация уникального кода(хранится в кур-коде)
     async def _generate_unique_code(self) -> str:

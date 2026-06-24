@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.constants import RoleName
 from app.core.dependencies import get_role_from_token, get_session, require_role
 from app.models.user import User
-from app.schemas.cabinet import CabinetCreateIn, CabinetListOut, CabinetOut, CabinetUpdateIn
+from app.schemas.cabinet import CabinetCreateIn, CabinetGeoItem, CabinetListOut, CabinetOut, CabinetUpdateIn
 from app.schemas.pagination import PageOut
 from app.schemas.tags import DocumentTagsIn
 from app.services.cabinet_service import CabinetService
@@ -45,6 +45,15 @@ async def list_cabinets(
         warranty_status=warranty_status,
         sort_by=sort_by, sort_order=sort_order, page=page, size=size,
     )
+
+# Гео-данные всех ШУ — ДОЛЖЕН быть ДО /{cabinet_id}
+@router.get("/geo", response_model=list[CabinetGeoItem])
+async def get_cabinets_geo(
+    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    session: AsyncSession = Depends(get_session),
+):
+    return await CabinetService(session).get_geo()
+
 
 # Подробнее о ШУ
 @router.get("/{cabinet_id}", response_model=CabinetOut)

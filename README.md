@@ -891,6 +891,30 @@ POST /upload/transcribe (JSON: { file_url: "/static/voices/abc.ogg" })
 
 ---
 
+### GET `/admin/cabinets/geo`
+Лёгкий endpoint для карты — возвращает **все** ШУ одним запросом без пагинации.
+
+Ответ (`list[CabinetGeoItem]`):
+```json
+[
+  {
+    "id": 3,
+    "object_number": "29_099",
+    "admin_internal_name": "Главная подстанция",
+    "warranty_status": "active",
+    "latitude": 53.9,
+    "longitude": 27.56,
+    "has_open_requests": true
+  }
+]
+```
+
+`warranty_status`: `active` | `expiring_soon` | `expired`.  
+`has_open_requests`: есть ли хотя бы одна сервисная заявка со статусом `open`.  
+ШУ без координат тоже включены (`latitude`/`longitude` = `null`) — фронт фильтрует сам.
+
+---
+
 ### GET `/admin/cabinets/{cabinet_id}`
 Детальная информация о ШУ с тегами.
 
