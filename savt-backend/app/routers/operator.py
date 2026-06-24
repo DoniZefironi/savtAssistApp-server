@@ -44,6 +44,16 @@ async def list_operator_chats(
     return await ChatService(session).list_operator_chats(operator.id, search)
 
 
+# Закреплённое сообщение (null если не закреплено)
+@router.get("/chats/{chat_id}/pinned", response_model=MessageOut | None)
+async def get_pinned_message(
+    chat_id: int,
+    _: User = Depends(require_role(RoleName.OPERATOR, RoleName.ADMIN)),
+    session: AsyncSession = Depends(get_session),
+):
+    return await ChatService(session).get_pinned_message(chat_id)
+
+
 # Получить сообщения
 @router.get("/chats/{chat_id}/messages", response_model=list[MessageOut])
 async def get_messages(

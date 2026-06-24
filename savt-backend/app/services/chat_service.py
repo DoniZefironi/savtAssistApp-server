@@ -427,6 +427,17 @@ class ChatService:
             raise PermissionDeniedError("Нет доступа к этому чату")
         return chat
 
+    async def get_pinned_message(self, chat_id: int) -> MessageOut | None:
+        chat = await self.chat_repo.get_by_id(chat_id)
+        if chat is None or chat.pinned_message_id is None:
+            return None
+        msg = await self.msg_repo.get_by_id(chat.pinned_message_id)
+        if msg is None:
+            return None
+        from app.repositories.user import UserRepository
+        user = await UserRepository(self.session).get_by_id(msg.sender_id)
+        return await self._build_message_out(msg, user)
+
     async def _build_message_out(self, msg, user) -> MessageOut:
         atts = (await self.msg_repo.get_attachments([msg.id])).get(msg.id, [])
         rxns = (await self.msg_repo.get_reactions([msg.id])).get(msg.id, [])
