@@ -169,7 +169,7 @@ class AuthService:
             raise AuthenticationError("Аккаунт заблокирован")
 
         role = await self.session.get(Role, user.role_id)
-        if role is None or role.name not in (RoleName.ADMIN.value, RoleName.OPERATOR.value):
+        if role is None or role.name not in (RoleName.ADMIN.value, RoleName.OPERATOR.value, RoleName.SUPERADMIN.value):
             raise AuthenticationError("Недостаточно прав для входа через этот endpoint")
 
         await self.token_repo.trim_sessions(user.id, max_sessions=5)
