@@ -151,6 +151,24 @@ class MessageRepository:
         result = await self.session.execute(stmt)
         return result.all()
 
+    async def get_messages_around(
+        self, chat_id: int, around_id: int, limit: int = 30
+    ) -> list[tuple]:
+        half = limit // 2
+        base = (
+            select(Message, User)
+            .outerjoin(User, User.id == Message.sender_id)
+            .where(Message.chat_id == chat_id)
+        )
+        before = (await self.session.execute(
+            base.where(Message.id < around_id).order_by(Message.id.desc()).limit(half)
+        )).all()
+        after = (await self.session.execute(
+            base.where(Message.id >= around_id).order_by(Message.id.asc()).limit(half + 1)
+        )).all()
+        # before пришёл desc — разворачиваем, затем склеиваем
+        return list(reversed(before)) + list(after)
+
     async def get_attachments(self, message_ids: list[int]) -> dict[int, list[MessageAttachment]]:
         if not message_ids:
             return {}

@@ -58,6 +58,12 @@ class NotificationRepository:
             .values(is_read=True)
         )
 
+    async def delete_all(self, user_id: int) -> None:
+        from sqlalchemy import delete
+        await self.session.execute(
+            delete(Notification).where(Notification.user_id == user_id)
+        )
+
     async def get_settings(self, user_id: int) -> NotificationSettings | None:
         return await self.session.get(NotificationSettings, user_id)
 

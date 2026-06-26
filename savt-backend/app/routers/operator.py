@@ -59,12 +59,13 @@ async def get_pinned_message(
 async def get_messages(
     chat_id: int,
     before_id: int | None = Query(None),
+    around_id: int | None = Query(None, gt=0),
     limit: int = Query(30, ge=1, le=100),
     search: str | None = Query(None, min_length=1, max_length=200),
     operator: User = Depends(require_role(RoleName.OPERATOR, RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
-    return await ChatService(session).get_messages(chat_id, operator.id, before_id, limit, search)
+    return await ChatService(session).get_messages(chat_id, operator.id, before_id, limit, search, around_id)
 
 
 # Отправить сообщение

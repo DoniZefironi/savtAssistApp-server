@@ -76,6 +76,10 @@ class NotificationService:
         await self.repo.mark_all_read(user_id)
         await self.session.commit()
 
+    async def delete_all(self, user_id: int) -> None:
+        await self.repo.delete_all(user_id)
+        await self.session.commit()
+
     async def get_settings(self, user_id: int) -> NotificationSettingsOut:
         settings = await self.repo.ensure_settings(user_id)
         await self.session.commit()

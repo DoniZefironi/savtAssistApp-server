@@ -47,6 +47,14 @@ async def mark_all_read(
     await NotificationService(session).mark_all_read(current_user.id)
 
 
+@router.delete("/notifications", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_all_notifications(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    await NotificationService(session).delete_all(current_user.id)
+
+
 @router.get("/notifications/settings", response_model=NotificationSettingsOut)
 async def get_settings(
     current_user: User = Depends(get_current_user),
