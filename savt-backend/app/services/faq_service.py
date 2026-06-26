@@ -67,9 +67,17 @@ class FaqEntryService:
         return FaqEntryOut.model_validate(entry)
 
     async def delete(self, entry_id: int) -> None:
+        from sqlalchemy import delete as sa_delete
+        from app.models.embedding import Embedding
         entry = await self.repo.get_by_id(entry_id)
         if entry is None:
             raise NotFoundError("Вопрос не найден")
+        await self.session.execute(
+            sa_delete(Embedding).where(
+                Embedding.source_type == "faq",
+                Embedding.source_id == entry_id,
+            )
+        )
         await self.repo.delete(entry)
         await self.session.commit()
 

@@ -87,9 +87,17 @@ class KbArticleService:
         return await self._to_detail(article)
 
     async def delete(self, article_id: int) -> None:
+        from sqlalchemy import delete as sa_delete
+        from app.models.embedding import Embedding
         article = await self.repo.get_by_id(article_id)
         if article is None:
             raise NotFoundError("Запись не найдена")
+        await self.session.execute(
+            sa_delete(Embedding).where(
+                Embedding.source_type == "kb_article",
+                Embedding.source_id == article_id,
+            )
+        )
         await self.repo.delete(article)
         await self.session.commit()
 

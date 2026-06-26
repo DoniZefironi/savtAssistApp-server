@@ -88,10 +88,18 @@ class AdminDocumentService:
         return make_page(out, total, page, size)
 
     async def delete_document(self, doc_id: int, actor_id: int = 0, actor_role: str = "admin") -> None:
+        from sqlalchemy import delete as sa_delete
+        from app.models.embedding import Embedding
         doc = await self.doc_repo.get_by_id(doc_id)
         if doc is None:
             raise NotFoundError("Документ не найден")
         self.audit.log("document.delete", "document", doc_id, actor_id, actor_role, {"title": doc.title})
+        await self.session.execute(
+            sa_delete(Embedding).where(
+                Embedding.source_type == "document",
+                Embedding.source_id == doc_id,
+            )
+        )
         await self.doc_repo.delete(doc)
         await self.session.commit()
 
