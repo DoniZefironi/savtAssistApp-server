@@ -4,6 +4,7 @@
 
 | Роль     | Логин              | Пароль           |
 |----------|--------------------|------------------|
+| super    | superadmin         | MyStr0ngPass     |
 | admin    | admin              | 123qweASDZXC     |
 | operator | operator           | 123qweASDZXC     |
 | user     | +375291002030      | qweasdzxc        |
