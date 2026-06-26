@@ -425,7 +425,7 @@ class ChatService:
             user = await UserRepository(self.session).get_by_id(user_id)
             if user:
                 role = await self.session.get(Role, user.role_id)
-                if role and role.name in ("operator", "admin"):
+                if role and role.name in ("operator", "admin", "superadmin"):
                     return chat
             raise PermissionDeniedError("Нет доступа к этому чату")
         return chat

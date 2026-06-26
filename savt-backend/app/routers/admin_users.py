@@ -62,6 +62,28 @@ async def list_users(
     )
 
 
+# Создать оператора (короткий путь)
+@router.post("/admin/operators", response_model=AdminUserListOut, status_code=status.HTTP_201_CREATED)
+async def create_operator_short(
+    payload: CreateOperatorIn,
+    actor: User = Depends(require_role(RoleName.ADMIN)),
+    actor_role: str = Depends(get_role_from_token),
+    session: AsyncSession = Depends(get_session),
+):
+    return await AdminUserService(session).create_operator(payload, actor.id, actor_role)
+
+
+# Удалить оператора (короткий путь)
+@router.delete("/admin/operators/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_operator_short(
+    user_id: int,
+    actor: User = Depends(require_role(RoleName.ADMIN)),
+    actor_role: str = Depends(get_role_from_token),
+    session: AsyncSession = Depends(get_session),
+):
+    await AdminUserService(session).delete_operator(user_id, actor.id, actor_role)
+
+
 # Операторы (role=operator)
 @router.get("/admin/operators", response_model=PageOut[AdminUserListOut])
 async def list_operators(
@@ -104,6 +126,27 @@ async def list_admins(
         role="admin", sort_by=sort_by, sort_order=sort_order,
         page=page, size=size,
     )
+
+# Создать администратора (короткий путь, только суперадмин)
+@router.post("/admin/admins", response_model=AdminUserListOut, status_code=status.HTTP_201_CREATED)
+async def create_admin_short(
+    payload: CreateAdminIn,
+    actor: User = Depends(require_role(RoleName.SUPERADMIN)),
+    actor_role: str = Depends(get_role_from_token),
+    session: AsyncSession = Depends(get_session),
+):
+    return await AdminUserService(session).create_admin(payload, actor.id, actor_role)
+
+
+# Детальная карточка администратора — ДОЛЖЕН быть ПОСЛЕ /admin/admins (без параметра)
+@router.get("/admin/admins/{user_id}", response_model=AdminUserDetailOut)
+async def get_admin(
+    user_id: int,
+    _: User = Depends(require_role(RoleName.SUPERADMIN)),
+    session: AsyncSession = Depends(get_session),
+):
+    return await AdminUserService(session).get_user_detail(user_id)
+
 
 # Подробнее о пользователе
 @router.get("/admin/users/{user_id}", response_model=AdminUserDetailOut)
