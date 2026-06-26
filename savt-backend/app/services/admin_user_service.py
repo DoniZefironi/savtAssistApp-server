@@ -72,12 +72,14 @@ class AdminUserService:
         return make_page(items, total, page, size)
 
     # Получение детальной инфы о пользователе
-    async def get_user_detail(self, user_id: int) -> AdminUserDetailOut:
+    async def get_user_detail(
+        self, user_id: int, allowed_roles: tuple = ("user", "operator")
+    ) -> AdminUserDetailOut:
         row = await self.user_repo.get_with_role(user_id)
         if row is None:
             raise NotFoundError("Пользователь не найден")
         user, role = row
-        if role.name not in ("user", "operator"):
+        if role.name not in allowed_roles:
             raise NotFoundError("Пользователь не найден")
 
         cabinet_rows = await self.user_cabinet_repo.list_for_user(user_id)

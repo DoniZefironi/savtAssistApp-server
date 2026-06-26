@@ -145,7 +145,7 @@ async def get_admin(
     _: User = Depends(require_role(RoleName.SUPERADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
-    return await AdminUserService(session).get_user_detail(user_id)
+    return await AdminUserService(session).get_user_detail(user_id, allowed_roles=("admin",))
 
 
 # Подробнее о пользователе
