@@ -184,11 +184,13 @@ class ChatService:
 
     async def get_messages(
         self, chat_id: int, user_id: int, before_id: int | None, limit: int,
-        search: str | None = None, around_id: int | None = None,
+        search: str | None = None, around_id: int | None = None, after_id: int | None = None,
     ) -> list[MessageOut]:
         await self._get_chat_or_403(chat_id, user_id)
         if around_id is not None:
             rows = await self.msg_repo.get_messages_around(chat_id, around_id, limit)
+        elif after_id is not None:
+            rows = await self.msg_repo.get_messages_after(chat_id, after_id, limit)
         else:
             rows = await self.msg_repo.get_messages(chat_id, before_id, limit, search)
         if not rows:

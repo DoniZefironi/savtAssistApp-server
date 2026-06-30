@@ -50,13 +50,14 @@ async def get_messages(
     chat_id: int,
     before_id: int | None = Query(None, gt=0),
     around_id: int | None = Query(None, gt=0),
+    after_id: int | None = Query(None, gt=0),
     limit: int = Query(30, ge=1, le=100),
     search: str | None = Query(None, min_length=1, max_length=200),
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
     return await ChatService(session).get_messages(
-        chat_id, current_user.id, before_id, limit, search, around_id
+        chat_id, current_user.id, before_id, limit, search, around_id, after_id
     )
 
 # Отправить

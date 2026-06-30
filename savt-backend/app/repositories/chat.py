@@ -169,6 +169,20 @@ class MessageRepository:
         # before пришёл desc — разворачиваем, затем склеиваем
         return list(reversed(before)) + list(after)
 
+    async def get_messages_after(
+        self, chat_id: int, after_id: int, limit: int = 30
+    ) -> list[tuple]:
+        stmt = (
+            select(Message, User)
+            .outerjoin(User, User.id == Message.sender_id)
+            .where(Message.chat_id == chat_id, Message.id > after_id)
+            .order_by(Message.id.asc())
+            .limit(limit)
+        )
+        rows = (await self.session.execute(stmt)).all()
+        # ASC даёт ближайшие к курсору первыми (старейшие из новых) — разворачиваем под общий порядок (новые → старые)
+        return list(reversed(rows))
+
     async def get_attachments(self, message_ids: list[int]) -> dict[int, list[MessageAttachment]]:
         if not message_ids:
             return {}
