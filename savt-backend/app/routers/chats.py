@@ -135,8 +135,8 @@ async def delete_chat(
     await ChatService(session).delete_chat(chat_id, current_user.id)
 
 
-# Обои чата
-@router.patch("/chats/{chat_id}/wallpaper", response_model=ChatOut)
+# Обои чата (личные — сохраняются в настройках пользователя)
+@router.patch("/chats/{chat_id}/wallpaper", response_model=ChatSettingsOut)
 async def set_wallpaper(
     chat_id: int,
     payload: WallpaperIn,

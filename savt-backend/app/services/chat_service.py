@@ -267,13 +267,16 @@ class ChatService:
         await self.session.delete(chat)
         await self.session.commit()
 
-    async def set_wallpaper(self, chat_id: int, user_id: int, wallpaper_url: str | None) -> ChatOut:
-        chat = await self._get_chat_or_403(chat_id, user_id)
+    async def set_wallpaper(self, chat_id: int, user_id: int, wallpaper_url: str | None) -> ChatSettingsOut:
+        chat = await self.chat_repo.get_by_id(chat_id)
+        if chat is None:
+            raise NotFoundError("Чат не найден")
         if chat.user_id != user_id:
             raise PermissionDeniedError("Нет доступа к этому чату")
-        chat.wallpaper_url = wallpaper_url
+        repo = ChatSettingsRepository(self.session)
+        obj = await repo.upsert(user_id, chat_id, {"wallpaper_url": wallpaper_url})
         await self.session.commit()
-        return _to_chat_out(chat)
+        return ChatSettingsOut.model_validate(obj)
 
     async def pin_message(self, chat_id: int, msg_id: int, user_id: int) -> ChatOut:
         chat = await self._get_chat_or_403(chat_id, user_id)
@@ -455,7 +458,6 @@ def _to_chat_out(chat: Chat) -> ChatOut:
         problem_status=chat.problem_status,
         bot_active=chat.bot_active,
         operator_requested=chat.operator_requested,
-        wallpaper_url=chat.wallpaper_url,
         pinned_message_id=chat.pinned_message_id,
         created_at=chat.created_at,
     )

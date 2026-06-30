@@ -112,7 +112,6 @@ class ChatOut(BaseModel):
     problem_status: str
     bot_active: bool
     operator_requested: bool
-    wallpaper_url: str | None
     pinned_message_id: int | None
     created_at: datetime
 
@@ -132,6 +131,7 @@ class ChatSettingsIn(BaseModel):
     bot_text_color: str | None = Field(None, max_length=7)
     nick_color: str | None = Field(None, max_length=7)
     font_size: int | None = Field(None, ge=8, le=24)
+    wallpaper_url: str | None = Field(None, max_length=500)
 
     @field_validator(*_COLOR_FIELDS, mode="before")
     @classmethod
@@ -152,5 +152,6 @@ class ChatSettingsOut(BaseModel):
     bot_text_color: str | None
     nick_color: str | None
     font_size: int | None
+    wallpaper_url: str | None
 
     model_config = {"from_attributes": True}

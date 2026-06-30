@@ -33,3 +33,4 @@ class ChatUserSettings(Base):
     bot_text_color: Mapped[str | None] = mapped_column(String(7))
     nick_color: Mapped[str | None] = mapped_column(String(7))
     font_size: Mapped[int | None] = mapped_column(SmallInteger)
+    wallpaper_url: Mapped[str | None] = mapped_column(String(500))

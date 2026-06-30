@@ -272,6 +272,10 @@ GET /chats/{chat_id}/messages?limit=30
 Загрузка более старых (пользователь скроллит вверх):
 GET /chats/{chat_id}/messages?before_id={oldest_msg_id}&limit=30
 → Добавить в начало списка.
+
+Загрузка вокруг конкретного сообщения (поиск + переход по ссылке):
+GET /chats/{chat_id}/messages?around_id={msg_id}&limit=30
+→ Возвращает сообщения до и после указанного ID.
 ```
 
 ### Отправка сообщения
@@ -328,11 +332,13 @@ POST /chats/{chat_id}/read
 ```
 
 ### Обои чата
+Обои — личная настройка пользователя; собеседник не видит выбранный фон.
 ```
 Установить: PATCH /chats/{chat_id}/wallpaper
 Тело: { "wallpaper_url": "/static/photos/bg.jpg" }
 Сбросить:   { "wallpaper_url": null }
-→ Ответ: ChatOut с обновлённым wallpaper_url
+→ Ответ: ChatSettingsOut с обновлённым wallpaper_url
+   (обои сохраняются в настройках пользователя, а не в самом чате)
 ```
 
 ### Удалить чат
@@ -349,7 +355,9 @@ DELETE /operator/chats/{chat_id}/messages
 → 204 No Content
 ```
 
-### Настройки вида чата (цвета, шрифт)
+### Настройки вида чата (цвета, шрифт, обои)
+Все настройки вида — личные: собеседник видит чат со своими настройками.
+
 Глобальные настройки (применяются ко всем чатам пользователя):
 ```
 GET   /chats/settings          → ChatSettingsOut
@@ -364,6 +372,9 @@ DELETE /chats/{chat_id}/settings   → сбрасывает override (откат
 → 204 No Content для DELETE
 ```
 
+Обои — часть настроек per-chat; можно задать через `PATCH /chats/{chat_id}/wallpaper`
+или через `PATCH /chats/{chat_id}/settings` (поле `wallpaper_url`).
+
 Тело запроса `ChatSettingsIn` (все поля опциональны):
 ```json
 {
@@ -374,10 +385,11 @@ DELETE /chats/{chat_id}/settings   → сбрасывает override (откат
   "other_text_color": "#000000",
   "bot_text_color": "#555555",
   "nick_color": "#128C7E",
-  "font_size": 14
+  "font_size": 14,
+  "wallpaper_url": "/static/photos/bg.jpg"
 }
 ```
-Цвета — HEX `#RRGGBB`. `font_size` — от 8 до 24.
+Цвета — HEX `#RRGGBB`. `font_size` — от 8 до 24. `wallpaper_url` — URL обоев (null = сброс).
 
 ### Голосовое сообщение → текст
 ```
@@ -1163,6 +1175,14 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ### GET `/admin/admins`
 Только администраторы (`role=admin`). **Только для суперадмина.** Параметры: аналогично `/admin/users` (без значения `role` в `sort_by`), включая `is_verified` и `is_phone_verified`.
 
+### GET `/admin/admins/{user_id}`
+Детальная информация об администраторе. **Только для суперадмина.**
+
+---
+
+### POST `/admin/admins`
+Создать администратора (короткий alias для `POST /admin/users/admins`). **Только для суперадмина.**
+
 ---
 
 Все три эндпоинта возвращают `PageOut[AdminUserListOut]`:
@@ -1647,10 +1667,9 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ]
 ```
 
-`ChatOut` (возвращается при `GET /cabinets/{cabinet_id}/chat`, `PATCH wallpaper`, `PUT/DELETE pin`) содержит дополнительные поля:
+`ChatOut` (возвращается при `GET /cabinets/{cabinet_id}/chat`, `PUT/DELETE pin`) содержит дополнительное поле:
 ```json
 {
-  "wallpaper_url": "/static/photos/bg.jpg",
   "pinned_message_id": 42
 }
 ```
@@ -1667,6 +1686,7 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ### GET `/chats/{chat_id}/messages`
 История сообщений. Параметры:
 - `before_id` — ID сообщения, загрузить более старые (cursor pagination для бесконечного скролла)
+- `around_id` — загрузить сообщения вокруг указанного ID (для перехода к конкретному сообщению)
 - `limit` — количество (по умолчанию `30`, максимум `100`)
 - `search` — поиск по тексту сообщений
 
@@ -1744,11 +1764,11 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ---
 
 ### PATCH `/chats/{chat_id}/wallpaper`
-Установить или сбросить обои чата. Доступно только владельцу.
+Установить или сбросить обои чата. Доступно только владельцу. Обои личные — собеседник их не видит.
 ```json
 { "wallpaper_url": "/static/photos/bg.jpg" }
 ```
-Для сброса: `{ "wallpaper_url": null }`. Ответ: `ChatOut`.
+Для сброса: `{ "wallpaper_url": null }`. Ответ: `ChatSettingsOut`.
 
 ---
 
@@ -1815,10 +1835,11 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
   "other_text_color": "#000000",
   "bot_text_color": "#555555",
   "nick_color": "#128C7E",
-  "font_size": 14
+  "font_size": 14,
+  "wallpaper_url": "/static/photos/bg.jpg"
 }
 ```
-`chat_id: null` — глобальные настройки.
+`chat_id: null` — глобальные настройки. `wallpaper_url: null` — обои не установлены.
 
 ---
 
@@ -1841,9 +1862,16 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 
 ---
 
+### GET `/operator/chats/{chat_id}/pinned`
+Закреплённое сообщение чата. Возвращает `MessageOut` или `null` если ничего не закреплено.
+
+---
+
 ### GET `/operator/chats/{chat_id}/messages`
 История сообщений чата. Параметры:
-- `before_id`, `limit` — cursor pagination
+- `before_id` — cursor pagination (старее указанного ID)
+- `around_id` — сообщения вокруг указанного ID (для перехода к результату поиска)
+- `limit` — количество (по умолч. `30`, максимум `100`)
 - `search` — поиск по тексту сообщений
 
 Личные чаты пользователя (`chat_type=notes`) недоступны оператору/админу — `403`.
@@ -2064,6 +2092,11 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 
 ### POST `/notifications/read-all`
 Отметить все уведомления пользователя как прочитанные. `204 No Content`.
+
+---
+
+### DELETE `/notifications`
+Удалить все уведомления текущего пользователя. `204 No Content`.
 
 ---
 
@@ -2485,6 +2518,26 @@ UPDATE chats SET bot_no_count = 0, follow_up_sent = false;
 -- Посмотреть сколько чанков проиндексировано
 SELECT source_type, COUNT(*) FROM embeddings GROUP BY source_type;
 ```
+
+---
+
+## Рут `admin: audit` — журнал действий
+
+### GET `/admin/audit-logs`
+Журнал административных действий (создание/удаление пользователей, баны, верификации и т.п.). Доступно администратору и оператору.
+
+Параметры:
+- `actor_id` — фильтр по ID исполнителя
+- `actor_role` — фильтр по роли: `admin` / `operator` / `user` / `system`
+- `action` — фильтр по типу действия (строка)
+- `entity_type` — фильтр по типу сущности (строка)
+- `entity_id` — фильтр по ID сущности
+- `date_from`, `date_to` — диапазон дат (ISO 8601)
+- `search` — поиск по тексту
+- `search_in` — где искать: `all` (по умолч.) / `action` / `entity_type` / `actor_name` / `payload`
+- `sort_by` — `created_at` (по умолч.) / `action` / `entity_type` / `actor_role` / `actor_id`
+- `sort_order` — `asc` / `desc`
+- `page`, `size` — пагинация (по умолч. `1` / `50`, максимум `200`)
 
 ---
 
