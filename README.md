@@ -1841,14 +1841,31 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
   "bot_text_color": "#555555",
   "nick_color": "#128C7E",
   "font_size": 14,
-  "wallpaper_url": "/static/photos/bg.jpg"
+  "wallpaper_url": "/static/photos/bg.jpg",
+  "wallpaper_id": null
 }
 ```
-`chat_id: null` — глобальные настройки. `wallpaper_url: null` — обои не установлены.
+`chat_id: null` — глобальные настройки.
+
+Обои — три состояния:
+- **default** — `wallpaper_url: null`, `wallpaper_id: null`
+- **пресет** (клиентский градиент по ключу) — `wallpaper_url: null`, `wallpaper_id: "forest"`
+- **своё изображение** — `wallpaper_url: "/static/photos/bg.jpg"`, `wallpaper_id: "custom"`
+
+Оба поля передаются в `PATCH .../settings` вместе с цветами и `font_size` — отдельного эндпоинта для обоев в составе настроек нет (есть только legacy `PATCH /chats/{chat_id}/wallpaper`, не зависит от `ChatSettings`).
 
 ---
 
 ## Рут `operator` — операторский интерфейс
+
+### GET `/operator/chats/settings`
+### PATCH `/operator/chats/settings`
+### GET `/operator/chats/{chat_id}/settings`
+### PATCH `/operator/chats/{chat_id}/settings`
+### DELETE `/operator/chats/{chat_id}/settings`
+Персональные настройки вида чата (цвета, шрифт, обои) для авторизованного оператора/админа — зеркало `/chats/settings` и `/chats/{chat_id}/settings`. Владение чатом не требуется (настройки привязаны к самому оператору, не к чату). Семантика идентична пользовательским: global + per-chat override, `DELETE` сбрасывает override к глобальным. Ответы — `ChatSettingsOut` / `204`.
+
+---
 
 ### GET `/operator/chats/{chat_id}/attachments`
 Все вложения чата. Параметр `type`: `image` / `voice` / `document` / `video`. Ответ — такой же список `ChatAttachmentOut` как в `/chats/{chat_id}/attachments`.

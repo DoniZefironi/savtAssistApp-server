@@ -34,3 +34,5 @@ class ChatUserSettings(Base):
     nick_color: Mapped[str | None] = mapped_column(String(7))
     font_size: Mapped[int | None] = mapped_column(SmallInteger)
     wallpaper_url: Mapped[str | None] = mapped_column(String(500))
+    # ключ пресета обоев ("forest", "custom" и т.п.); null = default
+    wallpaper_id: Mapped[str | None] = mapped_column(String(50))

@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.constants import RoleName
 from app.core.dependencies import get_session, require_role
 from app.models.user import User
-from app.schemas.chat import ChatAttachmentOut, ChatListOut, MessageCreateIn, MessageOut, MessageSearchOut
+from app.schemas.chat import ChatAttachmentOut, ChatListOut, ChatSettingsIn, ChatSettingsOut, MessageCreateIn, MessageOut, MessageSearchOut
 from app.schemas.pagination import PageOut
 from app.services.chat_service import ChatService
 
@@ -32,6 +32,24 @@ async def get_unread_chats_count(
     from app.repositories.chat import ChatRepository
     count = await ChatRepository(session).count_unread_chats(operator.id)
     return {"count": count}
+
+
+# Глобальные настройки вида чата оператора (цвета, шрифт, обои) — ДОЛЖНЫ быть ДО /chats/{chat_id}
+@router.get("/chats/settings", response_model=ChatSettingsOut)
+async def get_global_chat_settings(
+    operator: User = Depends(require_role(RoleName.OPERATOR, RoleName.ADMIN)),
+    session: AsyncSession = Depends(get_session),
+):
+    return await ChatService(session).get_chat_settings(operator.id, None)
+
+
+@router.patch("/chats/settings", response_model=ChatSettingsOut)
+async def update_global_chat_settings(
+    payload: ChatSettingsIn,
+    operator: User = Depends(require_role(RoleName.OPERATOR, RoleName.ADMIN)),
+    session: AsyncSession = Depends(get_session),
+):
+    return await ChatService(session).update_chat_settings(operator.id, None, payload)
 
 
 # Все чаты
@@ -161,3 +179,32 @@ async def get_chat_attachments(
     session: AsyncSession = Depends(get_session),
 ):
     return await ChatService(session).get_chat_attachments(chat_id, operator.id, type)
+
+
+# Настройки вида конкретного чата (per-chat override, иначе глобальные оператора)
+@router.get("/chats/{chat_id}/settings", response_model=ChatSettingsOut)
+async def get_chat_settings(
+    chat_id: int,
+    operator: User = Depends(require_role(RoleName.OPERATOR, RoleName.ADMIN)),
+    session: AsyncSession = Depends(get_session),
+):
+    return await ChatService(session).get_chat_settings(operator.id, chat_id)
+
+
+@router.patch("/chats/{chat_id}/settings", response_model=ChatSettingsOut)
+async def update_chat_settings(
+    chat_id: int,
+    payload: ChatSettingsIn,
+    operator: User = Depends(require_role(RoleName.OPERATOR, RoleName.ADMIN)),
+    session: AsyncSession = Depends(get_session),
+):
+    return await ChatService(session).update_chat_settings(operator.id, chat_id, payload)
+
+
+@router.delete("/chats/{chat_id}/settings", status_code=status.HTTP_204_NO_CONTENT)
+async def reset_chat_settings(
+    chat_id: int,
+    operator: User = Depends(require_role(RoleName.OPERATOR, RoleName.ADMIN)),
+    session: AsyncSession = Depends(get_session),
+):
+    await ChatService(session).reset_chat_settings(operator.id, chat_id)
