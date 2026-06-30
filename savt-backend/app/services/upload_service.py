@@ -1,6 +1,5 @@
-import io
+import subprocess
 import uuid
-import wave
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -9,13 +8,32 @@ from fastapi import HTTPException, UploadFile, status
 UPLOAD_ROOT = Path("/code/uploads")
 
 
-def get_wav_sample_rate(audio_bytes: bytes) -> int | None:
-    """Частота дискретизации WAV-файла из его заголовка, или None если не парсится."""
+def transcode_to_ogg_opus(audio_bytes: bytes) -> bytes:
+    """Перекодирует голосовое (любой контейнер/кодек — webm/m4a/aac/wav/ogg/mp3)
+    в OGG/Opus через ffmpeg. Yandex SpeechKit принимает oggopus гарантированно,
+    в отличие от попыток угадать формат по расширению присланного файла."""
     try:
-        with wave.open(io.BytesIO(audio_bytes), "rb") as w:
-            return w.getframerate()
-    except Exception:
-        return None
+        result = subprocess.run(
+            [
+                "ffmpeg", "-hide_banner", "-loglevel", "error",
+                "-i", "pipe:0",
+                "-ac", "1", "-ar", "48000", "-c:a", "libopus", "-f", "ogg", "pipe:1",
+            ],
+            input=audio_bytes,
+            capture_output=True,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Не удалось обработать аудиофайл: превышено время обработки",
+        )
+    if result.returncode != 0 or not result.stdout:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Не удалось обработать аудиофайл: неподдерживаемый формат",
+        )
+    return result.stdout
 
 _ATTACHMENT_TYPES: dict[str, tuple[str, str]] = {
     "image/jpeg":    ("photos",    "jpg"),
