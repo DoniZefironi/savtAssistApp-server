@@ -12,6 +12,9 @@ router = APIRouter(prefix="/upload", tags=["upload"])
 
 _STATIC_PREFIX = "/static/"
 
+# Yandex SpeechKit stt:recognize (синхронный) принимает максимум 1 МБ — берём с запасом
+_MAX_STT_BYTES = 1_000_000
+
 
 class UploadOut(BaseModel):
     url: str
@@ -75,7 +78,10 @@ async def transcribe_voice(
         fmt = _EXT_TO_STT_FMT.get(ext, "oggopus")
 
     try:
-        text = await yandex_service.transcribe_voice(audio_bytes, format=fmt, sample_rate_hertz=sample_rate_hertz)
+        if len(audio_bytes) <= _MAX_STT_BYTES:
+            text = await yandex_service.transcribe_voice(audio_bytes, format=fmt, sample_rate_hertz=sample_rate_hertz)
+        else:
+            text = await yandex_service.transcribe_voice_long(audio_bytes, format=fmt, sample_rate_hertz=sample_rate_hertz)
     except RuntimeError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
     return TranscribeOut(text=text)

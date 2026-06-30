@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     yandex_api_key: str = ""
     yandex_gpt_model: str = "yandexgpt-lite"
 
+    # Yandex Object Storage — для распознавания голосовых > 1 МБ (longRunningRecognize)
+    yandex_storage_bucket: str = ""
+    yandex_storage_access_key_id: str = ""
+    yandex_storage_secret_access_key: str = ""
+    yandex_storage_endpoint_url: str = "https://storage.yandexcloud.net"
+
     # Бот
     bot_follow_up_minutes: int = 60
     bot_max_attempts: int = 3

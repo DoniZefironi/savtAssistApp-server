@@ -31,6 +31,10 @@
 | `YANDEX_FOLDER_ID` | Folder ID сервисного аккаунта Yandex Cloud |
 | `YANDEX_API_KEY` | API-ключ Yandex Cloud |
 | `YANDEX_GPT_MODEL` | Модель YandexGPT (`yandexgpt-lite`) |
+| `YANDEX_STORAGE_BUCKET` | Бакет Yandex Object Storage для голосовых >1 МБ (long-running распознавание) |
+| `YANDEX_STORAGE_ACCESS_KEY_ID` | Статический ключ доступа (S3-совместимый) к бакету |
+| `YANDEX_STORAGE_SECRET_ACCESS_KEY` | Секрет статического ключа доступа к бакету |
+| `YANDEX_STORAGE_ENDPOINT_URL` | Endpoint Object Storage (по умолч. `https://storage.yandexcloud.net`) |
 | `BOT_FOLLOW_UP_MINUTES` | Через сколько минут бот пишет follow-up (по умолч. 60) |
 | `BOT_MAX_ATTEMPTS` | Попыток бота до предложения оператора (по умолч. 3) |
 | `APP_ENV` | Окружение (`dev`/`prod`), в `dev` включает SQL-логирование |
@@ -838,12 +842,16 @@ POST /upload/transcribe (JSON: { file_url: "/static/voices/abc.ogg" })
 
 Для `wav` частота дискретизации читается из заголовка файла; поддерживаются только 8000/16000/48000 Гц (ограничение Yandex SpeechKit LPCM) — другая частота вернёт `400`.
 
+**Размер файла обрабатывается гибридно:**
+- **≤ 1 МБ** (примерно 30-60 сек записи) — синхронное распознавание (`stt:recognize`), ответ обычно за 1-3 секунды.
+- **> 1 МБ** — асинхронное распознавание (`longRunningRecognize`): файл временно загружается в Yandex Object Storage (бакет приватный, доступ для Yandex через presigned URL на 1 час), сервер сам дожидается результата (поллинг, до ~100 сек) и удаляет файл из Object Storage по завершении. Для фронта это прозрачно — ответ остаётся `{ text }`, просто запрос может идти дольше. Требует дополнительно настроенных `YANDEX_STORAGE_BUCKET`, `YANDEX_STORAGE_ACCESS_KEY_ID`, `YANDEX_STORAGE_SECRET_ACCESS_KEY`.
+
 Эндпоинт **stateless**: ничего не сохраняет в БД, не привязан к чату/сообщению — принимает любой `file_url` из `/static/voices/...` и просто возвращает текст. Повторный вызов — повторное распознавание.
 
 Ошибки:
 - `400` — некорректный URL, либо `wav` с неподдерживаемой частотой дискретизации
 - `404` — файл не найден
-- `503` — Yandex SpeechKit недоступен или не настроен
+- `503` — Yandex SpeechKit/Object Storage недоступны, не настроены, вернули ошибку, либо распознавание не уложилось в таймаут (для очень длинных записей)
 
 ---
 

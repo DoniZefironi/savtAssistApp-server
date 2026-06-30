@@ -1,6 +1,11 @@
+import asyncio
+import time
+import uuid
+
 import httpx
 
 from app.config import settings
+from app.services import storage_service
 
 _BASE = "https://llm.api.cloud.yandex.net/foundationModels/v1"
 
@@ -110,3 +115,73 @@ async def transcribe_voice(
     if not resp.is_success:
         raise RuntimeError(f"Yandex STT {resp.status_code}: {resp.text}")
     return resp.json().get("result", "")
+
+
+_LRR_URL = "https://transcribe.api.cloud.yandex.net/speech/stt/v2/longRunningRecognize"
+_OPERATION_URL = "https://operation.api.cloud.yandex.net/operations/{id}"
+_LRR_POLL_INTERVAL = 2.0
+_LRR_TIMEOUT = 100.0  # держим с запасом под proxy_read_timeout (120s) в nginx
+
+_FMT_TO_ENCODING = {
+    "oggopus": "OGG_OPUS",
+    "mp3": "MP3",
+    "lpcm": "LINEAR16_PCM",
+}
+
+
+async def transcribe_voice_long(
+    audio_bytes: bytes, format: str = "oggopus", sample_rate_hertz: int | None = None
+) -> str:
+    """Распознаёт длинное голосовое (>1 МБ) через Yandex SpeechKit v2 longRunningRecognize.
+    Файл временно загружается в Object Storage, доступ для Yandex даётся через presigned URL
+    (бакет остаётся приватным), после распознавания файл удаляется."""
+    if not settings.yandex_storage_bucket or not settings.yandex_storage_access_key_id:
+        raise RuntimeError("Yandex Object Storage не настроен")
+
+    key = f"stt-tmp/{uuid.uuid4().hex}.bin"
+    await asyncio.to_thread(storage_service.upload, key, audio_bytes)
+    try:
+        uri = await asyncio.to_thread(storage_service.presigned_url, key)
+        return await _long_running_recognize(uri, format, sample_rate_hertz)
+    finally:
+        await asyncio.to_thread(storage_service.delete, key)
+
+
+async def _long_running_recognize(
+    uri: str, format: str, sample_rate_hertz: int | None
+) -> str:
+    encoding = _FMT_TO_ENCODING.get(format, "OGG_OPUS")
+    specification: dict = {"audioEncoding": encoding, "languageCode": "ru-RU"}
+    if encoding == "LINEAR16_PCM":
+        specification["sampleRateHertz"] = sample_rate_hertz
+
+    client = _get_client()
+    resp = await client.post(
+        _LRR_URL,
+        headers=_headers(),
+        json={"config": {"specification": specification}, "audio": {"uri": uri}},
+    )
+    if not resp.is_success:
+        raise RuntimeError(f"Yandex LRR {resp.status_code}: {resp.text}")
+    operation_id = resp.json()["id"]
+
+    deadline = time.monotonic() + _LRR_TIMEOUT
+    while time.monotonic() < deadline:
+        await asyncio.sleep(_LRR_POLL_INTERVAL)
+        op_resp = await client.get(_OPERATION_URL.format(id=operation_id), headers=_headers())
+        if not op_resp.is_success:
+            raise RuntimeError(f"Yandex operation {op_resp.status_code}: {op_resp.text}")
+        data = op_resp.json()
+        if not data.get("done"):
+            continue
+        if "error" in data:
+            raise RuntimeError(f"Yandex LRR error: {data['error']}")
+        chunks = data.get("response", {}).get("chunks", [])
+        parts = [
+            chunk["alternatives"][0]["text"]
+            for chunk in chunks
+            if chunk.get("alternatives")
+        ]
+        return " ".join(parts)
+
+    raise RuntimeError("Yandex LRR timeout: распознавание не завершилось вовремя")
