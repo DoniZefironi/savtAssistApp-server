@@ -112,7 +112,6 @@ class ChatOut(BaseModel):
     problem_status: str
     bot_active: bool
     operator_requested: bool
-    pinned_message_id: int | None
     created_at: datetime
 
 

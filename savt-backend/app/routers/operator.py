@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.constants import RoleName
 from app.core.dependencies import get_session, require_role
 from app.models.user import User
-from app.schemas.chat import ChatAttachmentOut, ChatListOut, ChatOut, MessageCreateIn, MessageOut, MessageSearchOut
+from app.schemas.chat import ChatAttachmentOut, ChatListOut, MessageCreateIn, MessageOut, MessageSearchOut
 from app.schemas.pagination import PageOut
 from app.services.chat_service import ChatService
 
@@ -44,14 +44,14 @@ async def list_operator_chats(
     return await ChatService(session).list_operator_chats(operator.id, search)
 
 
-# Закреплённое сообщение (null если не закреплено)
-@router.get("/chats/{chat_id}/pinned", response_model=MessageOut | None)
-async def get_pinned_message(
+# Закреплённые сообщения чата (пустой массив — ничего не закреплено)
+@router.get("/chats/{chat_id}/pinned", response_model=list[MessageOut])
+async def get_pinned_messages(
     chat_id: int,
     _: User = Depends(require_role(RoleName.OPERATOR, RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
-    return await ChatService(session).get_pinned_message(chat_id)
+    return await ChatService(session).get_pinned_messages(chat_id)
 
 
 # Получить сообщения
@@ -120,8 +120,8 @@ async def clear_chat_messages(
     await ChatService(session).clear_chat_messages(chat_id)
 
 
-# Закрепить сообщение
-@router.put("/chats/{chat_id}/pin/{msg_id}", response_model=ChatOut)
+# Закрепить сообщение (идемпотентно, лимит 10 на чат)
+@router.put("/chats/{chat_id}/pin/{msg_id}", response_model=list[MessageOut])
 async def pin_message(
     chat_id: int,
     msg_id: int,
@@ -131,14 +131,25 @@ async def pin_message(
     return await ChatService(session).pin_message(chat_id, msg_id, operator.id)
 
 
-# Открепить сообщение
-@router.delete("/chats/{chat_id}/pin", response_model=ChatOut)
+# Открепить конкретное сообщение
+@router.delete("/chats/{chat_id}/pin/{msg_id}", response_model=list[MessageOut])
 async def unpin_message(
+    chat_id: int,
+    msg_id: int,
+    operator: User = Depends(require_role(RoleName.OPERATOR, RoleName.ADMIN)),
+    session: AsyncSession = Depends(get_session),
+):
+    return await ChatService(session).unpin_message(chat_id, msg_id, operator.id)
+
+
+# Открепить все сообщения
+@router.delete("/chats/{chat_id}/pin", response_model=list[MessageOut])
+async def unpin_all_messages(
     chat_id: int,
     operator: User = Depends(require_role(RoleName.OPERATOR, RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
-    return await ChatService(session).unpin_message(chat_id, operator.id)
+    return await ChatService(session).unpin_all(chat_id, operator.id)
 
 
 # Все вложения чата

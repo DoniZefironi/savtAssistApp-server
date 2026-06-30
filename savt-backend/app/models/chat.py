@@ -39,8 +39,6 @@ class Chat(Base):
     follow_up_sent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     # время последнего сообщения от пользователя (для follow-up таймера)
     last_user_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # закреплённое сообщение
-    pinned_message_id: Mapped[int | None] = mapped_column(ForeignKey("messages.id", ondelete="SET NULL"))
 
     def __repr__(self) -> str:
         return f"<Chat id={self.id} user_id={self.user_id} type={self.chat_type}>"

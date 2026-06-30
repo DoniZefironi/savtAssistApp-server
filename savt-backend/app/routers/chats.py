@@ -147,8 +147,18 @@ async def set_wallpaper(
     return await ChatService(session).set_wallpaper(chat_id, current_user.id, payload.wallpaper_url)
 
 
-# Закрепить сообщение
-@router.put("/chats/{chat_id}/pin/{msg_id}", response_model=ChatOut)
+# Закреплённые сообщения чата
+@router.get("/chats/{chat_id}/pinned", response_model=list[MessageOut])
+async def get_pinned_messages(
+    chat_id: int,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await ChatService(session).get_pinned_messages(chat_id)
+
+
+# Закрепить сообщение (идемпотентно, лимит 10 на чат)
+@router.put("/chats/{chat_id}/pin/{msg_id}", response_model=list[MessageOut])
 async def pin_message(
     chat_id: int,
     msg_id: int,
@@ -158,14 +168,25 @@ async def pin_message(
     return await ChatService(session).pin_message(chat_id, msg_id, current_user.id)
 
 
-# Открепить сообщение
-@router.delete("/chats/{chat_id}/pin", response_model=ChatOut)
+# Открепить конкретное сообщение
+@router.delete("/chats/{chat_id}/pin/{msg_id}", response_model=list[MessageOut])
 async def unpin_message(
+    chat_id: int,
+    msg_id: int,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await ChatService(session).unpin_message(chat_id, msg_id, current_user.id)
+
+
+# Открепить все сообщения
+@router.delete("/chats/{chat_id}/pin", response_model=list[MessageOut])
+async def unpin_all_messages(
     chat_id: int,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    return await ChatService(session).unpin_message(chat_id, current_user.id)
+    return await ChatService(session).unpin_all(chat_id, current_user.id)
 
 
 # Настройки вида конкретного чата (цвета, шрифт) — per-chat override

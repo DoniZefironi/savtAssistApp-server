@@ -1,7 +1,9 @@
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chat import Chat
+from app.models.chat_pinned_message import ChatPinnedMessage
 from app.models.chat_user_settings import ChatUserSettings
 from app.models.message import Message
 from app.models.message_attchment import MessageAttachment
@@ -323,3 +325,52 @@ class ChatSettingsRepository:
         if obj:
             await self.session.delete(obj)
             await self.session.flush()
+
+
+class ChatPinRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def count(self, chat_id: int) -> int:
+        result = await self.session.execute(
+            select(func.count(ChatPinnedMessage.id)).where(ChatPinnedMessage.chat_id == chat_id)
+        )
+        return result.scalar() or 0
+
+    async def exists(self, chat_id: int, message_id: int) -> bool:
+        result = await self.session.execute(
+            select(ChatPinnedMessage.id).where(
+                ChatPinnedMessage.chat_id == chat_id,
+                ChatPinnedMessage.message_id == message_id,
+            )
+        )
+        return result.scalar_one_or_none() is not None
+
+    async def add(self, chat_id: int, message_id: int, pinned_by: int) -> None:
+        stmt = pg_insert(ChatPinnedMessage).values(
+            chat_id=chat_id, message_id=message_id, pinned_by=pinned_by,
+        ).on_conflict_do_nothing(index_elements=["chat_id", "message_id"])
+        await self.session.execute(stmt)
+
+    async def remove(self, chat_id: int, message_id: int) -> None:
+        await self.session.execute(
+            delete(ChatPinnedMessage).where(
+                ChatPinnedMessage.chat_id == chat_id,
+                ChatPinnedMessage.message_id == message_id,
+            )
+        )
+
+    async def remove_all(self, chat_id: int) -> None:
+        await self.session.execute(
+            delete(ChatPinnedMessage).where(ChatPinnedMessage.chat_id == chat_id)
+        )
+
+    async def list_pins(self, chat_id: int) -> list[tuple]:
+        result = await self.session.execute(
+            select(Message, User)
+            .join(ChatPinnedMessage, ChatPinnedMessage.message_id == Message.id)
+            .outerjoin(User, User.id == Message.sender_id)
+            .where(ChatPinnedMessage.chat_id == chat_id)
+            .order_by(ChatPinnedMessage.pinned_at.desc())
+        )
+        return result.all()

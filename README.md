@@ -324,11 +324,13 @@ POST /chats/{chat_id}/read
 Убрать:    DELETE /chats/{chat_id}/messages/{msg_id}/reactions/{emoji}
 ```
 
-### Закрепить сообщение
+### Закреплённые сообщения (несколько на чат, до 10)
 ```
-Закрепить:  PUT    /chats/{chat_id}/pin/{msg_id}
-Открепить:  DELETE /chats/{chat_id}/pin
-→ Ответ: ChatOut с обновлённым pinned_message_id
+Список:            GET    /chats/{chat_id}/pinned
+Закрепить:         PUT    /chats/{chat_id}/pin/{msg_id}   (идемпотентно)
+Открепить одно:    DELETE /chats/{chat_id}/pin/{msg_id}
+Открепить все:     DELETE /chats/{chat_id}/pin
+→ Все 4 ответа: list[MessageOut], от новых к старым по времени закрепления
 ```
 
 ### Обои чата
@@ -1667,13 +1669,6 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ]
 ```
 
-`ChatOut` (возвращается при `GET /cabinets/{cabinet_id}/chat`, `PUT/DELETE pin`) содержит дополнительное поле:
-```json
-{
-  "pinned_message_id": 42
-}
-```
-
 ---
 
 ### GET `/cabinets/{cabinet_id}/chat`
@@ -1772,13 +1767,23 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 
 ---
 
+### GET `/chats/{chat_id}/pinned`
+Список закреплённых сообщений чата. Сортировка: от недавно закреплённых к старым. Ответ: `list[MessageOut]`, пустой массив — ничего не закреплено.
+
+---
+
 ### PUT `/chats/{chat_id}/pin/{msg_id}`
-Закрепить сообщение. Ответ: `ChatOut` с обновлённым `pinned_message_id`.
+Закрепить сообщение. Идемпотентно — повторный вызов с тем же `msg_id` ничего не меняет. Лимит — **10 закреплённых сообщений на чат**, при превышении `400`. Ответ: обновлённый `list[MessageOut]`.
+
+---
+
+### DELETE `/chats/{chat_id}/pin/{msg_id}`
+Открепить конкретное сообщение. Ответ: обновлённый `list[MessageOut]`.
 
 ---
 
 ### DELETE `/chats/{chat_id}/pin`
-Открепить сообщение. Ответ: `ChatOut` с `pinned_message_id: null`.
+Открепить все сообщения чата. Ответ: `[]`.
 
 ---
 
@@ -1863,7 +1868,7 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ---
 
 ### GET `/operator/chats/{chat_id}/pinned`
-Закреплённое сообщение чата. Возвращает `MessageOut` или `null` если ничего не закреплено.
+Список закреплённых сообщений чата (до 10). Сортировка: от недавно закреплённых к старым. Ответ: `list[MessageOut]`, пустой массив — ничего не закреплено.
 
 ---
 
@@ -1871,8 +1876,11 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 История сообщений чата. Параметры:
 - `before_id` — cursor pagination (старее указанного ID)
 - `around_id` — сообщения вокруг указанного ID (для перехода к результату поиска)
+- `after_id` — сообщения новее указанного ID (догрузка вниз после `around_id`)
 - `limit` — количество (по умолч. `30`, максимум `100`)
 - `search` — поиск по тексту сообщений
+
+`before_id`, `around_id`, `after_id` взаимоисключающие — при одновременной передаче приоритет: `around_id` → `after_id` → `before_id`.
 
 Личные чаты пользователя (`chat_type=notes`) недоступны оператору/админу — `403`.
 
@@ -1904,12 +1912,17 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ---
 
 ### PUT `/operator/chats/{chat_id}/pin/{msg_id}`
-Закрепить сообщение в чате. Возвращает обновлённый `ChatOut` с `pinned_message_id`.
+Закрепить сообщение. Идемпотентно, лимит 10 на чат (`400` при превышении). Ответ: обновлённый `list[MessageOut]`.
+
+---
+
+### DELETE `/operator/chats/{chat_id}/pin/{msg_id}`
+Открепить конкретное сообщение. Ответ: обновлённый `list[MessageOut]`.
 
 ---
 
 ### DELETE `/operator/chats/{chat_id}/pin`
-Открепить сообщение. Возвращает обновлённый `ChatOut`.
+Открепить все сообщения чата. Ответ: `[]`.
 
 ---
 

@@ -1,11 +1,12 @@
 from datetime import datetime, timezone
 
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AlreadyExistsError, NotFoundError, PermissionDeniedError
 from app.models.chat import Chat
 from app.models.message import Message
-from app.repositories.chat import ChatRepository, ChatSettingsRepository, MessageRepository
+from app.repositories.chat import ChatPinRepository, ChatRepository, ChatSettingsRepository, MessageRepository
 from app.schemas.chat import (
     AttachmentOut,
     ChatAttachmentOut,
@@ -19,12 +20,15 @@ from app.schemas.chat import (
     ReactionOut,
 )
 
+MAX_PINS_PER_CHAT = 10
+
 
 class ChatService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.chat_repo = ChatRepository(session)
         self.msg_repo = MessageRepository(session)
+        self.pin_repo = ChatPinRepository(session)
 
     async def ensure_support_and_notes(self, user_id: int) -> None:
         for chat_type in ("support", "notes"):
@@ -280,20 +284,32 @@ class ChatService:
         await self.session.commit()
         return ChatSettingsOut.model_validate(obj)
 
-    async def pin_message(self, chat_id: int, msg_id: int, user_id: int) -> ChatOut:
-        chat = await self._get_chat_or_403(chat_id, user_id)
+    async def pin_message(self, chat_id: int, msg_id: int, user_id: int) -> list[MessageOut]:
+        await self._get_chat_or_403(chat_id, user_id)
         msg = await self.msg_repo.get_by_id(msg_id)
         if msg is None or msg.chat_id != chat_id:
             raise NotFoundError("Сообщение не найдено")
-        chat.pinned_message_id = msg_id
+        if not await self.pin_repo.exists(chat_id, msg_id):
+            if await self.pin_repo.count(chat_id) >= MAX_PINS_PER_CHAT:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Достигнут лимит закреплённых сообщений ({MAX_PINS_PER_CHAT})",
+                )
+            await self.pin_repo.add(chat_id, msg_id, user_id)
         await self.session.commit()
-        return _to_chat_out(chat)
+        return await self.get_pinned_messages(chat_id)
 
-    async def unpin_message(self, chat_id: int, user_id: int) -> ChatOut:
-        chat = await self._get_chat_or_403(chat_id, user_id)
-        chat.pinned_message_id = None
+    async def unpin_message(self, chat_id: int, msg_id: int, user_id: int) -> list[MessageOut]:
+        await self._get_chat_or_403(chat_id, user_id)
+        await self.pin_repo.remove(chat_id, msg_id)
         await self.session.commit()
-        return _to_chat_out(chat)
+        return await self.get_pinned_messages(chat_id)
+
+    async def unpin_all(self, chat_id: int, user_id: int) -> list[MessageOut]:
+        await self._get_chat_or_403(chat_id, user_id)
+        await self.pin_repo.remove_all(chat_id)
+        await self.session.commit()
+        return []
 
     async def operator_take_chat(self, chat_id: int) -> None:
         chat = await self.chat_repo.get_by_id(chat_id)
@@ -435,16 +451,17 @@ class ChatService:
             raise PermissionDeniedError("Нет доступа к этому чату")
         return chat
 
-    async def get_pinned_message(self, chat_id: int) -> MessageOut | None:
-        chat = await self.chat_repo.get_by_id(chat_id)
-        if chat is None or chat.pinned_message_id is None:
-            return None
-        msg = await self.msg_repo.get_by_id(chat.pinned_message_id)
-        if msg is None:
-            return None
-        from app.repositories.user import UserRepository
-        user = await UserRepository(self.session).get_by_id(msg.sender_id)
-        return await self._build_message_out(msg, user)
+    async def get_pinned_messages(self, chat_id: int) -> list[MessageOut]:
+        rows = await self.pin_repo.list_pins(chat_id)
+        if not rows:
+            return []
+        msg_ids = [m.id for m, _ in rows]
+        atts = await self.msg_repo.get_attachments(msg_ids)
+        rxns = await self.msg_repo.get_reactions(msg_ids)
+        return [
+            _build_message(msg, user, atts.get(msg.id, []), rxns.get(msg.id, []))
+            for msg, user in rows
+        ]
 
     async def _build_message_out(self, msg, user) -> MessageOut:
         atts = (await self.msg_repo.get_attachments([msg.id])).get(msg.id, [])
@@ -460,7 +477,6 @@ def _to_chat_out(chat: Chat) -> ChatOut:
         problem_status=chat.problem_status,
         bot_active=chat.bot_active,
         operator_requested=chat.operator_requested,
-        pinned_message_id=chat.pinned_message_id,
         created_at=chat.created_at,
     )
 
