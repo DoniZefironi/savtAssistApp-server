@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from app.core.dependencies import get_current_user
 from app.models.user import User
-from app.services.upload_service import UPLOAD_ROOT, save_attachment, save_voice
+from app.services.upload_service import UPLOAD_ROOT, get_wav_sample_rate, save_attachment, save_voice
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
@@ -56,13 +56,26 @@ async def transcribe_voice(
     if not file_path.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Файл не найден")
     ext = file_path.suffix.lower()
-    _EXT_TO_STT_FMT = {
-        ".mp3": "mp3", ".m4a": "mp3", ".aac": "mp3",
-        ".ogg": "oggopus", ".oga": "oggopus", ".webm": "oggopus",
-    }
-    fmt = _EXT_TO_STT_FMT.get(ext, "oggopus")
+    audio_bytes = file_path.read_bytes()
+
+    sample_rate_hertz: int | None = None
+    if ext == ".wav":
+        fmt = "lpcm"
+        sample_rate_hertz = get_wav_sample_rate(audio_bytes)
+        if sample_rate_hertz not in (8000, 16000, 48000):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Неподдерживаемый WAV-файл: частота дискретизации должна быть 8000, 16000 или 48000 Гц",
+            )
+    else:
+        _EXT_TO_STT_FMT = {
+            ".mp3": "mp3", ".m4a": "mp3", ".aac": "mp3",
+            ".ogg": "oggopus", ".oga": "oggopus", ".webm": "oggopus",
+        }
+        fmt = _EXT_TO_STT_FMT.get(ext, "oggopus")
+
     try:
-        text = await yandex_service.transcribe_voice(file_path.read_bytes(), format=fmt)
+        text = await yandex_service.transcribe_voice(audio_bytes, format=fmt, sample_rate_hertz=sample_rate_hertz)
     except RuntimeError as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
     return TranscribeOut(text=text)

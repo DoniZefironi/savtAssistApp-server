@@ -1,10 +1,21 @@
+import io
 import uuid
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import HTTPException, UploadFile, status
 
 UPLOAD_ROOT = Path("/code/uploads")
+
+
+def get_wav_sample_rate(audio_bytes: bytes) -> int | None:
+    """Частота дискретизации WAV-файла из его заголовка, или None если не парсится."""
+    try:
+        with wave.open(io.BytesIO(audio_bytes), "rb") as w:
+            return w.getframerate()
+    except Exception:
+        return None
 
 _ATTACHMENT_TYPES: dict[str, tuple[str, str]] = {
     "image/jpeg":    ("photos",    "jpg"),

@@ -83,19 +83,25 @@ async def complete(system_prompt: str, messages: list[dict]) -> str:
 _STT_URL = "https://stt.api.cloud.yandex.net/speech/v1/stt:recognize"
 
 
-async def transcribe_voice(audio_bytes: bytes, format: str = "oggopus") -> str:
-    """Распознаёт голосовое сообщение через Yandex SpeechKit v1."""
+async def transcribe_voice(
+    audio_bytes: bytes, format: str = "oggopus", sample_rate_hertz: int | None = None
+) -> str:
+    """Распознаёт голосовое сообщение через Yandex SpeechKit v1.
+    Для format="lpcm" обязателен sample_rate_hertz (8000/16000/48000)."""
     if not settings.yandex_folder_id or not settings.yandex_api_key:
         raise RuntimeError("Yandex API не настроен")
     client = _get_client()
+    params = {
+        "folderId": settings.yandex_folder_id,
+        "lang": "ru-RU",
+        "format": format,
+    }
+    if sample_rate_hertz is not None:
+        params["sampleRateHertz"] = sample_rate_hertz
     resp = await client.post(
         _STT_URL,
         content=audio_bytes,
-        params={
-            "folderId": settings.yandex_folder_id,
-            "lang": "ru-RU",
-            "format": format,
-        },
+        params=params,
         headers={
             "Authorization": f"Api-Key {settings.yandex_api_key}",
             "Content-Type": "application/octet-stream",
