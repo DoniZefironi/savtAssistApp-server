@@ -19,17 +19,16 @@ async def create_task(title: str, description: str) -> str | None:
     if not settings.bitrix_webhook_url or not settings.bitrix_default_responsible_id:
         return None
 
+    fields = {
+        "TITLE": title,
+        "DESCRIPTION": description,
+        "RESPONSIBLE_ID": settings.bitrix_default_responsible_id,
+    }
+    if settings.bitrix_default_group_id:
+        fields["GROUP_ID"] = settings.bitrix_default_group_id
+
     url = f"{settings.bitrix_webhook_url.rstrip('/')}/tasks.task.add.json"
-    resp = await _get_client().post(
-        url,
-        json={
-            "fields": {
-                "TITLE": title,
-                "DESCRIPTION": description,
-                "RESPONSIBLE_ID": settings.bitrix_default_responsible_id,
-            }
-        },
-    )
+    resp = await _get_client().post(url, json={"fields": fields})
     if not resp.is_success:
         raise RuntimeError(f"Bitrix tasks.task.add {resp.status_code}: {resp.text}")
     data = resp.json()

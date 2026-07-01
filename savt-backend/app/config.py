@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     # Bitrix24 — создание задач по заявкам на обслуживание ШУ
     bitrix_webhook_url: str = ""
     bitrix_default_responsible_id: int = 0
+    bitrix_default_group_id: int = 0
 
 
 settings = Settings()

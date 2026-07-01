@@ -39,6 +39,7 @@
 | `BOT_MAX_ATTEMPTS` | Попыток бота до предложения оператора (по умолч. 3) |
 | `BITRIX_WEBHOOK_URL` | URL входящего вебхука Bitrix24 (`https://портал.bitrix24.ru/rest/ID/КОД/`) |
 | `BITRIX_DEFAULT_RESPONSIBLE_ID` | ID сотрудника Bitrix24, назначаемого ответственным по всем автосозданным задачам |
+| `BITRIX_DEFAULT_GROUP_ID` | ID проекта (рабочей группы) Bitrix24, необязательно — без него задачи создаются без привязки к проекту |
 | `APP_ENV` | Окружение (`dev`/`prod`), в `dev` включает SQL-логирование |
 | `SMS_PROVIDER` | Провайдер SMS: `mock` (по умолч.) или `smscenter` |
 | `SMSCENTER_LOGIN` | Логин аккаунта smscenter.by |
