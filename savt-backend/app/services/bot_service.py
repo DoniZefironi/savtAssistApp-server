@@ -162,7 +162,9 @@ async def _send_bot_message(session: AsyncSession, chat: Chat, bot_user_id: int,
     )
 
 
-async def _notify_operators(session: AsyncSession, chat_id: int) -> None:
+async def _notify_operators(
+    session: AsyncSession, chat_id: int, title: str = "Запрос оператора", body: str | None = None
+) -> None:
     from app.models.role import Role
     from app.models.user import User
     from app.services.push_service import send_push
@@ -176,10 +178,21 @@ async def _notify_operators(session: AsyncSession, chat_id: int) -> None:
     for op in operators:
         await send_push(
             session, op.id,
-            "Запрос оператора",
-            f"Пользователь ожидает оператора в чате #{chat_id}",
+            title,
+            body or f"Пользователь ожидает оператора в чате #{chat_id}",
             {"chat_id": str(chat_id), "type": "operator_requested"},
         )
+
+
+_BOT_DOWN_QUESTIONS = (
+    "Извините, сейчас не могу ответить — технические неполадки на моей стороне. "
+    "Я уже позвал оператора, но чтобы он разобрался быстрее, ответьте, пожалуйста, на несколько вопросов:\n\n"
+    "1. Ваш вопрос по ШУ (шкафу управления) или общий?\n"
+    "2. Если по ШУ — это неполадка/поломка или вы хотите оставить заявку на обслуживание?\n"
+    "3. Ситуация срочная (авария) или можно подождать?\n"
+    "4. Укажите, пожалуйста, номер объекта/ШУ, если вопрос касается конкретного оборудования.\n"
+    "5. Кратко опишите суть вопроса одним сообщением — так оператору не придётся переспрашивать."
+)
 
 
 async def handle_message(
@@ -233,43 +246,55 @@ async def handle_message(
             await session.commit()
             return
 
-    # Получаем последние сообщения для контекста диалога (до 6)
-    history_rows = (await session.execute(
-        select(Message)
-        .where(Message.chat_id == chat_id, Message.deleted_at.is_(None))
-        .order_by(Message.id.desc())
-        .limit(6)
-    )).scalars().all()
-    history = list(reversed(history_rows))
-
-    # RAG: ищем релевантные куски
-    context_chunks = await _retrieve_context(session, user_text, chat.cabinet_id)
-    if context_chunks:
-        parts = [f"[{c['source']}]\n{c['content']}" for c in context_chunks]
-        context_text = "\n---\n".join(parts)
-    else:
-        context_text = "Контекст не найден."
-
-    # Формируем историю для GPT
-    gpt_messages = []
-    for h in history[:-1]:  # без последнего (это текущее сообщение)
-        role = "assistant" if h.sender_id == bot_user_id else "user"
-        if h.text:
-            gpt_messages.append({"role": role, "text": h.text})
-
-    gpt_messages.append({
-        "role": "user",
-        "text": f"Контекст из базы знаний:\n{context_text}\n\nВопрос пользователя: {user_text}",
-    })
-
-    system = _SYSTEM_PROMPT
-    if chat.bot_no_count > 0:
-        system += f"\n\nЭто попытка {chat.bot_no_count + 1} из {settings.bot_max_attempts}. Постарайся помочь точнее."
-
     try:
+        # Получаем последние сообщения для контекста диалога (до 6)
+        history_rows = (await session.execute(
+            select(Message)
+            .where(Message.chat_id == chat_id, Message.deleted_at.is_(None))
+            .order_by(Message.id.desc())
+            .limit(6)
+        )).scalars().all()
+        history = list(reversed(history_rows))
+
+        # RAG: ищем релевантные куски
+        context_chunks = await _retrieve_context(session, user_text, chat.cabinet_id)
+        if context_chunks:
+            parts = [f"[{c['source']}]\n{c['content']}" for c in context_chunks]
+            context_text = "\n---\n".join(parts)
+        else:
+            context_text = "Контекст не найден."
+
+        # Формируем историю для GPT
+        gpt_messages = []
+        for h in history[:-1]:  # без последнего (это текущее сообщение)
+            role = "assistant" if h.sender_id == bot_user_id else "user"
+            if h.text:
+                gpt_messages.append({"role": role, "text": h.text})
+
+        gpt_messages.append({
+            "role": "user",
+            "text": f"Контекст из базы знаний:\n{context_text}\n\nВопрос пользователя: {user_text}",
+        })
+
+        system = _SYSTEM_PROMPT
+        if chat.bot_no_count > 0:
+            system += f"\n\nЭто попытка {chat.bot_no_count + 1} из {settings.bot_max_attempts}. Постарайся помочь точнее."
+
         answer = await yandex_service.complete(system, gpt_messages)
     except Exception:
-        answer = "Извините, сейчас не могу ответить. Попробуйте позже или запросите оператора."
+        # Любой сбой Yandex API (эмбеддинги или генерация): ключ невалиден,
+        # закончились деньги, сеть недоступна и т.п. — не пытаемся угадать причину,
+        # сразу передаём чат оператору с наводящими вопросами вместо тишины/дежурной фразы.
+        chat.operator_requested = True
+        chat.bot_active = False
+        await _send_bot_message(session, chat, bot_user_id, _BOT_DOWN_QUESTIONS)
+        await session.commit()
+        await _notify_operators(
+            session, chat.id,
+            title="Бот недоступен",
+            body=f"Бот не смог ответить в чате #{chat.id} — требуется оператор",
+        )
+        return
 
     # Обновляем счётчик если пользователь недоволен
     if _is_negative(user_text):
