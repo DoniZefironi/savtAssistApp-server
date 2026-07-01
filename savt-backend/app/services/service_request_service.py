@@ -96,6 +96,17 @@ def _sync_to_bitrix(request_id: int, request_type: str, description: str, cabine
     asyncio.create_task(_task())
 
 
+def _sync_status_to_bitrix(bitrix_task_id: str, status: str) -> None:
+    async def _task():
+        from app.services import bitrix_service
+        try:
+            await bitrix_service.update_task_status(bitrix_task_id, status)
+        except Exception:
+            _log.exception("Bitrix status sync failed for task %s", bitrix_task_id)
+
+    asyncio.create_task(_task())
+
+
 class ServiceRequestService:
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -167,6 +178,9 @@ class ServiceRequestService:
                        {"old_status": old_status, "new_status": data.status})
         await self.session.commit()
         await self.session.refresh(req)
+
+        if req.bitrix_task_id:
+            _sync_status_to_bitrix(req.bitrix_task_id, req.status)
 
         from app.repositories.cabinet import CabinetRepository
         from app.repositories.user import UserRepository

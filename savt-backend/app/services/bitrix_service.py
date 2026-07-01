@@ -4,6 +4,14 @@ from app.config import settings
 
 _client: httpx.AsyncClient | None = None
 
+# Статусы задач Bitrix24 (поле STATUS в tasks.task.*): 1 Новая, 2 Ждёт выполнения,
+# 3 Выполняется, 4 Ждёт контроля, 5 Завершена, 6 Отложена, 7 Отклонена
+_STATUS_TO_BITRIX = {
+    "open": "2",
+    "in_progress": "3",
+    "closed": "5",
+}
+
 
 def _get_client() -> httpx.AsyncClient:
     global _client
@@ -35,3 +43,25 @@ async def create_task(title: str, description: str) -> str | None:
     if "error" in data:
         raise RuntimeError(f"Bitrix tasks.task.add error: {data}")
     return str(data["result"]["task"]["id"])
+
+
+async def update_task_status(task_id: str, status: str) -> None:
+    """Обновляет статус задачи в Bitrix24 (tasks.task.update), отражая изменение
+    статуса заявки у нас (open/in_progress/closed). Одностороннее — изменение
+    статуса задачи прямо в Bitrix обратно к нам не подтягивается."""
+    if not settings.bitrix_webhook_url:
+        return
+    bitrix_status = _STATUS_TO_BITRIX.get(status)
+    if bitrix_status is None:
+        return
+
+    url = f"{settings.bitrix_webhook_url.rstrip('/')}/tasks.task.update.json"
+    resp = await _get_client().post(
+        url,
+        json={"taskId": task_id, "fields": {"STATUS": bitrix_status}},
+    )
+    if not resp.is_success:
+        raise RuntimeError(f"Bitrix tasks.task.update {resp.status_code}: {resp.text}")
+    data = resp.json()
+    if "error" in data:
+        raise RuntimeError(f"Bitrix tasks.task.update error: {data}")
