@@ -48,6 +48,7 @@ class ServiceRequestRepository:
 
     async def list_admin(
         self, status: str | None = None, cabinet_id: int | None = None,
+        request_type: str | None = None,
         search: str | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
@@ -58,6 +59,8 @@ class ServiceRequestRepository:
             conditions.append(ServiceRequest.status == status)
         if cabinet_id:
             conditions.append(ServiceRequest.cabinet_id == cabinet_id)
+        if request_type:
+            conditions.append(ServiceRequest.request_type == request_type)
         if search:
             pattern = f"%{escape_like(search)}%"
             conditions.append(or_(
@@ -81,6 +84,7 @@ class ServiceRequestRepository:
 
         _sort_col = {
             "created_at": ServiceRequest.created_at,
+            "closed_at": ServiceRequest.closed_at,
             "status": ServiceRequest.status,
             "user_full_name": User.full_name,
             "cabinet_object_number": Cabinet.object_number,

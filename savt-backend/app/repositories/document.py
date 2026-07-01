@@ -217,6 +217,7 @@ class DocumentRequestRepository:
 
     async def list_admin(
         self, status: str | None = None,
+        resolved_by_admin_id: int | None = None,
         search: str | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
@@ -225,6 +226,8 @@ class DocumentRequestRepository:
         conditions = []
         if status:
             conditions.append(DocumentRequest.status == status)
+        if resolved_by_admin_id is not None:
+            conditions.append(DocumentRequest.resolved_by_admin_id == resolved_by_admin_id)
         if search:
             pattern = f"%{escape_like(search)}%"
             conditions.append(or_(
@@ -232,6 +235,8 @@ class DocumentRequestRepository:
                 User.phone.ilike(pattern, escape="\\"),
                 User.organization_name.ilike(pattern, escape="\\"),
                 DocumentRequest.doc_type.ilike(pattern, escape="\\"),
+                DocumentRequest.user_message.ilike(pattern, escape="\\"),
+                DocumentRequest.admin_response.ilike(pattern, escape="\\"),
             ))
 
         count_stmt = select(func.count(DocumentRequest.id)).join(User, User.id == DocumentRequest.user_id)
@@ -241,6 +246,7 @@ class DocumentRequestRepository:
 
         _sort_col = {
             "created_at": DocumentRequest.created_at,
+            "resolved_at": DocumentRequest.resolved_at,
             "status": DocumentRequest.status,
             "user_full_name": User.full_name,
             "doc_type": DocumentRequest.doc_type,

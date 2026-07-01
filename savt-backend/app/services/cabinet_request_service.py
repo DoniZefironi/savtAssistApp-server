@@ -25,12 +25,14 @@ class CabinetRequestService:
 
     # Все заявки на добавление по фото
     async def list_additions(
-        self, status: str | None = None, search: str | None = None,
+        self, status: str | None = None, resolved_by_admin_id: int | None = None,
+        search: str | None = None,
         sort_by: str = "created_at", sort_order: str = "desc",
         page: int = 1, size: int = 20,
     ) -> PageOut[AdditionRequestOut]:
         rows, total = await self.request_repo.list_additions(
-            status=status, search=search, sort_by=sort_by, sort_order=sort_order,
+            status=status, resolved_by_admin_id=resolved_by_admin_id, search=search,
+            sort_by=sort_by, sort_order=sort_order,
             offset=(page - 1) * size, limit=size,
         )
         items = [
@@ -48,6 +50,7 @@ class CabinetRequestService:
                 status=req.status,
                 cabinet_id=req.cabinet_id,
                 admin_response=req.admin_response,
+                resolved_by_admin_id=req.resolved_by_admin_id,
                 created_at=req.created_at,
                 resolved_at=req.resolved_at,
             )
@@ -112,12 +115,14 @@ class CabinetRequestService:
 
     # Все заявки на добавление
     async def list_shares(
-        self, status: str | None = None, search: str | None = None,
+        self, status: str | None = None, resolved_by_admin_id: int | None = None,
+        search: str | None = None,
         sort_by: str = "created_at", sort_order: str = "desc",
         page: int = 1, size: int = 20,
     ) -> PageOut[ShareRequestOut]:
         rows, total = await self.request_repo.list_shares(
-            status=status, search=search, sort_by=sort_by, sort_order=sort_order,
+            status=status, resolved_by_admin_id=resolved_by_admin_id, search=search,
+            sort_by=sort_by, sort_order=sort_order,
             offset=(page - 1) * size, limit=size,
         )
         items = [
@@ -136,6 +141,7 @@ class CabinetRequestService:
                 user_comment=req.user_comment,
                 status=req.status,
                 admin_response=req.admin_response,
+                resolved_by_admin_id=req.resolved_by_admin_id,
                 created_at=req.created_at,
                 resolved_at=req.resolved_at,
             )

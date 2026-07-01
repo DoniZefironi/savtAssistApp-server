@@ -33,10 +33,34 @@ class KbCategoryRepository:
     async def get_by_id(self, cat_id: int) -> KbCategory | None:
         return await self.session.get(KbCategory, cat_id)
 
-    async def list_all(self) -> list[KbCategory]:
-        result = await self.session.execute(
-            select(KbCategory).order_by(KbCategory.sort_order, KbCategory.name)
-        )
+    async def list_all(
+        self,
+        search: str | None = None,
+        parent_id: int | None = None,
+        sort_by: str = "sort_order",
+        sort_order: str = "asc",
+    ) -> list[KbCategory]:
+        conditions = []
+        if search:
+            pattern = f"%{escape_like(search)}%"
+            conditions.append(or_(
+                KbCategory.name.ilike(pattern, escape="\\"),
+                KbCategory.description.ilike(pattern, escape="\\"),
+            ))
+        if parent_id is not None:
+            conditions.append(KbCategory.parent_id == parent_id)
+
+        _sort_col = {
+            "name": KbCategory.name,
+            "sort_order": KbCategory.sort_order,
+        }.get(sort_by, KbCategory.sort_order)
+        order = _sort_col.asc() if sort_order == "asc" else _sort_col.desc()
+
+        stmt = select(KbCategory)
+        if conditions:
+            stmt = stmt.where(*conditions)
+        stmt = stmt.order_by(order, KbCategory.name)
+        result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
     async def delete(self, cat: KbCategory) -> None:
@@ -76,8 +100,11 @@ class KbArticleRepository:
         sort_order: str = "desc",
         offset: int = 0,
         limit: int = 20,
+        is_published: bool | None = None,
     ) -> tuple[list[KbArticle], int]:
-        conditions = [KbArticle.is_published == True]
+        conditions = []
+        if is_published is not None:
+            conditions.append(KbArticle.is_published == is_published)
 
         if category_id is not None:
             conditions.append(KbArticle.category_id == category_id)
@@ -106,6 +133,8 @@ class KbArticleRepository:
             "title": KbArticle.title,
             "created_at": KbArticle.created_at,
             "updated_at": KbArticle.updated_at,
+            "version": KbArticle.version,
+            "is_published": KbArticle.is_published,
         }.get(sort_by, KbArticle.created_at)
         order = _sort_col.asc() if sort_order == "asc" else _sort_col.desc()
 

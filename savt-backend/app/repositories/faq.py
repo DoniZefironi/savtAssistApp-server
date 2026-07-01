@@ -19,10 +19,31 @@ class FaqCategoryRepository:
     async def get_by_id(self, cat_id: int) -> FaqCategory | None:
         return await self.session.get(FaqCategory, cat_id)
 
-    async def list_all(self) -> list[FaqCategory]:
-        result = await self.session.execute(
-            select(FaqCategory).order_by(FaqCategory.sort_order, FaqCategory.name)
-        )
+    async def list_all(
+        self,
+        search: str | None = None,
+        parent_id: int | None = None,
+        sort_by: str = "sort_order",
+        sort_order: str = "asc",
+    ) -> list[FaqCategory]:
+        conditions = []
+        if search:
+            pattern = f"%{escape_like(search)}%"
+            conditions.append(FaqCategory.name.ilike(pattern, escape="\\"))
+        if parent_id is not None:
+            conditions.append(FaqCategory.parent_id == parent_id)
+
+        _sort_col = {
+            "name": FaqCategory.name,
+            "sort_order": FaqCategory.sort_order,
+        }.get(sort_by, FaqCategory.sort_order)
+        order = _sort_col.asc() if sort_order == "asc" else _sort_col.desc()
+
+        stmt = select(FaqCategory)
+        if conditions:
+            stmt = stmt.where(*conditions)
+        stmt = stmt.order_by(order, FaqCategory.name)
+        result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
     async def delete(self, cat: FaqCategory) -> None:
@@ -50,6 +71,7 @@ class FaqEntryRepository:
     async def list_entries(
         self,
         category_id: int | None = None,
+        is_published: bool | None = None,
         search: str | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
@@ -59,6 +81,8 @@ class FaqEntryRepository:
         conditions = []
         if category_id is not None:
             conditions.append(FaqEntry.category_id == category_id)
+        if is_published is not None:
+            conditions.append(FaqEntry.is_published == is_published)
         if search:
             pattern = f"%{escape_like(search)}%"
             conditions.append(or_(
@@ -75,6 +99,8 @@ class FaqEntryRepository:
             "question": FaqEntry.question,
             "created_at": FaqEntry.created_at,
             "updated_at": FaqEntry.updated_at,
+            "version": FaqEntry.version,
+            "is_published": FaqEntry.is_published,
         }.get(sort_by, FaqEntry.created_at)
         order = _sort_col.asc() if sort_order == "asc" else _sort_col.desc()
 

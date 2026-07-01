@@ -69,6 +69,7 @@ class DocumentRequestOut(BaseModel):
     status: str
     user_message: str | None
     admin_response: str | None
+    resolved_by_admin_id: int | None
     created_at: datetime
     resolved_at: datetime | None
 

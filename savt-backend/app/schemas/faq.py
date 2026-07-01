@@ -33,6 +33,7 @@ class FaqEntryUpdateIn(BaseModel):
     category_id: int | None = Field(None, gt=0)
     question: str | None = Field(None, min_length=5, max_length=2000)
     answer: str | None = Field(None, min_length=1, max_length=10000)
+    is_published: bool | None = None
 
 
 class FaqEntryOut(BaseModel):
@@ -41,6 +42,7 @@ class FaqEntryOut(BaseModel):
     question: str
     answer: str
     version: int
+    is_published: bool
     created_at: datetime
     updated_at: datetime
 

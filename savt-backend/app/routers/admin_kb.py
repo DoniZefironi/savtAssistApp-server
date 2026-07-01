@@ -1,6 +1,6 @@
 import asyncio
 
-from fastapi import APIRouter, Depends, File, UploadFile, status
+from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleName
@@ -10,12 +10,14 @@ from app.models.user import User
 from app.schemas.kb import (
     KbArticleCreateIn,
     KbArticleDetailOut,
+    KbArticleListOut,
     KbArticleUpdateIn,
     KbAttachmentOut,
     KbCategoryCreateIn,
     KbCategoryOut,
     KbCategoryUpdateIn,
 )
+from app.schemas.pagination import PageOut
 from app.services.kb_service import KbArticleService, KbCategoryService
 
 
@@ -46,10 +48,14 @@ async def create_category(
 
 @router.get("/categories", response_model=list[KbCategoryOut])
 async def list_categories(
+    search: str | None = Query(None, min_length=1, max_length=200),
+    parent_id: int | None = Query(None, gt=0),
+    sort_by: str = Query("sort_order", pattern="^(sort_order|name)$"),
+    sort_order: str = Query("asc", pattern="^(asc|desc)$"),
     _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
-    return await KbCategoryService(session).list_all()
+    return await KbCategoryService(session).list_all(search, parent_id, sort_by, sort_order)
 
 
 @router.patch("/categories/{cat_id}", response_model=KbCategoryOut)
@@ -72,6 +78,31 @@ async def delete_category(
 
 
 # --- Записи ---
+
+@router.get("/articles", response_model=PageOut[KbArticleListOut])
+async def list_articles(
+    category_id: int | None = Query(None, gt=0),
+    tag_ids: list[int] = Query(default=[]),
+    is_published: bool | None = Query(None),
+    search: str | None = Query(None, min_length=1, max_length=200),
+    sort_by: str = Query("created_at", pattern="^(created_at|updated_at|title|version|is_published)$"),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$"),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    session: AsyncSession = Depends(get_session),
+):
+    return await KbArticleService(session).list_articles(
+        category_id=category_id,
+        tag_ids=tag_ids or None,
+        search=search,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        page=page,
+        size=size,
+        is_published=is_published,
+    )
+
 
 @router.post("/articles", response_model=KbArticleDetailOut, status_code=status.HTTP_201_CREATED)
 async def create_article(

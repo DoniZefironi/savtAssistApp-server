@@ -16,6 +16,7 @@ from app.services.service_request_service import ServiceRequestService
 router = APIRouter(tags=["service requests"])
 
 _STATUS_PATTERN = "^(open|in_progress|closed)$"
+_REQUEST_TYPE_PATTERN = "^(repair|maintenance|inspection|other)$"
 
 
 # --- Пользователь ---
@@ -48,10 +49,11 @@ async def list_my_requests(
 async def list_all_requests(
     status: str | None = Query(None, pattern=_STATUS_PATTERN),
     cabinet_id: int | None = Query(None, gt=0),
+    request_type: str | None = Query(None, pattern=_REQUEST_TYPE_PATTERN),
     search: str | None = Query(None, min_length=1, max_length=200),
     sort_by: str = Query(
         "created_at",
-        pattern="^(created_at|status|user_full_name|cabinet_object_number|request_type)$",
+        pattern="^(created_at|closed_at|status|user_full_name|cabinet_object_number|request_type)$",
     ),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
@@ -60,7 +62,8 @@ async def list_all_requests(
     session: AsyncSession = Depends(get_session),
 ):
     return await ServiceRequestService(session).list_admin(
-        status, cabinet_id, page, size, search=search, sort_by=sort_by, sort_order=sort_order
+        status, cabinet_id, page, size,
+        request_type=request_type, search=search, sort_by=sort_by, sort_order=sort_order,
     )
 
 

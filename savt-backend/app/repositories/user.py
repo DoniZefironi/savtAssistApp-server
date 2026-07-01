@@ -30,6 +30,7 @@ class UserRepository(BaseRepository[User]):
         is_active: bool | None = None,
         is_verified: bool | None = None,
         is_phone_verified: bool | None = None,
+        user_type: str | None = None,
         role: str | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
@@ -68,6 +69,8 @@ class UserRepository(BaseRepository[User]):
             conditions.append(User.is_verified == is_verified)
         if is_phone_verified is not None:
             conditions.append(User.is_phone_verified == is_phone_verified)
+        if user_type is not None:
+            conditions.append(User.user_type == user_type)
 
         _role_order = case({"operator": 0, "user": 1, "admin": 2}, value=Role.name, else_=3)
         _col = {
@@ -75,6 +78,8 @@ class UserRepository(BaseRepository[User]):
             "full_name":  User.full_name,
             "phone":      User.phone,
             "email":      User.email,
+            "login":      User.login,
+            "organization_name": User.organization_name,
         }
         if sort_by in _col:
             order_col = _col[sort_by].asc() if sort_order == "asc" else _col[sort_by].desc()

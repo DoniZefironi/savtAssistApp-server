@@ -47,7 +47,8 @@ async def list_users(
     is_active: bool | None = Query(None),
     is_verified: bool | None = Query(None),
     is_phone_verified: bool | None = Query(None),
-    sort_by: str = Query("created_at", pattern="^(created_at|full_name|phone|email|role)$"),
+    user_type: str | None = Query(None, pattern="^(individual|organization)$"),
+    sort_by: str = Query("created_at", pattern="^(created_at|full_name|phone|email|login|organization_name|role)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
@@ -57,7 +58,7 @@ async def list_users(
     return await AdminUserService(session).list_users(
         query=search, is_active=is_active,
         is_verified=is_verified, is_phone_verified=is_phone_verified,
-        role="user", sort_by=sort_by, sort_order=sort_order,
+        user_type=user_type, role="user", sort_by=sort_by, sort_order=sort_order,
         page=page, size=size,
     )
 
@@ -91,7 +92,8 @@ async def list_operators(
     is_active: bool | None = Query(None),
     is_verified: bool | None = Query(None),
     is_phone_verified: bool | None = Query(None),
-    sort_by: str = Query("created_at", pattern="^(created_at|full_name|phone|email)$"),
+    user_type: str | None = Query(None, pattern="^(individual|organization)$"),
+    sort_by: str = Query("created_at", pattern="^(created_at|full_name|phone|email|login|organization_name)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
@@ -101,7 +103,7 @@ async def list_operators(
     return await AdminUserService(session).list_users(
         query=search, is_active=is_active,
         is_verified=is_verified, is_phone_verified=is_phone_verified,
-        role="operator", sort_by=sort_by, sort_order=sort_order,
+        user_type=user_type, role="operator", sort_by=sort_by, sort_order=sort_order,
         page=page, size=size,
     )
 
@@ -113,7 +115,8 @@ async def list_admins(
     is_active: bool | None = Query(None),
     is_verified: bool | None = Query(None),
     is_phone_verified: bool | None = Query(None),
-    sort_by: str = Query("created_at", pattern="^(created_at|full_name|phone|email)$"),
+    user_type: str | None = Query(None, pattern="^(individual|organization)$"),
+    sort_by: str = Query("created_at", pattern="^(created_at|full_name|phone|email|login|organization_name)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
@@ -123,7 +126,7 @@ async def list_admins(
     return await AdminUserService(session).list_users(
         query=search, is_active=is_active,
         is_verified=is_verified, is_phone_verified=is_phone_verified,
-        role="admin", sort_by=sort_by, sort_order=sort_order,
+        user_type=user_type, role="admin", sort_by=sort_by, sort_order=sort_order,
         page=page, size=size,
     )
 

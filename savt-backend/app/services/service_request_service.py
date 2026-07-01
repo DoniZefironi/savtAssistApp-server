@@ -87,12 +87,13 @@ class ServiceRequestService:
 
     async def list_admin(
         self, status: str | None, cabinet_id: int | None, page: int, size: int,
+        request_type: str | None = None,
         search: str | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
     ) -> PageOut[ServiceRequestDetailOut]:
         rows, total = await self.repo.list_admin(
-            status, cabinet_id, search=search, sort_by=sort_by, sort_order=sort_order,
+            status, cabinet_id, request_type=request_type, search=search, sort_by=sort_by, sort_order=sort_order,
             offset=(page - 1) * size, limit=size
         )
         return make_page([_to_detail(r, u, c) for r, u, c in rows], total, page, size)

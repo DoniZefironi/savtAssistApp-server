@@ -148,12 +148,14 @@ class AdminDocumentService:
 
     async def list_requests(
         self, status: str | None = None, page: int = 1, size: int = 20,
+        resolved_by_admin_id: int | None = None,
         search: str | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
     ) -> PageOut[DocumentRequestOut]:
         rows, total = await self.request_repo.list_admin(
-            status=status, search=search, sort_by=sort_by, sort_order=sort_order,
+            status=status, resolved_by_admin_id=resolved_by_admin_id, search=search,
+            sort_by=sort_by, sort_order=sort_order,
             offset=(page - 1) * size, limit=size
         )
         items = [
@@ -172,6 +174,7 @@ class AdminDocumentService:
                 status=req.status,
                 user_message=req.user_message,
                 admin_response=req.admin_response,
+                resolved_by_admin_id=req.resolved_by_admin_id,
                 created_at=req.created_at,
                 resolved_at=req.resolved_at,
             )

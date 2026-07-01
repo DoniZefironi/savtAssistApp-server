@@ -16,6 +16,7 @@ class AdditionRequestOut(BaseModel):
     status: str
     cabinet_id: int | None
     admin_response: str | None
+    resolved_by_admin_id: int | None
     created_at: datetime
     resolved_at: datetime | None
 
@@ -35,6 +36,7 @@ class ShareRequestOut(BaseModel):
     user_comment: str | None
     status: str
     admin_response: str | None
+    resolved_by_admin_id: int | None
     created_at: datetime
     resolved_at: datetime | None
 

@@ -31,7 +31,7 @@ async def list_cabinets(
     has_users: bool | None = Query(None),
     has_service_requests: bool | None = Query(None),
     warranty_status: str | None = Query(None, pattern="^(active|expired|none)$"),
-    sort_by: str = Query("created_at", pattern="^(type|warranty_ends_at|object_number|admin_internal_name|created_at)$"),
+    sort_by: str = Query("created_at", pattern="^(type|warranty_ends_at|object_number|admin_internal_name|purpose|created_at)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),

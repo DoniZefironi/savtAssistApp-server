@@ -891,7 +891,7 @@ POST /upload/transcribe (JSON: { file_url: "/static/voices/abc.ogg" })
 - `has_users` — `true` / `false` — есть ли привязанный пользователь
 - `has_service_requests` — `true` / `false` — есть ли сервисные заявки
 - `warranty_status` — `active` (гарантия действует) / `expired` (истекла) / `none` (не указана)
-- `sort_by` — `type`, `warranty_ends_at`, `object_number`, `admin_internal_name`, `created_at`
+- `sort_by` — `type`, `warranty_ends_at`, `object_number`, `admin_internal_name`, `purpose`, `created_at`
 - `sort_order` — `asc`, `desc`
 - `page`, `size` — пагинация (по умолч. `1` / `20`, максимум `100`)
 
@@ -1007,8 +1007,9 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ### GET `/admin/cabinet-requests/additions`
 Заявки на добавление ШУ через фото. Параметры:
 - `status` — `pending` / `approved` / `rejected`
-- `search` — поиск по ФИО, телефону, организации пользователя
-- `sort_by` — `created_at` (по умолч.), `status`, `user_full_name`
+- `resolved_by_admin_id` — заявки, обработанные конкретным администратором
+- `search` — поиск по ФИО, телефону, организации пользователя, комментарию пользователя и ответу администратора
+- `sort_by` — `created_at` (по умолч.), `resolved_at`, `status`, `user_full_name`
 - `sort_order` — `asc` / `desc`
 - `page`, `size`
 
@@ -1029,6 +1030,7 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
       "status": "pending",
       "cabinet_id": null,
       "admin_response": null,
+      "resolved_by_admin_id": null,
       "created_at": "2026-05-12T08:00:00Z",
       "resolved_at": null
     }
@@ -1064,8 +1066,9 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ### GET `/admin/cabinet-requests/shares`
 Заявки на доступ к уже существующему ШУ (сканирован QR, но ШУ уже занят). Параметры:
 - `status` — `pending` / `approved` / `rejected`
-- `search` — поиск по ФИО/телефону пользователя, типу/номеру/названию ШУ
-- `sort_by` — `created_at` (по умолч.), `status`, `user_full_name`, `cabinet_object_number`
+- `resolved_by_admin_id` — заявки, обработанные конкретным администратором
+- `search` — поиск по ФИО/телефону пользователя, типу/номеру/названию ШУ, комментарию пользователя и ответу администратора
+- `sort_by` — `created_at` (по умолч.), `resolved_at`, `status`, `user_full_name`, `cabinet_object_number`
 - `sort_order` — `asc` / `desc`
 - `page`, `size`
 
@@ -1087,6 +1090,7 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
       "user_comment": null,
       "status": "pending",
       "admin_response": null,
+      "resolved_by_admin_id": null,
       "created_at": "2026-05-12T09:00:00Z",
       "resolved_at": null
     }
@@ -1173,7 +1177,8 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 - `is_active` — `true` / `false`
 - `is_verified` — `true` / `false` — верификация аккаунта администратором
 - `is_phone_verified` — `true` / `false` — подтверждённый номер телефона
-- `sort_by` — `created_at` (по умолч.), `full_name`, `phone`, `email`, `role`
+- `user_type` — `individual` / `organization`
+- `sort_by` — `created_at` (по умолч.), `full_name`, `phone`, `email`, `login`, `organization_name`, `role`
 - `sort_order` — `asc` / `desc`
 - `page`, `size` — пагинация (по умолч. `page=1`, `size=20`, максимум `100`)
 
@@ -1477,8 +1482,9 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ### GET `/admin/document-requests`
 Заявки пользователей на доступ к закрытым документам. Параметры:
 - `status` — `pending` / `approved` / `rejected`
-- `search` — поиск по ФИО/телефону/организации пользователя, типу документа
-- `sort_by` — `created_at` (по умолч.), `status`, `user_full_name`, `doc_type`
+- `resolved_by_admin_id` — заявки, обработанные конкретным администратором
+- `search` — поиск по ФИО/телефону/организации пользователя, типу документа, сообщению пользователя и ответу администратора
+- `sort_by` — `created_at` (по умолч.), `resolved_at`, `status`, `user_full_name`, `doc_type`
 - `sort_order` — `asc` / `desc`
 - `page`, `size`
 
@@ -1500,6 +1506,7 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
       "status": "pending",
       "user_message": "Нужен для проверки",
       "admin_response": null,
+      "resolved_by_admin_id": null,
       "created_at": "2026-06-01T09:00:00Z",
       "resolved_at": null
     }
@@ -2052,8 +2059,9 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ### GET `/admin/service-requests`
 Все заявки (для админа/оператора). Параметры:
 - `status`, `cabinet_id`
+- `request_type` — `repair` / `maintenance` / `inspection` / `other` (точное совпадение)
 - `search` — поиск по ФИО/телефону/организации пользователя, номеру/названию ШУ, типу и описанию заявки
-- `sort_by` — `created_at` (по умолч.), `status`, `user_full_name`, `cabinet_object_number`, `request_type`
+- `sort_by` — `created_at` (по умолч.), `closed_at`, `status`, `user_full_name`, `cabinet_object_number`, `request_type`
 - `sort_order` — `asc` / `desc`
 - `page`, `size`
 
@@ -2193,7 +2201,7 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 
 ## Рут `admin: kb` — база знаний (администратор/оператор)
 
-База знаний — файловый репозиторий, организованный по категориям. Каждая запись может содержать несколько файлов любых типов (PDF, Word, Excel, видео, фото). Создание записи = публикация (черновиков нет).
+База знаний — файловый репозиторий, организованный по категориям. Каждая запись может содержать несколько файлов любых типов (PDF, Word, Excel, видео, фото). При создании запись сразу публикуется (`is_published=true`); снять публикацию (сделать черновиком) можно через `PATCH .../articles/{id}` с `is_published: false`.
 
 > Просмотр категорий (`GET /admin/kb/categories`) доступен администратору и оператору. Создание/редактирование/удаление категорий и записей, а также добавление/удаление вложений — только для администратора.
 
@@ -2211,7 +2219,11 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ---
 
 ### GET `/admin/kb/categories`
-Список всех категорий, отсортированный по `sort_order`.
+Список категорий. Параметры (все опциональны, ответ — плоский список, без пагинации):
+- `search` — поиск по названию и описанию
+- `parent_id` — фильтр по родительской категории
+- `sort_by` — `sort_order` (по умолч.), `name`
+- `sort_order` — `asc` (по умолч.) / `desc`
 
 ---
 
@@ -2225,8 +2237,21 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 
 ---
 
+### GET `/admin/kb/articles`
+Список записей базы знаний (админ/оператор, включая неопубликованные). Параметры:
+- `category_id`, `tag_ids` (`?tag_ids=1&tag_ids=2`)
+- `is_published` — `true` / `false` — без параметра возвращаются записи в любом статусе
+- `search` — поиск по заголовку и содержимому
+- `sort_by` — `created_at` (по умолч.), `updated_at`, `title`, `version`, `is_published`
+- `sort_order` — `asc` / `desc`
+- `page`, `size`
+
+Публичный аналог — `GET /kb/articles` (см. ниже) — всегда показывает только `is_published=true`.
+
+---
+
 ### POST `/admin/kb/articles`
-Создать запись в базе знаний (сразу публикуется).
+Создать запись в базе знаний (сразу публикуется, `is_published=true`).
 ```json
 {
   "category_id": 1,
@@ -2239,7 +2264,7 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ---
 
 ### PATCH `/admin/kb/articles/{article_id}`
-Редактировать заголовок, описание или категорию записи.
+Редактировать заголовок, описание, категорию или статус публикации записи (все поля опциональны, включая `is_published`).
 
 ---
 
@@ -2382,7 +2407,11 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ---
 
 ### GET `/admin/faq/categories`
-Список всех категорий.
+Список категорий. Параметры (все опциональны, ответ — плоский список, без пагинации):
+- `search` — поиск по названию
+- `parent_id` — фильтр по родительской категории
+- `sort_by` — `sort_order` (по умолч.), `name`
+- `sort_order` — `asc` (по умолч.) / `desc`
 
 ---
 
@@ -2397,7 +2426,7 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ---
 
 ### POST `/admin/faq/entries`
-Создать вопрос и ответ сразу.
+Создать вопрос и ответ сразу. Создаётся неопубликованным (`is_published=false`) — опубликовать через `PATCH` (см. ниже).
 ```json
 {
   "category_id": 1,
@@ -2410,14 +2439,20 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ---
 
 ### GET `/admin/faq/entries`
-Список вопросов. Параметры: `category_id`, `search`, `page`, `size`.
+Список вопросов. Параметры:
+- `category_id`
+- `is_published` — `true` / `false` — без параметра возвращаются вопросы в любом статусе
+- `search` — поиск по вопросу и ответу
+- `sort_by` — `created_at` (по умолч.), `updated_at`, `question`, `version`, `is_published`
+- `sort_order` — `asc` / `desc`
+- `page`, `size`
 
 ---
 
 ### PATCH `/admin/faq/entries/{entry_id}`
-Обновить вопрос и/или ответ (передавать только изменённые поля).
+Обновить вопрос, ответ и/или статус публикации (передавать только изменённые поля).
 ```json
-{ "answer": "Обновлённый ответ" }
+{ "answer": "Обновлённый ответ", "is_published": true }
 ```
 
 ---
@@ -2446,6 +2481,8 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 - `sort_by` — `created_at` (по умолч.), `updated_at`, `question`
 - `sort_order` — `asc` / `desc`
 - `page`, `size` — пагинация
+
+> В отличие от `/kb/articles`, этот эндпоинт **не фильтрует** по `is_published` — показывает вопросы в любом статусе публикации. Оставлено намеренно: включение фильтра потребует сначала опубликовать через админку существующие вопросы (иначе они разом пропадут для пользователей).
 
 ```json
 {

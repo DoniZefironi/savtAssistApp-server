@@ -52,6 +52,7 @@ class KbArticleUpdateIn(BaseModel):
     title: str | None = Field(None, min_length=1, max_length=500)
     description: str | None = Field(None, max_length=5000)
     category_id: int | None = Field(None, gt=0)
+    is_published: bool | None = None
 
 
 class KbArticleListOut(BaseModel):
@@ -60,6 +61,8 @@ class KbArticleListOut(BaseModel):
     title: str
     slug: str
     description: str | None
+    version: int
+    is_published: bool
     created_at: datetime
     tags: list[TagOut] = []
     attachment_count: int = 0
@@ -72,6 +75,7 @@ class KbArticleDetailOut(BaseModel):
     slug: str
     description: str | None
     version: int
+    is_published: bool
     created_at: datetime
     updated_at: datetime
     tags: list[TagOut] = []

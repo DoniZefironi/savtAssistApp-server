@@ -46,10 +46,14 @@ async def create_category(
 
 @router.get("/categories", response_model=list[FaqCategoryOut])
 async def list_categories(
+    search: str | None = Query(None, min_length=1, max_length=200),
+    parent_id: int | None = Query(None, gt=0),
+    sort_by: str = Query("sort_order", pattern="^(sort_order|name)$"),
+    sort_order: str = Query("asc", pattern="^(asc|desc)$"),
     _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
-    return await FaqCategoryService(session).list_all()
+    return await FaqCategoryService(session).list_all(search, parent_id, sort_by, sort_order)
 
 
 @router.patch("/categories/{cat_id}", response_model=FaqCategoryOut)
@@ -87,15 +91,18 @@ async def create_entry(
 @router.get("/entries", response_model=PageOut[FaqEntryOut])
 async def list_entries(
     category_id: int | None = Query(None, gt=0),
+    is_published: bool | None = Query(None),
     search: str | None = Query(None, min_length=1, max_length=200),
-    sort_by: str = Query("created_at", pattern="^(created_at|updated_at|question)$"),
+    sort_by: str = Query("created_at", pattern="^(created_at|updated_at|question|version|is_published)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
-    return await FaqEntryService(session).list_entries(category_id, search, sort_by, sort_order, page, size)
+    return await FaqEntryService(session).list_entries(
+        category_id, search, sort_by, sort_order, page, size, is_published=is_published
+    )
 
 
 @router.patch("/entries/{entry_id}", response_model=FaqEntryOut)

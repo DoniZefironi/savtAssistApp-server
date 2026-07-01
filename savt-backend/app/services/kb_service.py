@@ -37,8 +37,14 @@ class KbCategoryService:
         await self.session.commit()
         return KbCategoryOut.model_validate(cat)
 
-    async def list_all(self) -> list[KbCategoryOut]:
-        cats = await self.repo.list_all()
+    async def list_all(
+        self,
+        search: str | None = None,
+        parent_id: int | None = None,
+        sort_by: str = "sort_order",
+        sort_order: str = "asc",
+    ) -> list[KbCategoryOut]:
+        cats = await self.repo.list_all(search, parent_id, sort_by, sort_order)
         return [KbCategoryOut.model_validate(c) for c in cats]
 
     async def update(self, cat_id: int, data: KbCategoryUpdateIn) -> KbCategoryOut:
@@ -110,6 +116,7 @@ class KbArticleService:
         sort_order: str = "desc",
         page: int = 1,
         size: int = 20,
+        is_published: bool | None = True,
     ) -> PageOut[KbArticleListOut]:
         articles, total = await self.repo.list_articles(
             category_id=category_id,
@@ -119,6 +126,7 @@ class KbArticleService:
             sort_order=sort_order,
             offset=(page - 1) * size,
             limit=size,
+            is_published=is_published,
         )
         ids = [a.id for a in articles]
         tags_map = await self.repo.get_tags(ids)
@@ -134,6 +142,8 @@ class KbArticleService:
                 title=a.title,
                 slug=a.slug,
                 description=a.content,
+                version=a.version,
+                is_published=a.is_published,
                 created_at=a.created_at,
                 tags=[TagOut.model_validate(t) for t in tags_map.get(a.id, [])],
                 attachment_count=atts_counts.get(a.id, 0),
@@ -190,6 +200,7 @@ class KbArticleService:
             slug=article.slug,
             description=article.content,
             version=article.version,
+            is_published=article.is_published,
             created_at=article.created_at,
             updated_at=article.updated_at,
             tags=[TagOut.model_validate(t) for t in tags_map.get(article.id, [])],

@@ -23,8 +23,14 @@ class FaqCategoryService:
         await self.session.commit()
         return FaqCategoryOut.model_validate(cat)
 
-    async def list_all(self) -> list[FaqCategoryOut]:
-        cats = await self.repo.list_all()
+    async def list_all(
+        self,
+        search: str | None = None,
+        parent_id: int | None = None,
+        sort_by: str = "sort_order",
+        sort_order: str = "asc",
+    ) -> list[FaqCategoryOut]:
+        cats = await self.repo.list_all(search, parent_id, sort_by, sort_order)
         return [FaqCategoryOut.model_validate(c) for c in cats]
 
     async def update(self, cat_id: int, data: FaqCategoryUpdateIn) -> FaqCategoryOut:
@@ -89,9 +95,10 @@ class FaqEntryService:
         sort_order: str = "desc",
         page: int = 1,
         size: int = 20,
+        is_published: bool | None = None,
     ) -> PageOut[FaqEntryOut]:
         items, total = await self.repo.list_entries(
-            category_id, search, sort_by, sort_order,
+            category_id, is_published, search, sort_by, sort_order,
             offset=(page - 1) * size, limit=size,
         )
         return make_page([FaqEntryOut.model_validate(e) for e in items], total, page, size)

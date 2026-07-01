@@ -20,8 +20,9 @@ router = APIRouter(prefix="/admin/cabinet-requests", tags=["admin: cabinet reque
 @router.get("/additions", response_model=PageOut[AdditionRequestOut])
 async def list_additions(
     status: str | None = Query(None, pattern="^(pending|approved|rejected)$"),
+    resolved_by_admin_id: int | None = Query(None, gt=0),
     search: str | None = Query(None, min_length=1, max_length=200),
-    sort_by: str = Query("created_at", pattern="^(created_at|status|user_full_name)$"),
+    sort_by: str = Query("created_at", pattern="^(created_at|resolved_at|status|user_full_name)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
@@ -29,7 +30,8 @@ async def list_additions(
     session: AsyncSession = Depends(get_session),
 ):
     return await CabinetRequestService(session).list_additions(
-        status=status, search=search, sort_by=sort_by, sort_order=sort_order, page=page, size=size
+        status=status, resolved_by_admin_id=resolved_by_admin_id, search=search,
+        sort_by=sort_by, sort_order=sort_order, page=page, size=size,
     )
 
 # Апрувнуть заявку
@@ -58,8 +60,9 @@ async def reject_addition(
 @router.get("/shares", response_model=PageOut[ShareRequestOut])
 async def list_shares(
     status: str | None = Query(None, pattern="^(pending|approved|rejected)$"),
+    resolved_by_admin_id: int | None = Query(None, gt=0),
     search: str | None = Query(None, min_length=1, max_length=200),
-    sort_by: str = Query("created_at", pattern="^(created_at|status|user_full_name|cabinet_object_number)$"),
+    sort_by: str = Query("created_at", pattern="^(created_at|resolved_at|status|user_full_name|cabinet_object_number)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
@@ -67,7 +70,8 @@ async def list_shares(
     session: AsyncSession = Depends(get_session),
 ):
     return await CabinetRequestService(session).list_shares(
-        status=status, search=search, sort_by=sort_by, sort_order=sort_order, page=page, size=size
+        status=status, resolved_by_admin_id=resolved_by_admin_id, search=search,
+        sort_by=sort_by, sort_order=sort_order, page=page, size=size,
     )
 
 # Апрувнуть добавление

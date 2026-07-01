@@ -104,6 +104,7 @@ class CabinetRepository(BaseRepository[Cabinet]):
             "warranty_ends_at": Cabinet.warranty_ends_at,
             "object_number": Cabinet.object_number,
             "admin_internal_name": Cabinet.admin_internal_name,
+            "purpose": Cabinet.purpose,
             "created_at": Cabinet.created_at,
         }.get(sort_by, Cabinet.created_at)
 
@@ -272,6 +273,7 @@ class CabinetRequestRepository:
     async def list_additions(
         self,
         status: str | None = None,
+        resolved_by_admin_id: int | None = None,
         search: str | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
@@ -281,12 +283,16 @@ class CabinetRequestRepository:
         conditions = []
         if status:
             conditions.append(CabinetAdditionRequest.status == status)
+        if resolved_by_admin_id is not None:
+            conditions.append(CabinetAdditionRequest.resolved_by_admin_id == resolved_by_admin_id)
         if search:
             pattern = f"%{escape_like(search)}%"
             conditions.append(or_(
                 User.full_name.ilike(pattern, escape="\\"),
                 User.phone.ilike(pattern, escape="\\"),
                 User.organization_name.ilike(pattern, escape="\\"),
+                CabinetAdditionRequest.user_comment.ilike(pattern, escape="\\"),
+                CabinetAdditionRequest.admin_response.ilike(pattern, escape="\\"),
             ))
 
         count_stmt = select(func.count(CabinetAdditionRequest.id)).join(User, User.id == CabinetAdditionRequest.user_id)
@@ -296,6 +302,7 @@ class CabinetRequestRepository:
 
         _sort_col = {
             "created_at": CabinetAdditionRequest.created_at,
+            "resolved_at": CabinetAdditionRequest.resolved_at,
             "status": CabinetAdditionRequest.status,
             "user_full_name": User.full_name,
         }.get(sort_by, CabinetAdditionRequest.created_at)
@@ -310,6 +317,7 @@ class CabinetRequestRepository:
     async def list_shares(
         self,
         status: str | None = None,
+        resolved_by_admin_id: int | None = None,
         search: str | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
@@ -319,6 +327,8 @@ class CabinetRequestRepository:
         conditions = []
         if status:
             conditions.append(CabinetShareRequest.status == status)
+        if resolved_by_admin_id is not None:
+            conditions.append(CabinetShareRequest.resolved_by_admin_id == resolved_by_admin_id)
         if search:
             pattern = f"%{escape_like(search)}%"
             conditions.append(or_(
@@ -328,6 +338,8 @@ class CabinetRequestRepository:
                 Cabinet.type.ilike(pattern, escape="\\"),
                 Cabinet.object_number.ilike(pattern, escape="\\"),
                 Cabinet.admin_internal_name.ilike(pattern, escape="\\"),
+                CabinetShareRequest.user_comment.ilike(pattern, escape="\\"),
+                CabinetShareRequest.admin_response.ilike(pattern, escape="\\"),
             ))
 
         count_stmt = (
@@ -341,6 +353,7 @@ class CabinetRequestRepository:
 
         _sort_col = {
             "created_at": CabinetShareRequest.created_at,
+            "resolved_at": CabinetShareRequest.resolved_at,
             "status": CabinetShareRequest.status,
             "user_full_name": User.full_name,
             "cabinet_object_number": Cabinet.object_number,
