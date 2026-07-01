@@ -20,6 +20,7 @@ class ServiceRequestOut(BaseModel):
     request_type: str
     description: str
     status: str
+    bitrix_task_id: str | None = None
     created_at: datetime
     closed_at: datetime | None
 

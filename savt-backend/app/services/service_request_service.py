@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +16,15 @@ from app.schemas.service_requests import (
 )
 from app.services.audit_service import AuditLogger
 
+_log = logging.getLogger(__name__)
+
+_REQUEST_TYPE_LABELS = {
+    "repair": "Ремонт",
+    "maintenance": "Обслуживание",
+    "inspection": "Осмотр",
+    "other": "Другое",
+}
+
 
 def _to_out(req, cabinet) -> ServiceRequestOut:
     return ServiceRequestOut(
@@ -24,6 +35,7 @@ def _to_out(req, cabinet) -> ServiceRequestOut:
         request_type=req.request_type,
         description=req.description,
         status=req.status,
+        bitrix_task_id=req.bitrix_task_id,
         created_at=req.created_at,
         closed_at=req.closed_at,
     )
@@ -38,6 +50,7 @@ def _to_detail(req, user, cabinet) -> ServiceRequestDetailOut:
         request_type=req.request_type,
         description=req.description,
         status=req.status,
+        bitrix_task_id=req.bitrix_task_id,
         created_at=req.created_at,
         closed_at=req.closed_at,
         user_full_name=user.full_name,
@@ -47,6 +60,40 @@ def _to_detail(req, user, cabinet) -> ServiceRequestDetailOut:
         user_is_verified=user.is_verified,
         user_registered_at=user.created_at,
     )
+
+
+def _sync_to_bitrix(request_id: int, request_type: str, description: str, cabinet_object_number: str, cabinet_type: str, requester: str) -> None:
+    async def _task():
+        from app.database import AsyncSessionLocal
+        from app.models.service_request import ServiceRequest
+        from app.services import bitrix_service
+
+        type_label = _REQUEST_TYPE_LABELS.get(request_type, request_type)
+        title = f"{type_label}: ШУ {cabinet_object_number}"
+        body = (
+            f"Заявка №{request_id} из приложения SAVT\n"
+            f"ШУ: {cabinet_object_number} ({cabinet_type})\n"
+            f"Тип: {type_label}\n"
+            f"От: {requester}\n\n"
+            f"{description}"
+        )
+        try:
+            task_id = await bitrix_service.create_task(title, body)
+        except Exception:
+            _log.exception("Bitrix task creation failed for service request %s", request_id)
+            return
+        if not task_id:
+            return
+        try:
+            async with AsyncSessionLocal() as session:
+                req = await session.get(ServiceRequest, request_id)
+                if req is not None:
+                    req.bitrix_task_id = task_id
+                    await session.commit()
+        except Exception:
+            _log.exception("Failed to save bitrix_task_id for service request %s", request_id)
+
+    asyncio.create_task(_task())
 
 
 class ServiceRequestService:
@@ -74,7 +121,11 @@ class ServiceRequestService:
         await self.session.refresh(req)
 
         from app.repositories.cabinet import CabinetRepository
+        from app.repositories.user import UserRepository
         cabinet = await CabinetRepository(self.session).get_by_id(data.cabinet_id)
+        user = await UserRepository(self.session).get_by_id(user_id)
+        requester = user.full_name or user.phone if user else str(user_id)
+        _sync_to_bitrix(req.id, req.request_type, req.description, cabinet.object_number, cabinet.type, requester)
         return _to_out(req, cabinet)
 
     async def list_for_user(

@@ -25,6 +25,8 @@ class ServiceRequest(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     # дата обработки
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # ID задачи в Bitrix24 (tasks.task.add), null если Bitrix не настроен или создание не удалось
+    bitrix_task_id: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     def __repr__(self) -> str:
         return f"<ServiceRequest id={self.id} type={self.request_type} status={self.status}>"

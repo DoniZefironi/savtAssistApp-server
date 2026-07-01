@@ -37,6 +37,8 @@
 | `YANDEX_STORAGE_ENDPOINT_URL` | Endpoint Object Storage (по умолч. `https://storage.yandexcloud.net`) |
 | `BOT_FOLLOW_UP_MINUTES` | Через сколько минут бот пишет follow-up (по умолч. 60) |
 | `BOT_MAX_ATTEMPTS` | Попыток бота до предложения оператора (по умолч. 3) |
+| `BITRIX_WEBHOOK_URL` | URL входящего вебхука Bitrix24 (`https://портал.bitrix24.ru/rest/ID/КОД/`) |
+| `BITRIX_DEFAULT_RESPONSIBLE_ID` | ID сотрудника Bitrix24, назначаемого ответственным по всем автосозданным задачам |
 | `APP_ENV` | Окружение (`dev`/`prod`), в `dev` включает SQL-логирование |
 | `SMS_PROVIDER` | Провайдер SMS: `mock` (по умолч.) или `smscenter` |
 | `SMSCENTER_LOGIN` | Логин аккаунта smscenter.by |
@@ -2048,6 +2050,8 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 }
 ```
 `description` — минимум 10 символов.
+
+После создания заявка асинхронно (в фоне, не блокируя ответ) синхронизируется с Bitrix24 — создаётся задача (`tasks.task.add`) на фиксированного ответственного (`BITRIX_DEFAULT_RESPONSIBLE_ID`). ID созданной задачи попадает в поле `bitrix_task_id` (появится не сразу, а чуть позже создания заявки — обнови список, чтобы увидеть). Если Bitrix не настроен или недоступен — заявка всё равно создаётся, просто `bitrix_task_id` остаётся `null`.
 
 ---
 

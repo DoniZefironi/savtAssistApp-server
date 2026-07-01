@@ -47,5 +47,9 @@ class Settings(BaseSettings):
     bot_follow_up_minutes: int = 60
     bot_max_attempts: int = 3
 
+    # Bitrix24 — создание задач по заявкам на обслуживание ШУ
+    bitrix_webhook_url: str = ""
+    bitrix_default_responsible_id: int = 0
+
 
 settings = Settings()
