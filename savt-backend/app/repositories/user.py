@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.role import Role
 from app.models.user import User
 from app.repositories.base import BaseRepository
-from app.utils.db import escape_like
+from app.utils.db import fuzzy_condition
 
 
 class UserRepository(BaseRepository[User]):
@@ -55,13 +55,9 @@ class UserRepository(BaseRepository[User]):
         )
 
         if query:
-            pattern = f"%{escape_like(query)}%"
-            conditions.append(or_(
-                User.full_name.ilike(pattern, escape="\\"),
-                User.phone.ilike(pattern, escape="\\"),
-                User.login.ilike(pattern, escape="\\"),
-                User.email.ilike(pattern, escape="\\"),
-                User.organization_name.ilike(pattern, escape="\\"),
+            conditions.append(fuzzy_condition(
+                query,
+                User.full_name, User.phone, User.login, User.email, User.organization_name,
             ))
         if is_active is not None:
             conditions.append(User.is_active == is_active)

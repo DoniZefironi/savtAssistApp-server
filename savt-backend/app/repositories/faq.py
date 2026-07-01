@@ -1,9 +1,9 @@
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.faq_category import FaqCategory
 from app.models.faq_entry import FaqEntry
-from app.utils.db import escape_like
+from app.utils.db import fuzzy_condition
 
 
 class FaqCategoryRepository:
@@ -28,8 +28,7 @@ class FaqCategoryRepository:
     ) -> list[FaqCategory]:
         conditions = []
         if search:
-            pattern = f"%{escape_like(search)}%"
-            conditions.append(FaqCategory.name.ilike(pattern, escape="\\"))
+            conditions.append(fuzzy_condition(search, FaqCategory.name))
         if parent_id is not None:
             conditions.append(FaqCategory.parent_id == parent_id)
 
@@ -84,11 +83,7 @@ class FaqEntryRepository:
         if is_published is not None:
             conditions.append(FaqEntry.is_published == is_published)
         if search:
-            pattern = f"%{escape_like(search)}%"
-            conditions.append(or_(
-                FaqEntry.question.ilike(pattern, escape="\\"),
-                FaqEntry.answer.ilike(pattern, escape="\\"),
-            ))
+            conditions.append(fuzzy_condition(search, FaqEntry.question, FaqEntry.answer))
 
         count_stmt = select(func.count(FaqEntry.id))
         if conditions:

@@ -7,7 +7,7 @@ from app.models.document_access import DocumentAccess
 from app.models.document_request import DocumentRequest
 from app.models.document_tag import DocumentTag
 from app.models.user import User
-from app.utils.db import escape_like
+from app.utils.db import fuzzy_condition
 
 _SORT_COLUMNS = {
     "title": Document.title,
@@ -229,14 +229,10 @@ class DocumentRequestRepository:
         if resolved_by_admin_id is not None:
             conditions.append(DocumentRequest.resolved_by_admin_id == resolved_by_admin_id)
         if search:
-            pattern = f"%{escape_like(search)}%"
-            conditions.append(or_(
-                User.full_name.ilike(pattern, escape="\\"),
-                User.phone.ilike(pattern, escape="\\"),
-                User.organization_name.ilike(pattern, escape="\\"),
-                DocumentRequest.doc_type.ilike(pattern, escape="\\"),
-                DocumentRequest.user_message.ilike(pattern, escape="\\"),
-                DocumentRequest.admin_response.ilike(pattern, escape="\\"),
+            conditions.append(fuzzy_condition(
+                search,
+                User.full_name, User.phone, User.organization_name,
+                DocumentRequest.doc_type, DocumentRequest.user_message, DocumentRequest.admin_response,
             ))
 
         count_stmt = select(func.count(DocumentRequest.id)).join(User, User.id == DocumentRequest.user_id)

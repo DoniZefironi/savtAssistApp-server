@@ -1,10 +1,10 @@
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.cabinets import Cabinet
 from app.models.service_request import ServiceRequest
 from app.models.user import User
-from app.utils.db import escape_like
+from app.utils.db import fuzzy_condition
 
 
 class ServiceRequestRepository:
@@ -62,15 +62,11 @@ class ServiceRequestRepository:
         if request_type:
             conditions.append(ServiceRequest.request_type == request_type)
         if search:
-            pattern = f"%{escape_like(search)}%"
-            conditions.append(or_(
-                User.full_name.ilike(pattern, escape="\\"),
-                User.phone.ilike(pattern, escape="\\"),
-                User.organization_name.ilike(pattern, escape="\\"),
-                Cabinet.object_number.ilike(pattern, escape="\\"),
-                Cabinet.admin_internal_name.ilike(pattern, escape="\\"),
-                ServiceRequest.request_type.ilike(pattern, escape="\\"),
-                ServiceRequest.description.ilike(pattern, escape="\\"),
+            conditions.append(fuzzy_condition(
+                search,
+                User.full_name, User.phone, User.organization_name,
+                Cabinet.object_number, Cabinet.admin_internal_name,
+                ServiceRequest.request_type, ServiceRequest.description,
             ))
 
         count_stmt = (

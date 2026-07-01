@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, exists, func, select, or_
+from sqlalchemy import delete, exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.cabinet_addition_request import CabinetAdditionRequest
@@ -11,7 +11,7 @@ from app.models.cabinet_photo import CabinetPhoto
 from app.models.document import Document
 from app.models.service_request import ServiceRequest
 from app.models.tag import Tag
-from app.utils.db import escape_like
+from app.utils.db import escape_like, fuzzy_condition
 from app.models.user import User
 from app.models.user_cabinet import UserCabinet
 from app.repositories.base import BaseRepository
@@ -43,14 +43,10 @@ class CabinetRepository(BaseRepository[Cabinet]):
     ) -> tuple[list[Cabinet], int]:
         conditions = []
         if query:
-            pattern = f"%{escape_like(query)}%"
-            conditions.append(or_(
-                Cabinet.type.ilike(pattern, escape="\\"),
-                Cabinet.object_number.ilike(pattern, escape="\\"),
-                Cabinet.admin_internal_name.ilike(pattern, escape="\\"),
-                Cabinet.purpose.ilike(pattern, escape="\\"),
-                Cabinet.description.ilike(pattern, escape="\\"),
-                Cabinet.admin_comment.ilike(pattern, escape="\\"),
+            conditions.append(fuzzy_condition(
+                query,
+                Cabinet.type, Cabinet.object_number, Cabinet.admin_internal_name,
+                Cabinet.purpose, Cabinet.description, Cabinet.admin_comment,
             ))
         if tag_ids:
             tag_subq = (
@@ -286,13 +282,10 @@ class CabinetRequestRepository:
         if resolved_by_admin_id is not None:
             conditions.append(CabinetAdditionRequest.resolved_by_admin_id == resolved_by_admin_id)
         if search:
-            pattern = f"%{escape_like(search)}%"
-            conditions.append(or_(
-                User.full_name.ilike(pattern, escape="\\"),
-                User.phone.ilike(pattern, escape="\\"),
-                User.organization_name.ilike(pattern, escape="\\"),
-                CabinetAdditionRequest.user_comment.ilike(pattern, escape="\\"),
-                CabinetAdditionRequest.admin_response.ilike(pattern, escape="\\"),
+            conditions.append(fuzzy_condition(
+                search,
+                User.full_name, User.phone, User.organization_name,
+                CabinetAdditionRequest.user_comment, CabinetAdditionRequest.admin_response,
             ))
 
         count_stmt = select(func.count(CabinetAdditionRequest.id)).join(User, User.id == CabinetAdditionRequest.user_id)
@@ -330,16 +323,11 @@ class CabinetRequestRepository:
         if resolved_by_admin_id is not None:
             conditions.append(CabinetShareRequest.resolved_by_admin_id == resolved_by_admin_id)
         if search:
-            pattern = f"%{escape_like(search)}%"
-            conditions.append(or_(
-                User.full_name.ilike(pattern, escape="\\"),
-                User.phone.ilike(pattern, escape="\\"),
-                User.organization_name.ilike(pattern, escape="\\"),
-                Cabinet.type.ilike(pattern, escape="\\"),
-                Cabinet.object_number.ilike(pattern, escape="\\"),
-                Cabinet.admin_internal_name.ilike(pattern, escape="\\"),
-                CabinetShareRequest.user_comment.ilike(pattern, escape="\\"),
-                CabinetShareRequest.admin_response.ilike(pattern, escape="\\"),
+            conditions.append(fuzzy_condition(
+                search,
+                User.full_name, User.phone, User.organization_name,
+                Cabinet.type, Cabinet.object_number, Cabinet.admin_internal_name,
+                CabinetShareRequest.user_comment, CabinetShareRequest.admin_response,
             ))
 
         count_stmt = (

@@ -1,12 +1,12 @@
 import re
 import uuid
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.kb_article_attachment import KbArticleAttachment
 from app.models.kb_article_tag import KbArticleTag
-from app.utils.db import escape_like
+from app.utils.db import fuzzy_condition
 from app.models.kbarticle import KbArticle
 from app.models.kbcategory import KbCategory
 from app.models.tag import Tag
@@ -42,11 +42,7 @@ class KbCategoryRepository:
     ) -> list[KbCategory]:
         conditions = []
         if search:
-            pattern = f"%{escape_like(search)}%"
-            conditions.append(or_(
-                KbCategory.name.ilike(pattern, escape="\\"),
-                KbCategory.description.ilike(pattern, escape="\\"),
-            ))
+            conditions.append(fuzzy_condition(search, KbCategory.name, KbCategory.description))
         if parent_id is not None:
             conditions.append(KbCategory.parent_id == parent_id)
 
@@ -110,11 +106,7 @@ class KbArticleRepository:
             conditions.append(KbArticle.category_id == category_id)
 
         if search:
-            pattern = f"%{escape_like(search)}%"
-            conditions.append(or_(
-                KbArticle.title.ilike(pattern, escape="\\"),
-                KbArticle.content.ilike(pattern, escape="\\"),
-            ))
+            conditions.append(fuzzy_condition(search, KbArticle.title, KbArticle.content))
 
         if tag_ids:
             tag_subq = (
