@@ -1,3 +1,5 @@
+# Продакшн-конфигурация. Для локальной разработки:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 services:
   db:
     image: pgvector/pgvector:pg16
@@ -25,11 +27,9 @@ services:
     restart: unless-stopped
     env_file:
       - .env
-    # Порт 8000 не открываем наружу — только через Nginx
+    # Порт 8000 не открываем наружу — только через Nginx.
+    # Код НЕ монтируем: в проде работает копия из образа (см. Dockerfile).
     volumes:
-      - ./app:/code/app
-      - ./alembic:/code/alembic
-      - ./alembic.ini:/code/alembic.ini
       - ./uploads:/code/uploads
       - ./firebase-credentials.json:/code/firebase-credentials.json:ro
     depends_on:
@@ -46,9 +46,14 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
+      - "443:443"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - ./uploads:/uploads:ro
+      # Сертификаты Let's Encrypt (получить certbot-ом на хосте, см. README)
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      # Webroot для продления сертификатов (certbot renew --webroot)
+      - ./certbot-www:/var/www/certbot:ro
     depends_on:
       - api
     logging:

@@ -1,3 +1,4 @@
+import re
 import subprocess
 import uuid
 from dataclasses import dataclass
@@ -6,6 +7,15 @@ from pathlib import Path
 from fastapi import HTTPException, UploadFile, status
 
 UPLOAD_ROOT = Path("/code/uploads")
+
+# Расширение попадает в имя файла на диске и в публичный URL —
+# пропускаем только простые ("jpg", "pdf"), всё подозрительное станет "bin"
+_SAFE_EXT_RE = re.compile(r"^[a-z0-9]{1,10}$")
+
+
+def _sanitize_ext(ext: str) -> str:
+    ext = ext.lower().strip()
+    return ext if _SAFE_EXT_RE.match(ext) else "bin"
 
 
 def transcode_to_ogg_opus(audio_bytes: bytes) -> bytes:
@@ -125,18 +135,29 @@ async def save_voice(file: UploadFile) -> str:
     return url
 
 
+_CHUNK_SIZE = 1024 * 1024  # 1 МБ
+
+
 async def _save(file: UploadFile, folder: str, ext: str, max_size: int) -> tuple[str, int]:
-    content = await file.read()
-
-    if len(content) > max_size:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"Файл слишком большой. Максимум: {max_size // (1024 * 1024)} МБ",
-        )
-
-    filename = f"{uuid.uuid4().hex}.{ext}"
+    # Пишем на диск чанками: файл до 500 МБ не должен целиком висеть в памяти
+    filename = f"{uuid.uuid4().hex}.{_sanitize_ext(ext)}"
     dest = UPLOAD_ROOT / folder
     dest.mkdir(parents=True, exist_ok=True)
-    (dest / filename).write_bytes(content)
+    path = dest / filename
 
-    return f"/static/{folder}/{filename}", len(content)
+    size = 0
+    try:
+        with path.open("wb") as out:
+            while chunk := await file.read(_CHUNK_SIZE):
+                size += len(chunk)
+                if size > max_size:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail=f"Файл слишком большой. Максимум: {max_size // (1024 * 1024)} МБ",
+                    )
+                out.write(chunk)
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+
+    return f"/static/{folder}/{filename}", size

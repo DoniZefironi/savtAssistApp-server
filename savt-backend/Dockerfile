@@ -15,7 +15,11 @@ WORKDIR /code
 COPY --from=builder /install /usr/local
 
 COPY ./app /code/app
+COPY ./alembic /code/alembic
+COPY ./alembic.ini /code/alembic.ini
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# Без --reload: прод-режим. Для разработки reload включается
+# через docker-compose.dev.yml (см. README).
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

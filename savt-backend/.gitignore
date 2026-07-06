@@ -9,3 +9,5 @@ postgres_data/
 .claude
 firebase-credentials.json
 uploads/
+backups/
+certbot-www/

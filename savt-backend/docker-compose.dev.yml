@@ -1,0 +1,18 @@
+# Локальная разработка: hot-reload, монтирование кода, nginx без TLS.
+# Запуск: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+services:
+  api:
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    volumes: !override
+      - ./app:/code/app
+      - ./alembic:/code/alembic
+      - ./alembic.ini:/code/alembic.ini
+      - ./uploads:/code/uploads
+      - ./firebase-credentials.json:/code/firebase-credentials.json:ro
+
+  nginx:
+    ports: !override
+      - "80:80"
+    volumes: !override
+      - ./nginx.dev.conf:/etc/nginx/nginx.conf:ro
+      - ./uploads:/uploads:ro
