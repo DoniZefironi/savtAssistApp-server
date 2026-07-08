@@ -41,6 +41,7 @@ async def _process_threshold(
     stmt = select(Cabinet).where(
         func.date(Cabinet.warranty_ends_at) == target_date,
         Cabinet.id.not_in(already_notified),
+        Cabinet.deleted_at.is_(None),
     )
     cabinets = (await session.execute(stmt)).scalars().all()
 

@@ -69,7 +69,7 @@ class CabinetRequestService:
             raise AlreadyExistsError("Заявка уже обработана")
 
         cabinet = await self.cabinet_repo.get_by_id(data.cabinet_id)
-        if cabinet is None:
+        if cabinet is None or cabinet.deleted_at is not None:
             raise NotFoundError("ШУ не найден")
 
         existing = await self.user_cabinet_repo.find(req.user_id, data.cabinet_id)
@@ -158,6 +158,12 @@ class CabinetRequestService:
             raise NotFoundError("Заявка не найдена")
         if req.status != "pending":
             raise AlreadyExistsError("Заявка уже обработана")
+
+        # ШУ мог быть удалён администратором уже после создания заявки —
+        # проверяем на момент апрува, а не только на момент подачи
+        cabinet = await self.cabinet_repo.get_by_id(req.cabinet_id)
+        if cabinet is None or cabinet.deleted_at is not None:
+            raise NotFoundError("ШУ не найден")
 
         existing = await self.user_cabinet_repo.find(req.user_id, req.cabinet_id)
         if existing is not None:

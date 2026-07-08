@@ -100,14 +100,15 @@ class CabinetService:
         await self.session.refresh(cabinet)
         return await self.get(cabinet_id)
 
-    # Удаление ШУ
+    # Удаление ШУ (soft-delete: запись остаётся в БД, но перестаёт быть
+    # доступна для поиска, привязки и повторного использования кода)
     async def delete(self, cabinet_id: int, actor_id: int, actor_role: str) -> None:
         cabinet = await self.repo.get_by_id(cabinet_id)
-        if cabinet is None:
+        if cabinet is None or cabinet.deleted_at is not None:
             raise NotFoundError("ШУ не найден")
         self.audit.log("cabinet.delete", "cabinet", cabinet_id, actor_id, actor_role,
                        {"object_number": cabinet.object_number})
-        await self.repo.delete(cabinet)
+        await self.repo.soft_delete(cabinet)
         await self.session.commit()
 
     # Все ШУ

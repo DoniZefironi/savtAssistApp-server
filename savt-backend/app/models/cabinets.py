@@ -41,6 +41,10 @@ class Cabinet(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+    # soft-delete: если не NULL — ШУ считается удалённым.
+    # unique_code при этом остаётся занятым навсегда — новый ШУ не может
+    # получить код уже удалённого (см. CabinetRepository.find_by_code).
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 
     def __repr__(self) -> str:
         return f"<Cabinet id={self.id} object_number={self.object_number}>"
