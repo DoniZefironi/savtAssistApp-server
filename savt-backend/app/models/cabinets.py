@@ -25,7 +25,7 @@ class Cabinet(Base):
     admin_internal_name: Mapped[str | None] = mapped_column(String(200))
     # комментарий администратора
     admin_comment: Mapped[str | None] = mapped_column(Text)
-    #
+    # назначение
     purpose: Mapped[str | None] = mapped_column(String(200))
     # геолокация ШУ
     latitude: Mapped[float | None] = mapped_column(Double)
@@ -41,8 +41,8 @@ class Cabinet(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
-    # soft-delete: если не NULL — ШУ считается удалённым.
-    # unique_code при этом остаётся занятым навсегда — новый ШУ не может
+    # soft-delete: если не NULL - ШУ считается удалённым.
+    # unique_code при этом остаётся занятым навсегда - новый ШУ не может
     # получить код уже удалённого (см. CabinetRepository.find_by_code).
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 

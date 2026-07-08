@@ -17,13 +17,13 @@ class Notification(Base):
     )
     # тип уведа
     type: Mapped[str] = mapped_column(String(20), comment="Значения: chat_message or warranty_expiring or promotional or request_status")
-    # 
+    # заголовок
     title: Mapped[str | None] = mapped_column(String(255))
-    # 
+    # тело
     body: Mapped[str | None] = mapped_column(Text)
-    # 
+    # дата
     data: Mapped[dict | None] = mapped_column(JSONB)
-    # 
+    # прочитано ли
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     # время создания
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
