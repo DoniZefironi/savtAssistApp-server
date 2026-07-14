@@ -7,6 +7,15 @@ from app.core.exceptions import AlreadyExistsError, NotFoundError, PermissionDen
 from app.models.chat import Chat
 from app.models.message import Message
 from app.repositories.chat import ChatPinRepository, ChatRepository, ChatSettingsRepository, MessageRepository
+from app.services.realtime_events import (
+    publish_chat_updated,
+    publish_message_created,
+    publish_message_deleted,
+    publish_message_pinned,
+    publish_message_unpinned,
+    publish_message_updated,
+    publish_reaction_changed,
+)
 from app.schemas.chat import (
     AttachmentOut,
     ChatAttachmentOut,
@@ -30,11 +39,17 @@ class ChatService:
         self.msg_repo = MessageRepository(session)
         self.pin_repo = ChatPinRepository(session)
 
-    async def ensure_support_and_notes(self, user_id: int) -> None:
+    # Возвращает вновь созданный чат поддержки (или None, если уже существовал) —
+    # вызывающий код публикует chat.created после своего коммита
+    async def ensure_support_and_notes(self, user_id: int) -> Chat | None:
+        created_support_chat = None
         for chat_type in ("support", "notes"):
             existing = await self.chat_repo.find(user_id, chat_type)
             if existing is None:
-                await self.chat_repo.create(user_id, chat_type)
+                chat = await self.chat_repo.create(user_id, chat_type)
+                if chat_type == "support":
+                    created_support_chat = chat
+        return created_support_chat
 
     async def ensure_cabinet_chat(self, user_id: int, cabinet_id: int) -> Chat:
         existing = await self.chat_repo.find(user_id, "cabinet", cabinet_id)
@@ -156,6 +171,9 @@ class ChatService:
         sender = await UserRepository(self.session).get_by_id(sender_id)
         result = await self._build_message_out(msg, sender)
 
+        await publish_message_created(chat_id, result.model_dump(mode="json"))
+        await publish_chat_updated(chat_id, chat_summary_dict(chat, result.text))
+
         # Push пользователю от оператора
         if sender_id != chat.user_id:
             from app.services.push_service import send_push
@@ -226,7 +244,9 @@ class ChatService:
         msg.text = text
         msg.edited_at = datetime.now(timezone.utc)
         await self.session.commit()
-        return await self._build_message_out(msg, None)
+        result = await self._build_message_out(msg, None)
+        await publish_message_updated(chat_id, result.model_dump(mode="json"))
+        return result
 
     async def delete_message(self, chat_id: int, msg_id: int, user_id: int) -> None:
         await self._get_chat_or_403(chat_id, user_id)
@@ -238,6 +258,7 @@ class ChatService:
         msg.deleted_at = datetime.now(timezone.utc)
         msg.text = None
         await self.session.commit()
+        await publish_message_deleted(chat_id, msg_id)
 
     async def add_reaction(
         self, chat_id: int, msg_id: int, user_id: int, emoji: str
@@ -251,6 +272,7 @@ class ChatService:
             raise AlreadyExistsError("Реакция уже поставлена")
         await self.msg_repo.add_reaction(msg_id, user_id, emoji)
         await self.session.commit()
+        await publish_reaction_changed(chat_id, msg_id)
 
     async def remove_reaction(
         self, chat_id: int, msg_id: int, user_id: int, emoji: str
@@ -261,6 +283,7 @@ class ChatService:
             raise NotFoundError("Реакция не найдена")
         await self.session.delete(rxn)
         await self.session.commit()
+        await publish_reaction_changed(chat_id, msg_id)
 
     async def delete_chat(self, chat_id: int, user_id: int) -> None:
         chat = await self.chat_repo.get_by_id(chat_id)
@@ -289,6 +312,7 @@ class ChatService:
         msg = await self.msg_repo.get_by_id(msg_id)
         if msg is None or msg.chat_id != chat_id:
             raise NotFoundError("Сообщение не найдено")
+        is_new_pin = False
         if not await self.pin_repo.exists(chat_id, msg_id):
             if await self.pin_repo.count(chat_id) >= MAX_PINS_PER_CHAT:
                 raise HTTPException(
@@ -296,19 +320,26 @@ class ChatService:
                     detail=f"Достигнут лимит закреплённых сообщений ({MAX_PINS_PER_CHAT})",
                 )
             await self.pin_repo.add(chat_id, msg_id, user_id)
+            is_new_pin = True
         await self.session.commit()
+        if is_new_pin:
+            await publish_message_pinned(chat_id, msg_id)
         return await self.get_pinned_messages(chat_id)
 
     async def unpin_message(self, chat_id: int, msg_id: int, user_id: int) -> list[MessageOut]:
         await self._get_chat_or_403(chat_id, user_id)
         await self.pin_repo.remove(chat_id, msg_id)
         await self.session.commit()
+        await publish_message_unpinned(chat_id, msg_id)
         return await self.get_pinned_messages(chat_id)
 
     async def unpin_all(self, chat_id: int, user_id: int) -> list[MessageOut]:
         await self._get_chat_or_403(chat_id, user_id)
+        pinned_rows = await self.pin_repo.list_pins(chat_id)
         await self.pin_repo.remove_all(chat_id)
         await self.session.commit()
+        for msg, _ in pinned_rows:
+            await publish_message_unpinned(chat_id, msg.id)
         return []
 
     async def operator_take_chat(self, chat_id: int) -> None:
@@ -467,6 +498,26 @@ class ChatService:
         atts = (await self.msg_repo.get_attachments([msg.id])).get(msg.id, [])
         rxns = (await self.msg_repo.get_reactions([msg.id])).get(msg.id, [])
         return _build_message(msg, user, atts, rxns)
+
+
+def chat_summary_dict(chat: Chat, last_text: str | None = None, user_name: str | None = None) -> dict:
+    """Снимок чата для SSE-события (chat.updated/chat.created).
+
+    Не претендует на полноту (например, unread_count зависит от конкретного
+    оператора-получателя и здесь не считается) — фронт использует событие
+    как сигнал инвалидировать кэш и перезапросить актуальный список."""
+    return {
+        "id": chat.id,
+        "chat_type": chat.chat_type,
+        "cabinet_id": chat.cabinet_id,
+        "user_id": chat.user_id,
+        "user_name": user_name,
+        "last_message_text": last_text,
+        "last_message_at": chat.last_message_at.isoformat() if chat.last_message_at else None,
+        "problem_status": chat.problem_status,
+        "bot_active": chat.bot_active,
+        "operator_requested": chat.operator_requested,
+    }
 
 
 def _to_chat_out(chat: Chat) -> ChatOut:

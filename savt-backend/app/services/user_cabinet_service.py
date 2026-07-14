@@ -109,9 +109,11 @@ class UserCabinetService:
                 cabinet_id=cabinet.id,
                 is_primary=True,
             )
-            from app.services.chat_service import ChatService
-            await ChatService(self.session).ensure_cabinet_chat(user_id, cabinet.id)
+            from app.services.chat_service import ChatService, chat_summary_dict
+            chat = await ChatService(self.session).ensure_cabinet_chat(user_id, cabinet.id)
             await self.session.commit()
+            from app.services.realtime_events import publish_chat_created
+            await publish_chat_created(chat.id, chat_summary_dict(chat))
             return {"status": "linked", "message": "ШУ успешно привязан"}
 
         pending = await self.request_repo.find_pending_share(user_id, cabinet.id)

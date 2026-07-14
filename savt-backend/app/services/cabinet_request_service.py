@@ -81,8 +81,8 @@ class CabinetRequestService:
             cabinet_id=data.cabinet_id,
             is_primary=True,
         )
-        from app.services.chat_service import ChatService
-        await ChatService(self.session).ensure_cabinet_chat(req.user_id, data.cabinet_id)
+        from app.services.chat_service import ChatService, chat_summary_dict
+        chat = await ChatService(self.session).ensure_cabinet_chat(req.user_id, data.cabinet_id)
 
         req.status = "approved"
         req.cabinet_id = data.cabinet_id
@@ -93,6 +93,8 @@ class CabinetRequestService:
         self.audit.log("cabinet_request.approve_addition", "cabinet_addition_request", request_id,
                        admin_id, actor_role, {"user_id": req.user_id, "cabinet_id": data.cabinet_id})
         await self.session.commit()
+        from app.services.realtime_events import publish_chat_created
+        await publish_chat_created(chat.id, chat_summary_dict(chat))
 
     # Не апрув заявки
     async def reject_addition(
@@ -174,8 +176,8 @@ class CabinetRequestService:
             cabinet_id=req.cabinet_id,
             is_primary=False,
         )
-        from app.services.chat_service import ChatService
-        await ChatService(self.session).ensure_cabinet_chat(req.user_id, req.cabinet_id)
+        from app.services.chat_service import ChatService, chat_summary_dict
+        chat = await ChatService(self.session).ensure_cabinet_chat(req.user_id, req.cabinet_id)
 
         req.status = "approved"
         req.admin_response = data.admin_response
@@ -185,6 +187,8 @@ class CabinetRequestService:
         self.audit.log("cabinet_request.approve_share", "cabinet_share_request", request_id,
                        admin_id, actor_role, {"user_id": req.user_id, "cabinet_id": req.cabinet_id})
         await self.session.commit()
+        from app.services.realtime_events import publish_chat_created
+        await publish_chat_created(chat.id, chat_summary_dict(chat))
 
     # Не апрув заявки
     async def reject_share(

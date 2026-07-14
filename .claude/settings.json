@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-Command py, python -ErrorAction SilentlyContinue)",
+      "PowerShell(py -0p 2>$null)",
+      "PowerShell(Set-Location \"c:\\\\Users\\\\ShaboldaV\\\\Documents\\\\GitHub\\\\savtAssistApp-server\\\\savt-backend\"; $env:PYTHONPATH = \"$PWD\\\\.venv\\\\Lib\\\\site-packages\"; py -3.12 -c \"import fastapi; print\\('fastapi', fastapi.__version__\\)\")",
+      "PowerShell(Set-Location \"c:\\\\Users\\\\ShaboldaV\\\\Documents\\\\GitHub\\\\savtAssistApp-server\\\\savt-backend\"; $env:PYTHONPATH = \"$PWD\\\\.venv\\\\Lib\\\\site-packages\"; py -3.12 -c \"import app.main as m; print\\('IMPORT OK'\\); [print\\(r.path\\) for r in m.app.routes if hasattr\\(r,'path'\\) and 'events' in r.path]\")",
+      "PowerShell(Set-Location \"c:\\\\Users\\\\ShaboldaV\\\\Documents\\\\GitHub\\\\savtAssistApp-server\\\\savt-backend\"; \\(Get-Content .env | Select-String -Pattern '^DATABASE_URL' \\); \"---\"; \\(Get-Content .env | Measure-Object -Line\\).Lines; Get-Item .env | Select-Object Length)"
+    ]
+  }
+}

@@ -2082,6 +2082,67 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 
 ---
 
+## Realtime (SSE) для операторской панели
+
+Замена поллинга (`GET /operator/chats` каждые 4с, `GET /operator/chats/{id}/messages` каждые 3с) на push через Server-Sent Events. Все мутации (отправка/редактирование/удаление сообщения, реакции, pin) остаются обычными REST-вызовами как раньше — SSE только уведомляет, что что-то изменилось.
+
+**Почему SSE, а не WebSocket:** операторская панель ничего не шлёт по каналу, только слушает — SSE проще и не требует HTTP-апгрейда на уровне nginx.
+
+### Авторизация: одноразовый тикет
+
+`EventSource` не умеет слать заголовок `Authorization`, а класть в URL сам JWT означало бы, что access-токен светится в логах nginx. Поэтому сначала обычным REST-запросом с Bearer-токеном получаем короткоживущий одноразовый тикет, а он уже подставляется в query-параметр SSE-запроса.
+
+### POST `/operator/events/ticket`
+**Доступ:** `operator`, `admin`.
+
+Ответ:
+```json
+{ "ticket": "kQ2f...", "expires_in": 30 }
+```
+Тикет одноразовый и живёт 30 секунд — подключаться нужно сразу после получения. Просрочен/уже использован → следующий SSE-запрос ответит `401`.
+
+---
+
+### GET `/operator/events/chats?ticket=...`
+Глобальный канал — замена поллинга списка чатов (`chats-page.tsx`). Событие `chat.created`/`chat.updated` приходит при новом сообщении (в т.ч. от бота), новом чате, смене `bot_active`/`operator_requested`/`problem_status`.
+
+### GET `/operator/events/chats/{chat_id}?ticket=...`
+Канал открытого чата — замена поллинга сообщений (`chat-conversation.tsx`). События: `message.created`, `message.updated`, `message.deleted`, `message.reaction_changed`, `message.pinned`, `message.unpinned`.
+
+Формат конверта (`text/event-stream`):
+```
+event: message.created
+data: {"type":"message.created","chat_id":11,"data":{...MessageOut...}}
+
+```
+Сразу после подключения приходит `{"type":"connected"}`, а затем каждые 20с — комментарий-пинг (`: ping`) для поддержания соединения, если реальных событий нет.
+
+**Важно про payload `chat.updated`/`chat.created`:** `data` — best-effort снимок (`id`, `chat_type`, `cabinet_id`, `user_id`, `last_message_text`, `problem_status`, `bot_active`, `operator_requested`), **без** `unread_count` — он зависит от конкретного оператора-получателя и здесь не считается. Событие стоит трактовать как сигнал инвалидировать React Query кэш и перезапросить актуальные данные, а не как источник истины для всех полей.
+
+**Ограничения, о которых стоит знать:**
+- Доставка *at-most-once* и без буферизации на сервере: если соединение оборвалось (сон вкладки, сеть), пропущенные события не повторяются. При (пере)подключении стоит один раз перезапросить актуальные данные через обычный REST, а не полагаться только на поток.
+- `DELETE /operator/chats/{chat_id}` (удаление чата целиком) событие не публикует — крайне редкое действие, обычно инициируется тем же оператором, который смотрит на список.
+- Работает в рамках одного процесса api (см. `Dockerfile` — uvicorn без `--workers`). Если когда-нибудь потребуется несколько инстансов api, канал нужно будет перевести на Redis pub/sub.
+
+Пример на фронте:
+```js
+const { ticket } = await fetch('/operator/events/ticket', {
+  method: 'POST', headers: { Authorization: `Bearer ${token}` },
+}).then(r => r.json());
+
+const es = new EventSource(`/operator/events/chats?ticket=${ticket}`);
+es.onmessage = (e) => {
+  const event = JSON.parse(e.data);
+  if (event.type === 'chat.updated' || event.type === 'chat.created') {
+    queryClient.invalidateQueries(['operator-chats']);
+  }
+};
+// ticket живёт 30с — если EventSource переподключается (реконнект браузера
+// после разрыва), нужен свежий тикет через тот же POST /operator/events/ticket
+```
+
+---
+
 ## Рут `admin/dashboard` — дашборд
 
 ### GET `/admin/dashboard`

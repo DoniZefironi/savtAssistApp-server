@@ -9,6 +9,8 @@ from app.models.chat import Chat
 from app.models.embedding import Embedding
 from app.models.message import Message
 from app.services import yandex_service
+from app.services.chat_service import chat_summary_dict
+from app.services.realtime_events import publish_chat_updated, publish_message_created
 
 _BOT_USER_LOGIN = "__ася__"
 _BOT_NAME = "Ася"
@@ -155,11 +157,29 @@ async def _send_bot_message(session: AsyncSession, chat: Chat, bot_user_id: int,
     session.add(msg)
     chat.last_message_at = datetime.now(timezone.utc)
     await session.flush()
+    await session.refresh(msg)
     from app.services.push_service import send_push
     await send_push(
         session, chat.user_id, _BOT_NAME, text[:100],
         {"chat_id": str(chat.id), "type": "chat_message"},
     )
+
+    message_payload = {
+        "id": msg.id,
+        "chat_id": msg.chat_id,
+        "sender_id": msg.sender_id,
+        "sender_name": _BOT_NAME,
+        "text": msg.text,
+        "reply_to_message_id": msg.reply_to_message_id,
+        "is_read": msg.is_read,
+        "created_at": msg.created_at.isoformat() if msg.created_at else None,
+        "edited_at": None,
+        "deleted_at": None,
+        "attachments": [],
+        "reactions": [],
+    }
+    await publish_message_created(chat.id, message_payload)
+    await publish_chat_updated(chat.id, chat_summary_dict(chat, msg.text))
 
 
 async def _notify_operators(

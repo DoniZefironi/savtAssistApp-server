@@ -144,13 +144,18 @@ class AuthService:
         user.is_phone_verified = True
 
         # Создаём базовые чаты
-        from app.services.chat_service import ChatService
-        await ChatService(self.session).ensure_support_and_notes(user.id)
+        from app.services.chat_service import ChatService, chat_summary_dict
+        support_chat = await ChatService(self.session).ensure_support_and_notes(user.id)
 
         # Выдаем токен
         access, refresh = await self._issue_tokens(user, user_agent, ip_address)
         await self.session.commit()
-        return access, refresh 
+
+        if support_chat is not None:
+            from app.services.realtime_events import publish_chat_created
+            await publish_chat_created(support_chat.id, chat_summary_dict(support_chat, user_name=user.full_name))
+
+        return access, refresh
 
     # Вход для администратора / оператора через логин
     async def admin_login(
