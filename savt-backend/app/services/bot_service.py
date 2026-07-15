@@ -95,7 +95,7 @@ _SOURCE_LABELS = {
 
 
 async def _retrieve_context(
-    session: AsyncSession, query: str, cabinet_id: int | None, k: int = 3
+    session: AsyncSession, query: str, cabinet_id: int | None, k: int = 5
 ) -> list[dict]:
     from app.models.document import Document as DocumentModel
     vec = cast(await yandex_service.embed_query(query), Vector(256))
@@ -127,7 +127,7 @@ async def _retrieve_context(
                 ~Embedding.source_id.in_(restricted_ids),
             )
             .order_by(Embedding.embedding.op("<=>")(vec))
-            .limit(2)
+            .limit(4)
         )
         cabinet_rows = (await session.execute(cabinet_stmt)).all()
         remaining = k - len(cabinet_rows)
