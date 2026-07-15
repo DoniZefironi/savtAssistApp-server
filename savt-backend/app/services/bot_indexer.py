@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from pathlib import Path
 
 from sqlalchemy import delete, select
@@ -10,6 +11,8 @@ from app.models.faq_entry import FaqEntry
 from app.models.kbarticle import KbArticle
 from app.models.kb_article_attachment import KbArticleAttachment
 from app.services import yandex_service
+
+logger = logging.getLogger(__name__)
 
 UPLOAD_ROOT = Path("/code/uploads")
 CHUNK_SIZE = 800
@@ -37,6 +40,7 @@ def _parse_pdf(path: Path) -> str:
         reader = PdfReader(str(path))
         return "\n".join(page.extract_text() or "" for page in reader.pages)
     except Exception:
+        logger.exception("Не удалось разобрать PDF: %s", path)
         return ""
 
 
@@ -44,8 +48,17 @@ def _parse_docx(path: Path) -> str:
     try:
         from docx import Document as DocxDocument
         doc = DocxDocument(str(path))
-        return "\n".join(p.text for p in doc.paragraphs)
+        parts = [p.text for p in doc.paragraphs]
+        # Технические характеристики в таких документах часто оформлены
+        # таблицами — doc.paragraphs их не видит, обходим отдельно.
+        for table in doc.tables:
+            for row in table.rows:
+                parts.append(" | ".join(cell.text for cell in row.cells))
+        return "\n".join(parts)
     except Exception:
+        # .doc (старый бинарный формат Word 97-2003) python-docx не открывает —
+        # нужен .docx. Логируем, а не тонем молча, как раньше.
+        logger.exception("Не удалось разобрать Word-документ: %s", path)
         return ""
 
 
@@ -53,13 +66,19 @@ def _extract_text(file_url: str) -> str:
     relative = file_url.removeprefix("/static/")
     path = UPLOAD_ROOT / relative
     if not path.exists():
+        logger.warning("Файл для индексации не найден на диске: %s", path)
         return ""
     suffix = path.suffix.lower()
     if suffix == ".pdf":
-        return _parse_pdf(path)
-    if suffix in (".docx", ".doc"):
-        return _parse_docx(path)
-    return ""
+        text = _parse_pdf(path)
+    elif suffix in (".docx", ".doc"):
+        text = _parse_docx(path)
+    else:
+        logger.info("Формат %s не поддерживается для извлечения текста: %s", suffix, path)
+        return ""
+    if not text.strip():
+        logger.warning("Извлечённый текст пуст (файл без текстового слоя?): %s", path)
+    return text
 
 
 
@@ -161,6 +180,50 @@ async def reindex_all(session: AsyncSession, force: bool = False) -> dict:
             continue
         await index_document(session, d)
         stats["document"] += 1
+
+    await session.commit()
+    return stats
+
+
+_MODEL_BY_SOURCE_TYPE = {
+    "faq": FaqEntry,
+    "kb_article": KbArticle,
+    "document": Document,
+}
+
+
+async def prune_orphaned(session: AsyncSession) -> dict:
+    """Удаляет embeddings, чей источник (FAQ/статья КБ/документ) больше не
+    существует. Основной сценарий — удаление категории каскадно сносит её
+    статьи/вопросы на уровне БД (ondelete=CASCADE), в обход сервисного
+    delete(), который обычно чистит embeddings сам."""
+    stats = {"faq": 0, "kb_article": 0, "document": 0}
+
+    rows = (await session.execute(
+        select(Embedding.source_type, Embedding.source_id).distinct()
+    )).all()
+    ids_by_type: dict[str, set[int]] = {}
+    for source_type, source_id in rows:
+        ids_by_type.setdefault(source_type, set()).add(source_id)
+
+    for source_type, ids in ids_by_type.items():
+        model = _MODEL_BY_SOURCE_TYPE.get(source_type)
+        if model is None:
+            continue
+        existing_ids = set((await session.execute(
+            select(model.id).where(model.id.in_(ids))
+        )).scalars().all())
+        orphan_ids = ids - existing_ids
+        if not orphan_ids:
+            continue
+        await session.execute(
+            delete(Embedding).where(
+                Embedding.source_type == source_type,
+                Embedding.source_id.in_(orphan_ids),
+            )
+        )
+        stats[source_type] = len(orphan_ids)
+        logger.info("Удалено %d осиротевших embeddings типа %s", len(orphan_ids), source_type)
 
     await session.commit()
     return stats

@@ -43,9 +43,28 @@ class FaqCategoryService:
         return FaqCategoryOut.model_validate(cat)
 
     async def delete(self, cat_id: int) -> None:
+        from sqlalchemy import delete as sa_delete, select
+        from app.models.embedding import Embedding
+        from app.models.faq_entry import FaqEntry
+
         cat = await self.repo.get_by_id(cat_id)
         if cat is None:
             raise NotFoundError("Категория не найдена")
+
+        # Вопросы категории удалятся каскадом на уровне БД (ondelete=CASCADE) —
+        # это в обход FaqEntryService.delete(), который обычно чистит embeddings
+        # сам, поэтому чистим их здесь заранее.
+        entry_ids = (await self.session.execute(
+            select(FaqEntry.id).where(FaqEntry.category_id == cat_id)
+        )).scalars().all()
+        if entry_ids:
+            await self.session.execute(
+                sa_delete(Embedding).where(
+                    Embedding.source_type == "faq",
+                    Embedding.source_id.in_(entry_ids),
+                )
+            )
+
         await self.repo.delete(cat)
         await self.session.commit()
 

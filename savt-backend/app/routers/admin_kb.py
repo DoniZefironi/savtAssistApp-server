@@ -1,4 +1,5 @@
 import asyncio
+import logging
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,15 +22,21 @@ from app.schemas.pagination import PageOut
 from app.services.kb_service import KbArticleService, KbCategoryService
 
 
+_log = logging.getLogger(__name__)
+
+
 def _reindex_kb(article_id: int) -> None:
     async def _task():
         from app.models.kbarticle import KbArticle
         from app.services.bot_indexer import index_kb_article
-        async with AsyncSessionLocal() as s:
-            article = await s.get(KbArticle, article_id)
-            if article:
-                await index_kb_article(s, article)
-                await s.commit()
+        try:
+            async with AsyncSessionLocal() as s:
+                article = await s.get(KbArticle, article_id)
+                if article:
+                    await index_kb_article(s, article)
+                    await s.commit()
+        except Exception:
+            _log.exception("Фоновая переиндексация статьи КБ %s не удалась", article_id)
     asyncio.create_task(_task())
 
 router = APIRouter(prefix="/admin/kb", tags=["admin: kb"])

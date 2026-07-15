@@ -1,4 +1,5 @@
 import asyncio
+import logging
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,16 +21,21 @@ from app.services.document_service import AdminDocumentService
 
 router = APIRouter(tags=["admin: documents"])
 
+_log = logging.getLogger(__name__)
+
 
 def _reindex_document(doc_id: int) -> None:
     async def _task():
         from app.models.document import Document
         from app.services.bot_indexer import index_document
-        async with AsyncSessionLocal() as s:
-            doc = await s.get(Document, doc_id)
-            if doc:
-                await index_document(s, doc)
-                await s.commit()
+        try:
+            async with AsyncSessionLocal() as s:
+                doc = await s.get(Document, doc_id)
+                if doc:
+                    await index_document(s, doc)
+                    await s.commit()
+        except Exception:
+            _log.exception("Фоновая переиндексация документа %s не удалась", doc_id)
     asyncio.create_task(_task())
 
 # Загрузить документ

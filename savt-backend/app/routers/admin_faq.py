@@ -1,4 +1,5 @@
 import asyncio
+import logging
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,15 +20,21 @@ from app.schemas.pagination import PageOut
 from app.services.faq_service import FaqCategoryService, FaqEntryService
 
 
+_log = logging.getLogger(__name__)
+
+
 def _reindex_faq(entry_id: int) -> None:
     async def _task():
         from app.models.faq_entry import FaqEntry
         from app.services.bot_indexer import index_faq_entry
-        async with AsyncSessionLocal() as s:
-            entry = await s.get(FaqEntry, entry_id)
-            if entry:
-                await index_faq_entry(s, entry)
-                await s.commit()
+        try:
+            async with AsyncSessionLocal() as s:
+                entry = await s.get(FaqEntry, entry_id)
+                if entry:
+                    await index_faq_entry(s, entry)
+                    await s.commit()
+        except Exception:
+            _log.exception("Фоновая переиндексация FAQ %s не удалась", entry_id)
     asyncio.create_task(_task())
 
 router = APIRouter(prefix="/admin/faq", tags=["admin: faq"])
