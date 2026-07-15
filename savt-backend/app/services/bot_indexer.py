@@ -34,14 +34,38 @@ def _chunks(text: str) -> list[str]:
 
 
 
-def _parse_pdf(path: Path) -> str:
+async def _parse_pdf(path: Path) -> str:
     try:
         from pypdf import PdfReader
         reader = PdfReader(str(path))
-        return "\n".join(page.extract_text() or "" for page in reader.pages)
     except Exception:
-        logger.exception("Не удалось разобрать PDF: %s", path)
+        logger.exception("Не удалось открыть PDF: %s", path)
         return ""
+
+    parts: list[str] = []
+    for page_num, page in enumerate(reader.pages):
+        text = (page.extract_text() or "").strip()
+        if text:
+            parts.append(text)
+            continue
+        # Страница без текстового слоя — похоже на скан. Достаём встроенные
+        # изображения страницы напрямую через pypdf (без poppler/pdf2image)
+        # и распознаём их через Yandex Vision OCR.
+        try:
+            images = list(page.images)
+        except Exception:
+            images = []
+        for img in images:
+            try:
+                ocr_text = await yandex_service.ocr_image(img.data)
+                if ocr_text.strip():
+                    parts.append(ocr_text)
+            except Exception:
+                logger.exception(
+                    "OCR не удался для страницы %d файла %s", page_num + 1, path
+                )
+            await asyncio.sleep(0.2)
+    return "\n\n".join(parts)
 
 
 def _parse_docx(path: Path) -> str:
@@ -56,26 +80,71 @@ def _parse_docx(path: Path) -> str:
                 parts.append(" | ".join(cell.text for cell in row.cells))
         return "\n".join(parts)
     except Exception:
-        # .doc (старый бинарный формат Word 97-2003) python-docx не открывает —
-        # нужен .docx. Логируем, а не тонем молча, как раньше.
         logger.exception("Не удалось разобрать Word-документ: %s", path)
         return ""
 
 
-def _extract_text(file_url: str) -> str:
+def _parse_excel(path: Path) -> str:
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(str(path), data_only=True, read_only=True)
+        parts = []
+        for sheet in wb.worksheets:
+            for row in sheet.iter_rows(values_only=True):
+                cells = [str(c) for c in row if c is not None]
+                if cells:
+                    parts.append(" | ".join(cells))
+        return "\n".join(parts)
+    except Exception:
+        logger.exception("Не удалось разобрать Excel-файл: %s", path)
+        return ""
+
+
+async def _ocr_image_file(path: Path) -> str:
+    try:
+        return await yandex_service.ocr_image(path.read_bytes())
+    except Exception:
+        logger.exception("OCR не удался для изображения: %s", path)
+        return ""
+
+
+_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
+
+# Старые бинарные форматы (Word/Excel 97-2003) современными библиотеками не
+# читаются в принципе — нужна конвертация в .docx/.xlsx, а не парсинг.
+_UNSUPPORTED_LEGACY_FORMATS = {
+    ".doc": "Word 97-2003 (.doc) — пересохраните файл как .docx",
+    ".xls": "Excel 97-2003 (.xls) — пересохраните файл как .xlsx",
+}
+
+
+async def _extract_text(file_url: str) -> str:
     relative = file_url.removeprefix("/static/")
     path = UPLOAD_ROOT / relative
     if not path.exists():
         logger.warning("Файл для индексации не найден на диске: %s", path)
         return ""
+
     suffix = path.suffix.lower()
+    if suffix in _UNSUPPORTED_LEGACY_FORMATS:
+        logger.warning(
+            "Формат не поддерживается извлечением текста (%s): %s",
+            _UNSUPPORTED_LEGACY_FORMATS[suffix], path,
+        )
+        return ""
+
     if suffix == ".pdf":
-        text = _parse_pdf(path)
-    elif suffix in (".docx", ".doc"):
+        text = await _parse_pdf(path)
+    elif suffix == ".docx":
         text = _parse_docx(path)
+    elif suffix == ".xlsx":
+        text = _parse_excel(path)
+    elif suffix in _IMAGE_SUFFIXES:
+        text = await _ocr_image_file(path)
     else:
         logger.info("Формат %s не поддерживается для извлечения текста: %s", suffix, path)
         return ""
+
     if not text.strip():
         logger.warning("Извлечённый текст пуст (файл без текстового слоя?): %s", path)
     return text
@@ -127,14 +196,14 @@ async def index_kb_article(session: AsyncSession, article: KbArticle) -> None:
         select(KbArticleAttachment).where(KbArticleAttachment.article_id == article.id)
     )).scalars().all()
     for att in attachments:
-        parts.append(_extract_text(att.file_url))
+        parts.append(await _extract_text(att.file_url))
 
     text = "\n\n".join(p for p in parts if p.strip())
     await _upsert_chunks(session, "kb_article", article.id, _chunks(text), {"title": article.title})
 
 
 async def index_document(session: AsyncSession, doc: Document) -> None:
-    text = _extract_text(doc.file_url)
+    text = await _extract_text(doc.file_url)
     if not text.strip():
         text = doc.title or ""
     await _upsert_chunks(

@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import time
 import uuid
 
@@ -185,3 +186,40 @@ async def _long_running_recognize(
         return " ".join(parts)
 
     raise RuntimeError("Yandex LRR timeout: распознавание не завершилось вовремя")
+
+
+_VISION_URL = "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze"
+
+
+async def ocr_image(image_bytes: bytes) -> str:
+    """Распознаёт текст на изображении (в т.ч. отсканированной странице PDF)
+    через Yandex Vision OCR. Используется для файлов без текстового слоя,
+    которые pypdf/python-docx не могут прочитать напрямую."""
+    resp = await _get_client().post(
+        _VISION_URL,
+        headers=_headers(),
+        json={
+            "folderId": settings.yandex_folder_id,
+            "analyze_specs": [{
+                "content": base64.b64encode(image_bytes).decode("ascii"),
+                "features": [{
+                    "type": "TEXT_DETECTION",
+                    "text_detection_config": {"language_codes": ["ru", "en"]},
+                }],
+            }],
+        },
+        timeout=60,
+    )
+    if not resp.is_success:
+        raise RuntimeError(f"Yandex Vision OCR {resp.status_code}: {resp.text}")
+
+    lines: list[str] = []
+    for result in resp.json().get("results", []):
+        for r in result.get("results", []):
+            for page in r.get("textDetection", {}).get("pages", []):
+                for block in page.get("blocks", []):
+                    for line in block.get("lines", []):
+                        text = line.get("text")
+                        if text:
+                            lines.append(text)
+    return "\n".join(lines)
