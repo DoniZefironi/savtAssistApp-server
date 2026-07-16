@@ -13,7 +13,8 @@
       "PowerShell(\"ok\")",
       "PowerShell(Set-Location \"c:\\\\Users\\\\ShaboldaV\\\\Documents\\\\GitHub\\\\savtAssistApp-server\\\\savt-backend\"; $files = @\\(\"app\\\\services\\\\bot_indexer.py\",\"app\\\\routers\\\\admin_kb.py\",\"app\\\\routers\\\\admin_faq.py\",\"app\\\\routers\\\\admin_documents.py\"\\); foreach \\($f in $files\\) { py -3 -m py_compile $f; if \\($?\\) { \"OK: $f\" } else { \"FAIL: $f\" } })",
       "PowerShell(Set-Location \"c:\\\\Users\\\\ShaboldaV\\\\Documents\\\\GitHub\\\\savtAssistApp-server\\\\savt-backend\"; $files = @\\(\"app\\\\services\\\\bot_indexer.py\",\"app\\\\routers\\\\admin_bot.py\",\"app\\\\services\\\\faq_service.py\",\"app\\\\services\\\\kb_service.py\"\\); foreach \\($f in $files\\) { py -3 -m py_compile $f; if \\($?\\) { \"OK: $f\" } else { \"FAIL: $f\" } })",
-      "PowerShell(Set-Location \"c:\\\\Users\\\\ShaboldaV\\\\Documents\\\\GitHub\\\\savtAssistApp-server\\\\savt-backend\"; $files = @\\(\"app\\\\services\\\\bot_indexer.py\",\"app\\\\services\\\\yandex_service.py\"\\); foreach \\($f in $files\\) { py -3 -m py_compile $f; if \\($?\\) { \"OK: $f\" } else { \"FAIL: $f\" } })"
+      "PowerShell(Set-Location \"c:\\\\Users\\\\ShaboldaV\\\\Documents\\\\GitHub\\\\savtAssistApp-server\\\\savt-backend\"; $files = @\\(\"app\\\\services\\\\bot_indexer.py\",\"app\\\\services\\\\yandex_service.py\"\\); foreach \\($f in $files\\) { py -3 -m py_compile $f; if \\($?\\) { \"OK: $f\" } else { \"FAIL: $f\" } })",
+      "PowerShell(Set-Location \"c:\\\\Users\\\\ShaboldaV\\\\Documents\\\\GitHub\\\\savtAssistApp-server\\\\savt-backend\"; $files = @\\(\"app\\\\core\\\\stream_tickets.py\",\"app\\\\routers\\\\operator_events.py\"\\); foreach \\($f in $files\\) { py -3 -m py_compile $f; if \\($?\\) { \"OK: $f\" } else { \"FAIL: $f\" } })"
     ]
   }
 }

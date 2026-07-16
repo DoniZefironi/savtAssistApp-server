@@ -32,7 +32,9 @@ class StreamTicketOut(BaseModel):
 
 
 # Тикет для подключения к SSE — EventSource не умеет слать Bearer-заголовок,
-# поэтому сначала получаем одноразовый короткоживущий тикет обычным REST-запросом.
+# поэтому сначала получаем короткоживущий тикет обычным REST-запросом. Валиден
+# многократно в пределах TTL (см. stream_tickets.py) — это нужно, чтобы
+# автопереподключение браузерного EventSource тем же URL не ловило 401.
 @router.post("/ticket", response_model=StreamTicketOut)
 async def create_stream_ticket(
     operator: User = Depends(require_role(RoleName.OPERATOR, RoleName.ADMIN)),
