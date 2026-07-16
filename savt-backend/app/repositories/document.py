@@ -93,17 +93,12 @@ class DocumentRepository:
             Document.cabinet_id == cabinet_id,
             Document.cabinet_id.is_(None),
         )
-        access_subq = (
-            select(DocumentAccess.document_id)
-            .where(DocumentAccess.user_id == user_id)
-            .scalar_subquery()
-        )
-        visibility = or_(
-            Document.requires_approval == False,
-            Document.id.in_(access_subq),
-        )
 
-        conditions = [scope, visibility]
+        # Документы с requires_approval=True тоже видны в списке (чтобы
+        # пользователь вообще знал об их существовании и мог запросить
+        # доступ) — file_url для них скрывается на уровне сервиса
+        # (UserDocumentService.list_documents), а не здесь.
+        conditions = [scope]
         if tag_ids:
             tag_subq = (
                 select(DocumentTag.document_id)
