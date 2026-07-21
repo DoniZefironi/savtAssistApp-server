@@ -6,8 +6,10 @@ from app.core.dependencies import get_role_from_token, get_session, require_role
 from app.models.user import User
 from app.schemas.cabinet import CabinetCreateIn, CabinetGeoItem, CabinetListOut, CabinetOut, CabinetUpdateIn
 from app.schemas.pagination import PageOut
+from app.schemas.project import CabinetProjectPatchIn
 from app.schemas.tags import DocumentTagsIn
 from app.services.cabinet_service import CabinetService
+from app.services.project_service import ProjectService
 
 router = APIRouter(prefix="/admin/cabinets", tags=["admin: cabinets"])
 
@@ -96,3 +98,14 @@ async def set_cabinet_tags(
     session: AsyncSession = Depends(get_session),
 ):
     await CabinetService(session).set_tags(cabinet_id, payload.tag_ids, actor.id, actor_role)
+
+# Привязать/отвязать ШУ к проекту (project_id: null — отвязать)
+@router.patch("/{cabinet_id}/project", status_code=status.HTTP_204_NO_CONTENT)
+async def set_cabinet_project(
+    cabinet_id: int,
+    payload: CabinetProjectPatchIn,
+    actor: User = Depends(require_role(RoleName.ADMIN)),
+    actor_role: str = Depends(get_role_from_token),
+    session: AsyncSession = Depends(get_session),
+):
+    await ProjectService(session).set_cabinet_project(cabinet_id, payload, actor.id, actor_role)

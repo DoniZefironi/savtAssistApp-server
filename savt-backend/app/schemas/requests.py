@@ -52,3 +52,22 @@ class RejectRequestIn(BaseModel):
 
 class ApproveShareIn(BaseModel):
     admin_response: str | None = Field(None, min_length=1, max_length=1000)
+
+
+class ProjectShareRequestOut(BaseModel):
+    id: int
+    user_id: int
+    user_full_name: str | None
+    user_phone: str | None
+    user_type: str | None
+    organization_name: str | None
+    user_is_verified: bool
+    user_registered_at: datetime
+    project_id: int
+    project_name: str
+    user_comment: str | None
+    status: str
+    admin_response: str | None
+    resolved_by_admin_id: int | None
+    created_at: datetime
+    resolved_at: datetime | None

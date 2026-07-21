@@ -123,6 +123,16 @@ class CabinetRepository(BaseRepository[Cabinet]):
         result = await self.session.execute(stmt)
         return list(result.scalars().all()), total
 
+    # ШУ, привязанные к проекту (для реконсиляции доступа при работе с проектом)
+    async def list_by_project(self, project_id: int) -> list[Cabinet]:
+        result = await self.session.execute(
+            select(Cabinet).where(
+                Cabinet.project_id == project_id,
+                Cabinet.deleted_at.is_(None),
+            )
+        )
+        return list(result.scalars().all())
+
     async def get_geo(self) -> list[tuple]:
         open_sr = exists(
             select(ServiceRequest.id).where(

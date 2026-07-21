@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Double, String, DateTime, func, Text
+from sqlalchemy import Double, String, DateTime, ForeignKey, func, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -11,6 +11,10 @@ class Cabinet(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     # секретный кур-код
     unique_code: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    # админская группировка по проекту (не влияет на владельцев ШУ)
+    project_id: Mapped[int | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     # модель ШУ
     type: Mapped[str] = mapped_column(String(100), index=True)
     # номер объекта
