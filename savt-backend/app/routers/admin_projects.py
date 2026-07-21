@@ -24,6 +24,12 @@ async def create_project(
 @router.get("", response_model=PageOut[ProjectListOut])
 async def list_projects(
     search: str | None = Query(None),
+    tag_ids: list[int] = Query(default=[]),
+    has_documents: bool | None = Query(None),
+    has_photos: bool | None = Query(None),
+    has_users: bool | None = Query(None),
+    has_service_requests: bool | None = Query(None),
+    warranty_status: str | None = Query(None, pattern="^(active|expired|none)$"),
     sort_by: str = Query("created_at", pattern="^(name|created_at)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
@@ -32,17 +38,32 @@ async def list_projects(
     session: AsyncSession = Depends(get_session),
 ):
     return await ProjectService(session).list_all(
-        query=search, sort_by=sort_by, sort_order=sort_order, page=page, size=size,
+        query=search, tag_ids=tag_ids or None,
+        has_documents=has_documents, has_photos=has_photos,
+        has_users=has_users, has_service_requests=has_service_requests,
+        warranty_status=warranty_status,
+        sort_by=sort_by, sort_order=sort_order, page=page, size=size,
     )
 
-# Подробнее о проекте
+# Подробнее о проекте (cabinets в ответе отфильтрован теми же параметрами)
 @router.get("/{project_id}", response_model=ProjectOut)
 async def get_project(
     project_id: int,
+    tag_ids: list[int] = Query(default=[]),
+    has_documents: bool | None = Query(None),
+    has_photos: bool | None = Query(None),
+    has_users: bool | None = Query(None),
+    has_service_requests: bool | None = Query(None),
+    warranty_status: str | None = Query(None, pattern="^(active|expired|none)$"),
     _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
-    return await ProjectService(session).get(project_id)
+    return await ProjectService(session).get(
+        project_id, tag_ids=tag_ids or None,
+        has_documents=has_documents, has_photos=has_photos,
+        has_users=has_users, has_service_requests=has_service_requests,
+        warranty_status=warranty_status,
+    )
 
 # Обновить проект
 @router.patch("/{project_id}", response_model=ProjectOut)

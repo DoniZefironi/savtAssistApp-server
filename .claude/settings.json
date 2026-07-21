@@ -29,7 +29,8 @@
       "PowerShell(py -3 -c \"import ast; ast.parse\\(open\\('app/routers/qr.py',encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")"
     ],
     "additionalDirectories": [
-      "C:\\code\\uploads"
+      "C:\\code\\uploads",
+      "C:\\Users\\ShaboldaV\\AppData\\Local\\Temp"
     ]
   }
 }

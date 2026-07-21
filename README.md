@@ -1033,6 +1033,7 @@ POST /upload/transcribe (JSON: { file_url: "/static/voices/abc.ogg" })
 - `has_users` — `true` / `false` — есть ли привязанный пользователь
 - `has_service_requests` — `true` / `false` — есть ли сервисные заявки
 - `warranty_status` — `active` (гарантия действует) / `expired` (истекла) / `none` (не указана)
+- `has_project` — `true` / `false` — привязан ли ШУ к какому-либо проекту (`project_id is not null`)
 - `sort_by` — `type`, `warranty_ends_at`, `object_number`, `admin_internal_name`, `purpose`, `created_at`
 - `sort_order` — `asc`, `desc`
 - `page`, `size` — пагинация (по умолч. `1` / `20`, максимум `100`)
@@ -1634,7 +1635,8 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 
 ### GET `/admin/projects`
 Список всех проектов. Доступно оператору и администратору. Параметры:
-- `search` — поиск по названию
+- `search` — поиск по названию проекта
+- `tag_ids`, `has_documents`, `has_photos`, `has_users`, `has_service_requests`, `warranty_status` — те же фильтры, что и в `GET /admin/cabinets` (см. выше), но применяются **не к самому проекту, а к его шкафам**: проект попадает в выдачу, если условиям соответствует **хотя бы один** его шкаф
 - `sort_by` — `name`, `created_at`
 - `sort_order` — `asc`, `desc`
 - `page`, `size`
@@ -1647,11 +1649,14 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
   "total": 1, "page": 1, "size": 20, "pages": 1
 }
 ```
+`cabinet_count` — общее число шкафов в проекте, **не зависит** от переданных фильтров (фильтры влияют только на то, попадёт ли сам проект в выдачу).
 
 ---
 
 ### GET `/admin/projects/{project_id}`
-Подробности проекта со всеми его шкафами (без ограничений по владению — админский вид).
+Подробности проекта (без ограничений по владению — админский вид). Параметры:
+- `tag_ids`, `has_documents`, `has_photos`, `has_users`, `has_service_requests`, `warranty_status` — те же фильтры, что и в `GET /admin/cabinets` — но здесь фильтруют, какие шкафы попадут в поле `cabinets` ответа (сам проект находится всегда по ID, независимо от фильтров)
+
 ```json
 {
   "id": 3,
@@ -1665,6 +1670,7 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
   "updated_at": "2026-05-01T10:00:00Z"
 }
 ```
+`cabinets` — уже отфильтрован сервером переданными параметрами (без параметров — все шкафы проекта).
 `parent_project_id` — зарезервировано под будущую вложенность проектов (проект внутри проекта), сейчас всегда `null`, на фронте можно не отображать.
 
 ---

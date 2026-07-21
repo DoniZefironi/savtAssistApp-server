@@ -35,12 +35,27 @@ class ProjectService:
         await self.session.commit()
         return await self.get(project.id)
 
-    # Получение проекта со всеми его шкафами (админский вид, без ограничений по владению)
-    async def get(self, project_id: int) -> ProjectOut:
+    # Получение проекта со всеми его шкафами (админский вид, без ограничений по владению).
+    # Фильтры — те же, что и в общем списке ШУ; cabinets в ответе уже отфильтрован ими.
+    async def get(
+        self,
+        project_id: int,
+        tag_ids: list[int] | None = None,
+        has_documents: bool | None = None,
+        has_photos: bool | None = None,
+        has_users: bool | None = None,
+        has_service_requests: bool | None = None,
+        warranty_status: str | None = None,
+    ) -> ProjectOut:
         project = await self.repo.get_by_id(project_id)
         if project is None or project.deleted_at is not None:
             raise NotFoundError("Проект не найден")
-        cabinets = await self.cabinet_repo.list_by_project(project_id)
+        cabinets = await self.cabinet_repo.list_by_project(
+            project_id, tag_ids=tag_ids,
+            has_documents=has_documents, has_photos=has_photos,
+            has_users=has_users, has_service_requests=has_service_requests,
+            warranty_status=warranty_status,
+        )
         return ProjectOut(
             id=project.id,
             name=project.name,
@@ -77,10 +92,19 @@ class ProjectService:
         await self.repo.soft_delete(project)
         await self.session.commit()
 
-    # Все проекты
+    # Все проекты. Фильтры (tag_ids/has_documents/.../warranty_status) — те же, что
+    # и в общем списке ШУ: проект попадает в выдачу, если им соответствует хотя бы
+    # один его шкаф. cabinet_count при этом — общее число шкафов в проекте
+    # (не отфильтрованное), а не количество совпавших.
     async def list_all(
         self,
         query: str | None = None,
+        tag_ids: list[int] | None = None,
+        has_documents: bool | None = None,
+        has_photos: bool | None = None,
+        has_users: bool | None = None,
+        has_service_requests: bool | None = None,
+        warranty_status: str | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
         page: int = 1,
@@ -88,7 +112,11 @@ class ProjectService:
     ) -> PageOut[ProjectListOut]:
         offset = (page - 1) * size
         projects, total = await self.repo.search(
-            query=query, sort_by=sort_by, sort_order=sort_order, offset=offset, limit=size,
+            query=query, tag_ids=tag_ids,
+            has_documents=has_documents, has_photos=has_photos,
+            has_users=has_users, has_service_requests=has_service_requests,
+            warranty_status=warranty_status,
+            sort_by=sort_by, sort_order=sort_order, offset=offset, limit=size,
         )
         items = []
         for p in projects:

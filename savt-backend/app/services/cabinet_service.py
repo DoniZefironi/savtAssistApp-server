@@ -121,6 +121,7 @@ class CabinetService:
         has_users: bool | None = None,
         has_service_requests: bool | None = None,
         warranty_status: str | None = None,
+        has_project: bool | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
         page: int = 1,
@@ -131,7 +132,7 @@ class CabinetService:
             query=query, tag_ids=tag_ids,
             has_documents=has_documents, has_photos=has_photos,
             has_users=has_users, has_service_requests=has_service_requests,
-            warranty_status=warranty_status,
+            warranty_status=warranty_status, has_project=has_project,
             sort_by=sort_by, sort_order=sort_order,
             offset=offset, limit=size,
         )

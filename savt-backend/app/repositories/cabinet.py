@@ -17,6 +17,63 @@ from app.models.user_cabinet import UserCabinet
 from app.repositories.base import BaseRepository
 
 
+# Условия "у ШУ есть теги/документы/фото/пользователи/сервисные заявки/статус гарантии",
+# завязанные на Cabinet.id — переиспользуются и в CabinetRepository.search (WHERE по шкафам),
+# и в ProjectRepository.search (EXISTS: у проекта есть хотя бы один подходящий шкаф).
+def cabinet_match_conditions(
+    tag_ids: list[int] | None = None,
+    has_documents: bool | None = None,
+    has_photos: bool | None = None,
+    has_users: bool | None = None,
+    has_service_requests: bool | None = None,
+    warranty_status: str | None = None,  # "active" | "expired" | "none"
+) -> list:
+    conditions = []
+    if tag_ids:
+        tag_subq = (
+            select(CabinetTag.cabinet_id)
+            .where(CabinetTag.tag_id.in_(tag_ids))
+            .distinct()
+            .scalar_subquery()
+        )
+        conditions.append(Cabinet.id.in_(tag_subq))
+
+    if has_documents is not None:
+        doc_exists = exists(
+            select(Document.id).where(Document.cabinet_id == Cabinet.id)
+        )
+        conditions.append(doc_exists if has_documents else ~doc_exists)
+
+    if has_photos is not None:
+        photo_exists = exists(
+            select(CabinetPhoto.id).where(CabinetPhoto.cabinet_id == Cabinet.id)
+        )
+        conditions.append(photo_exists if has_photos else ~photo_exists)
+
+    if has_users is not None:
+        user_exists = exists(
+            select(UserCabinet.id).where(UserCabinet.cabinet_id == Cabinet.id)
+        )
+        conditions.append(user_exists if has_users else ~user_exists)
+
+    if has_service_requests is not None:
+        sr_exists = exists(
+            select(ServiceRequest.id).where(ServiceRequest.cabinet_id == Cabinet.id)
+        )
+        conditions.append(sr_exists if has_service_requests else ~sr_exists)
+
+    if warranty_status == "active":
+        conditions.append(Cabinet.warranty_ends_at.isnot(None))
+        conditions.append(Cabinet.warranty_ends_at >= datetime.now(timezone.utc))
+    elif warranty_status == "expired":
+        conditions.append(Cabinet.warranty_ends_at.isnot(None))
+        conditions.append(Cabinet.warranty_ends_at < datetime.now(timezone.utc))
+    elif warranty_status == "none":
+        conditions.append(Cabinet.warranty_ends_at.is_(None))
+
+    return conditions
+
+
 class CabinetRepository(BaseRepository[Cabinet]):
     def __init__(self, session: AsyncSession):
         super().__init__(Cabinet, session)
@@ -45,6 +102,7 @@ class CabinetRepository(BaseRepository[Cabinet]):
         has_users: bool | None = None,
         has_service_requests: bool | None = None,
         warranty_status: str | None = None,  # "active" | "expired" | "none"
+        has_project: bool | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
         offset: int = 0,
@@ -58,47 +116,14 @@ class CabinetRepository(BaseRepository[Cabinet]):
                 Cabinet.type, Cabinet.object_number, Cabinet.admin_internal_name,
                 Cabinet.purpose, Cabinet.description, Cabinet.admin_comment,
             ))
-        if tag_ids:
-            tag_subq = (
-                select(CabinetTag.cabinet_id)
-                .where(CabinetTag.tag_id.in_(tag_ids))
-                .distinct()
-                .scalar_subquery()
-            )
-            conditions.append(Cabinet.id.in_(tag_subq))
+        conditions.extend(cabinet_match_conditions(
+            tag_ids=tag_ids, has_documents=has_documents, has_photos=has_photos,
+            has_users=has_users, has_service_requests=has_service_requests,
+            warranty_status=warranty_status,
+        ))
 
-        if has_documents is not None:
-            doc_exists = exists(
-                select(Document.id).where(Document.cabinet_id == Cabinet.id)
-            )
-            conditions.append(doc_exists if has_documents else ~doc_exists)
-
-        if has_photos is not None:
-            photo_exists = exists(
-                select(CabinetPhoto.id).where(CabinetPhoto.cabinet_id == Cabinet.id)
-            )
-            conditions.append(photo_exists if has_photos else ~photo_exists)
-
-        if has_users is not None:
-            user_exists = exists(
-                select(UserCabinet.id).where(UserCabinet.cabinet_id == Cabinet.id)
-            )
-            conditions.append(user_exists if has_users else ~user_exists)
-
-        if has_service_requests is not None:
-            sr_exists = exists(
-                select(ServiceRequest.id).where(ServiceRequest.cabinet_id == Cabinet.id)
-            )
-            conditions.append(sr_exists if has_service_requests else ~sr_exists)
-
-        if warranty_status == "active":
-            conditions.append(Cabinet.warranty_ends_at.isnot(None))
-            conditions.append(Cabinet.warranty_ends_at >= datetime.now(timezone.utc))
-        elif warranty_status == "expired":
-            conditions.append(Cabinet.warranty_ends_at.isnot(None))
-            conditions.append(Cabinet.warranty_ends_at < datetime.now(timezone.utc))
-        elif warranty_status == "none":
-            conditions.append(Cabinet.warranty_ends_at.is_(None))
+        if has_project is not None:
+            conditions.append(Cabinet.project_id.isnot(None) if has_project else Cabinet.project_id.is_(None))
 
         count_stmt = select(func.count(Cabinet.id))
         if conditions:
@@ -123,14 +148,27 @@ class CabinetRepository(BaseRepository[Cabinet]):
         result = await self.session.execute(stmt)
         return list(result.scalars().all()), total
 
-    # ШУ, привязанные к проекту (для реконсиляции доступа при работе с проектом)
-    async def list_by_project(self, project_id: int) -> list[Cabinet]:
-        result = await self.session.execute(
-            select(Cabinet).where(
-                Cabinet.project_id == project_id,
-                Cabinet.deleted_at.is_(None),
-            )
-        )
+    # ШУ, привязанные к проекту. Без фильтров — для реконсиляции доступа
+    # (см. project_reconciliation.py) и подсчёта cabinet_count. С фильтрами —
+    # для GET /admin/projects/{id}, где cabinets в ответе уже должен быть
+    # отфильтрован сервером теми же параметрами, что и общий список ШУ.
+    async def list_by_project(
+        self,
+        project_id: int,
+        tag_ids: list[int] | None = None,
+        has_documents: bool | None = None,
+        has_photos: bool | None = None,
+        has_users: bool | None = None,
+        has_service_requests: bool | None = None,
+        warranty_status: str | None = None,
+    ) -> list[Cabinet]:
+        conditions = [Cabinet.project_id == project_id, Cabinet.deleted_at.is_(None)]
+        conditions.extend(cabinet_match_conditions(
+            tag_ids=tag_ids, has_documents=has_documents, has_photos=has_photos,
+            has_users=has_users, has_service_requests=has_service_requests,
+            warranty_status=warranty_status,
+        ))
+        result = await self.session.execute(select(Cabinet).where(*conditions))
         return list(result.scalars().all())
 
     async def get_geo(self) -> list[tuple]:

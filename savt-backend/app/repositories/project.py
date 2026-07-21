@@ -1,13 +1,15 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.cabinets import Cabinet
 from app.models.project import Project
 from app.models.project_share_request import ProjectShareRequest
 from app.models.user import User
 from app.models.user_project import UserProject
 from app.repositories.base import BaseRepository
+from app.repositories.cabinet import cabinet_match_conditions
 from app.utils.db import fuzzy_condition
 
 
@@ -32,6 +34,12 @@ class ProjectRepository(BaseRepository[Project]):
     async def search(
         self,
         query: str | None = None,
+        tag_ids: list[int] | None = None,
+        has_documents: bool | None = None,
+        has_photos: bool | None = None,
+        has_users: bool | None = None,
+        has_service_requests: bool | None = None,
+        warranty_status: str | None = None,  # "active" | "expired" | "none"
         sort_by: str = "created_at",
         sort_order: str = "desc",
         offset: int = 0,
@@ -40,6 +48,21 @@ class ProjectRepository(BaseRepository[Project]):
         conditions = [Project.deleted_at.is_(None)]
         if query:
             conditions.append(fuzzy_condition(query, Project.name))
+
+        # Проект попадает в выдачу, если условиям соответствует хотя бы один его шкаф
+        cabinet_conditions = cabinet_match_conditions(
+            tag_ids=tag_ids, has_documents=has_documents, has_photos=has_photos,
+            has_users=has_users, has_service_requests=has_service_requests,
+            warranty_status=warranty_status,
+        )
+        if cabinet_conditions:
+            conditions.append(exists(
+                select(Cabinet.id).where(
+                    Cabinet.project_id == Project.id,
+                    Cabinet.deleted_at.is_(None),
+                    *cabinet_conditions,
+                )
+            ))
 
         count_stmt = select(func.count(Project.id)).where(*conditions)
         total = (await self.session.execute(count_stmt)).scalar() or 0
