@@ -56,10 +56,14 @@ async def update_global_chat_settings(
 @router.get("/chats", response_model=list[ChatListOut])
 async def list_operator_chats(
     search: str | None = Query(None, min_length=1, max_length=200),
+    chat_type: str | None = Query(None, pattern="^(cabinet|support|service_request)$"),
+    archived: bool = Query(False),
     operator: User = Depends(require_role(RoleName.OPERATOR, RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
-    return await ChatService(session).list_operator_chats(operator.id, search)
+    return await ChatService(session).list_operator_chats(
+        operator.id, search, chat_type=chat_type, archived=archived
+    )
 
 
 # Закреплённые сообщения чата (пустой массив — ничего не закреплено)

@@ -26,13 +26,16 @@
       "PowerShell(& \"C:\\\\Users\\\\ShaboldaV\\\\AppData\\\\Local\\\\Temp\\\\savt_check_venv\\\\Scripts\\\\python.exe\" -m pip install -q -r requirements.txt 2>&1)",
       "PowerShell(& \"C:\\\\Users\\\\ShaboldaV\\\\AppData\\\\Local\\\\Temp\\\\savt_check_venv\\\\Scripts\\\\python.exe\" -c \"import app.main; print\\('IMPORT OK'\\)\" 2>&1)",
       "Bash(python -c \"import ast; ast.parse\\(open\\('app/routers/qr.py',encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
-      "PowerShell(py -3 -c \"import ast; ast.parse\\(open\\('app/routers/qr.py',encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")"
+      "PowerShell(py -3 -c \"import ast; ast.parse\\(open\\('app/routers/qr.py',encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(cd \"c:\\\\Users\\\\ShaboldaV\\\\Documents\\\\GitHub\\\\savtAssistApp-server\\\\savt-backend\")",
+      "Bash(true)"
     ],
     "additionalDirectories": [
       "C:\\code\\uploads",
       "C:\\Users\\ShaboldaV\\AppData\\Local\\Temp",
       "C:\\Users\\ShaboldaV\\AppData\\Local\\Temp\\claude\\c--Users-ShaboldaV-Documents-GitHub-savtAssistApp-server\\55d1e6a3-b129-4083-b4ef-02da138b4066\\scratchpad",
-      "C:\\Users\\ShaboldaV\\AppData\\Local\\Temp\\savt_check_venv4"
+      "C:\\Users\\ShaboldaV\\AppData\\Local\\Temp\\savt_check_venv4",
+      "C:\\Users\\ShaboldaV\\AppData\\Local\\Temp\\savt_check_venv5"
     ]
   }
 }

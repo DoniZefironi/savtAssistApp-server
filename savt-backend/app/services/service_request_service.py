@@ -2,6 +2,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError, PermissionDeniedError
@@ -19,14 +20,25 @@ from app.services.audit_service import AuditLogger
 _log = logging.getLogger(__name__)
 
 _REQUEST_TYPE_LABELS = {
-    "repair": "Ремонт",
-    "maintenance": "Обслуживание",
-    "inspection": "Осмотр",
-    "other": "Другое",
+    "repair": "ремонт",
+    "diagnostics": "диагностика",
+    "remote_adjustment": "наладка удалённо",
+    "onsite_adjustment": "наладка с выездом",
+    "other": "другое",
 }
 
 
-def _to_out(req, cabinet) -> ServiceRequestOut:
+async def _get_chat_ids(session: AsyncSession, request_ids: list[int]) -> dict[int, int]:
+    if not request_ids:
+        return {}
+    from app.models.chat import Chat
+    result = await session.execute(
+        select(Chat.service_request_id, Chat.id).where(Chat.service_request_id.in_(request_ids))
+    )
+    return {rid: cid for rid, cid in result.all()}
+
+
+def _to_out(req, cabinet, chat_id: int | None = None) -> ServiceRequestOut:
     return ServiceRequestOut(
         id=req.id,
         user_id=req.user_id,
@@ -36,12 +48,13 @@ def _to_out(req, cabinet) -> ServiceRequestOut:
         description=req.description,
         status=req.status,
         bitrix_task_id=req.bitrix_task_id,
+        chat_id=chat_id,
         created_at=req.created_at,
         closed_at=req.closed_at,
     )
 
 
-def _to_detail(req, user, cabinet) -> ServiceRequestDetailOut:
+def _to_detail(req, user, cabinet, chat_id: int | None = None) -> ServiceRequestDetailOut:
     return ServiceRequestDetailOut(
         id=req.id,
         user_id=req.user_id,
@@ -51,6 +64,7 @@ def _to_detail(req, user, cabinet) -> ServiceRequestDetailOut:
         description=req.description,
         status=req.status,
         bitrix_task_id=req.bitrix_task_id,
+        chat_id=chat_id,
         created_at=req.created_at,
         closed_at=req.closed_at,
         user_full_name=user.full_name,
@@ -62,14 +76,36 @@ def _to_detail(req, user, cabinet) -> ServiceRequestDetailOut:
     )
 
 
-def _sync_to_bitrix(request_id: int, request_type: str, description: str, cabinet_object_number: str, cabinet_type: str, requester: str) -> None:
+def _build_task_title(
+    object_number: str, org_or_name: str, purpose: str | None,
+    admin_internal_name: str | None, type_label: str,
+) -> str:
+    """Пример: "26_001 Могилевский водоканал ПНС Вейно (П-228) ремонт" —
+    номер объекта, организация/ФИО заявителя, назначение ШУ, рабочий код ШУ
+    в скобках (если задан) и тип заявки. Отсутствующие части просто пропускаются."""
+    parts = [object_number, org_or_name]
+    if purpose:
+        parts.append(purpose)
+    if admin_internal_name:
+        parts.append(f"({admin_internal_name})")
+    parts.append(type_label)
+    return " ".join(p for p in parts if p)
+
+
+def _sync_to_bitrix(
+    request_id: int, request_type: str, description: str,
+    cabinet_object_number: str, cabinet_type: str, requester: str,
+    org_or_name: str, cabinet_purpose: str | None, cabinet_admin_internal_name: str | None,
+) -> None:
     async def _task():
         from app.database import AsyncSessionLocal
         from app.models.service_request import ServiceRequest
         from app.services import bitrix_service
 
         type_label = _REQUEST_TYPE_LABELS.get(request_type, request_type)
-        title = f"{type_label}: ШУ {cabinet_object_number}"
+        title = _build_task_title(
+            cabinet_object_number, org_or_name, cabinet_purpose, cabinet_admin_internal_name, type_label,
+        )
         body = (
             f"Заявка №{request_id} из приложения SAVT\n"
             f"ШУ: {cabinet_object_number} ({cabinet_type})\n"
@@ -128,16 +164,27 @@ class ServiceRequestService:
         await self.session.flush()
         self.audit.log("service_request.create", "service_request", req.id, user_id, "user",
                        {"cabinet_id": data.cabinet_id, "type": data.request_type})
+
+        from app.services.chat_service import ChatService, chat_summary_dict
+        chat = await ChatService(self.session).ensure_service_request_chat(user_id, req.id, data.cabinet_id)
+
         await self.session.commit()
         await self.session.refresh(req)
+
+        from app.services.realtime_events import publish_chat_created
+        await publish_chat_created(chat.id, chat_summary_dict(chat))
 
         from app.repositories.cabinet import CabinetRepository
         from app.repositories.user import UserRepository
         cabinet = await CabinetRepository(self.session).get_by_id(data.cabinet_id)
         user = await UserRepository(self.session).get_by_id(user_id)
         requester = user.full_name or user.phone if user else str(user_id)
-        _sync_to_bitrix(req.id, req.request_type, req.description, cabinet.object_number, cabinet.type, requester)
-        return _to_out(req, cabinet)
+        org_or_name = (user.organization_name or user.full_name or user.phone) if user else str(user_id)
+        _sync_to_bitrix(
+            req.id, req.request_type, req.description, cabinet.object_number, cabinet.type, requester,
+            org_or_name, cabinet.purpose, cabinet.admin_internal_name,
+        )
+        return _to_out(req, cabinet, chat.id)
 
     async def list_for_user(
         self, user_id: int, status: str | None, page: int, size: int
@@ -145,7 +192,8 @@ class ServiceRequestService:
         rows, total = await self.repo.list_for_user(
             user_id, status, offset=(page - 1) * size, limit=size
         )
-        return make_page([_to_out(r, c) for r, c in rows], total, page, size)
+        chat_ids = await _get_chat_ids(self.session, [r.id for r, _ in rows])
+        return make_page([_to_out(r, c, chat_ids.get(r.id)) for r, c in rows], total, page, size)
 
     async def list_admin(
         self, status: str | None, cabinet_id: int | None, page: int, size: int,
@@ -158,7 +206,8 @@ class ServiceRequestService:
             status, cabinet_id, request_type=request_type, search=search, sort_by=sort_by, sort_order=sort_order,
             offset=(page - 1) * size, limit=size
         )
-        return make_page([_to_detail(r, u, c) for r, u, c in rows], total, page, size)
+        chat_ids = await _get_chat_ids(self.session, [r.id for r, _, _ in rows])
+        return make_page([_to_detail(r, u, c, chat_ids.get(r.id)) for r, u, c in rows], total, page, size)
 
     async def update_status(
         self, req_id: int, data: ServiceRequestStatusIn, actor_id: int = 0, actor_role: str = "admin"
@@ -182,8 +231,19 @@ class ServiceRequestService:
         if req.bitrix_task_id:
             _sync_status_to_bitrix(req.bitrix_task_id, req.status)
 
+        # Закрытие заявки архивирует её чат (read-only, скрыт из активного списка);
+        # повторное открытие — автоматически разархивирует
+        from app.repositories.chat import ChatRepository
+        chat = await ChatRepository(self.session).find_by_service_request(req_id)
+        chat_id = chat.id if chat else None
+        if chat is not None:
+            should_be_archived = req.status == "closed"
+            if should_be_archived != (chat.archived_at is not None):
+                from app.services.chat_service import ChatService
+                await ChatService(self.session).set_archived(chat.id, should_be_archived)
+
         from app.repositories.cabinet import CabinetRepository
         from app.repositories.user import UserRepository
         cabinet = await CabinetRepository(self.session).get_by_id(req.cabinet_id)
         user = await UserRepository(self.session).get_by_id(req.user_id)
-        return _to_detail(req, user, cabinet)
+        return _to_detail(req, user, cabinet, chat_id)

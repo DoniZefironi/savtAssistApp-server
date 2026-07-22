@@ -2,13 +2,13 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 
-_REQUEST_TYPES = ["repair", "maintenance", "inspection", "other"]
+_REQUEST_TYPES = ["repair", "diagnostics", "remote_adjustment", "onsite_adjustment", "other"]
 _STATUSES = ["open", "in_progress", "closed"]
 
 
 class ServiceRequestCreateIn(BaseModel):
     cabinet_id: int = Field(..., gt=0)
-    request_type: str = Field(..., pattern="^(repair|maintenance|inspection|other)$")
+    request_type: str = Field(..., pattern="^(repair|diagnostics|remote_adjustment|onsite_adjustment|other)$")
     description: str = Field(..., min_length=10, max_length=2000)
 
 
@@ -21,6 +21,7 @@ class ServiceRequestOut(BaseModel):
     description: str
     status: str
     bitrix_task_id: str | None = None
+    chat_id: int | None = None
     created_at: datetime
     closed_at: datetime | None
 

@@ -34,6 +34,8 @@ async def create_task(title: str, description: str) -> str | None:
     }
     if settings.bitrix_default_group_id:
         fields["GROUP_ID"] = settings.bitrix_default_group_id
+    if settings.bitrix_default_creator_id:
+        fields["CREATED_BY"] = settings.bitrix_default_creator_id
 
     url = f"{settings.bitrix_webhook_url.rstrip('/')}/tasks.task.add.json"
     resp = await _get_client().post(url, json={"fields": fields})

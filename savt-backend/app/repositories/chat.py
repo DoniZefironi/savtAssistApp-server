@@ -11,6 +11,10 @@ from app.models.message_reaction import MessageReaction
 from app.models.user import User
 from app.utils.db import escape_like
 
+# Типы чатов, видимые в общих списках/поиске оператора (личные заметки "notes"
+# сюда никогда не входят - это приватное пространство самого пользователя)
+VISIBLE_CHAT_TYPES = ("cabinet", "support", "service_request")
+
 
 class ChatRepository:
     def __init__(self, session: AsyncSession):
@@ -31,29 +35,52 @@ class ChatRepository:
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def create(self, user_id: int, chat_type: str, cabinet_id: int | None = None) -> Chat:
-        chat = Chat(user_id=user_id, chat_type=chat_type, cabinet_id=cabinet_id)
+    async def create(
+        self, user_id: int, chat_type: str, cabinet_id: int | None = None,
+        service_request_id: int | None = None,
+    ) -> Chat:
+        chat = Chat(
+            user_id=user_id, chat_type=chat_type, cabinet_id=cabinet_id,
+            service_request_id=service_request_id,
+        )
         self.session.add(chat)
         await self.session.flush()
         return chat
 
-    async def list_for_user(self, user_id: int) -> list[Chat]:
+    async def find_by_service_request(self, service_request_id: int) -> Chat | None:
+        result = await self.session.execute(
+            select(Chat).where(Chat.service_request_id == service_request_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def list_for_user(
+        self, user_id: int, chat_type: str | None = None, archived: bool = False,
+    ) -> list[Chat]:
+        conditions = [Chat.user_id == user_id]
+        conditions.append(Chat.archived_at.isnot(None) if archived else Chat.archived_at.is_(None))
+        if chat_type:
+            conditions.append(Chat.chat_type == chat_type)
         result = await self.session.execute(
             select(Chat)
-            .where(Chat.user_id == user_id)
+            .where(*conditions)
             .order_by(Chat.last_message_at.desc().nullslast(), Chat.created_at.desc())
         )
         return list(result.scalars().all())
 
-    async def list_for_operator(self, search: str | None = None) -> list[tuple]:
+    async def list_for_operator(
+        self, search: str | None = None, chat_type: str | None = None, archived: bool = False,
+    ) -> list[tuple]:
         from sqlalchemy import or_
         from app.models.cabinets import Cabinet
         stmt = (
             select(Chat, User, Cabinet)
             .outerjoin(User, User.id == Chat.user_id)
             .outerjoin(Cabinet, Cabinet.id == Chat.cabinet_id)
-            .where(Chat.chat_type.in_(["cabinet", "support"]))
+            .where(Chat.chat_type.in_(VISIBLE_CHAT_TYPES))
         )
+        stmt = stmt.where(Chat.archived_at.isnot(None) if archived else Chat.archived_at.is_(None))
+        if chat_type:
+            stmt = stmt.where(Chat.chat_type == chat_type)
         if search:
             pattern = f"%{escape_like(search)}%"
             stmt = stmt.where(or_(
@@ -103,7 +130,8 @@ class ChatRepository:
                 Message.sender_id != reader_id,
                 Message.is_read == False,
                 Message.deleted_at.is_(None),
-                Chat.chat_type.in_(["cabinet", "support"]),
+                Chat.chat_type.in_(VISIBLE_CHAT_TYPES),
+                Chat.archived_at.is_(None),
             )
         )
         return result.scalar() or 0
@@ -285,7 +313,7 @@ class MessageRepository:
             .where(
                 Message.deleted_at.is_(None),
                 Message.text.ilike(pattern, escape="\\"),
-                Chat.chat_type.in_(["cabinet", "support"]),
+                Chat.chat_type.in_(VISIBLE_CHAT_TYPES),
             )
         )
         total = (await self.session.execute(

@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     bitrix_webhook_url: str = ""
     bitrix_default_responsible_id: int = 0
     bitrix_default_group_id: int = 0
+    # Постановщик задачи (CREATED_BY) — отдельно от исполнителя (RESPONSIBLE_ID).
+    # Если не задан — Bitrix сам подставит технического пользователя вебхука.
+    bitrix_default_creator_id: int = 0
 
 
 settings = Settings()

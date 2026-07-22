@@ -38,8 +38,9 @@
 | `BOT_FOLLOW_UP_MINUTES` | Через сколько минут бот пишет follow-up (по умолч. 60) |
 | `BOT_MAX_ATTEMPTS` | Попыток бота до предложения оператора (по умолч. 3) |
 | `BITRIX_WEBHOOK_URL` | URL входящего вебхука Bitrix24 (`https://портал.bitrix24.ru/rest/ID/КОД/`) |
-| `BITRIX_DEFAULT_RESPONSIBLE_ID` | ID сотрудника Bitrix24, назначаемого ответственным по всем автосозданным задачам |
+| `BITRIX_DEFAULT_RESPONSIBLE_ID` | ID сотрудника Bitrix24, назначаемого исполнителем (`RESPONSIBLE_ID`) по всем автосозданным задачам |
 | `BITRIX_DEFAULT_GROUP_ID` | ID проекта (рабочей группы) Bitrix24, необязательно — без него задачи создаются без привязки к проекту |
+| `BITRIX_DEFAULT_CREATOR_ID` | ID сотрудника Bitrix24, назначаемого постановщиком (`CREATED_BY`) задачи — отдельно от исполнителя. Необязательно: без него постановщиком становится технический пользователь вебхука |
 | `APP_ENV` | Окружение (`dev`/`prod`), в `dev` включает SQL-логирование |
 | `SMS_PROVIDER` | Провайдер SMS: `mock` (по умолч.) или `smscenter` |
 | `SMSCENTER_LOGIN` | Логин аккаунта smscenter.by |
@@ -578,10 +579,12 @@ POST /notifications/read-all    → прочитать все
 POST /service-requests
 Тело: {
   cabinet_id: 5,
-  request_type: "repair",   ← repair | maintenance | inspection | other
+  request_type: "repair",   ← repair | diagnostics | remote_adjustment | onsite_adjustment | other
   description: "Не работает кнопка управления (минимум 10 символов)"
 }
-Ответ: созданная заявка со статусом "open"
+Ответ: созданная заявка со статусом "open", поле chat_id — сразу открыть чат заявки
+→ При создании заявки автоматически создаётся её чат (chat_type: "service_request"),
+  виден и пользователю, и операторам/админам в общем списке чатов.
 ```
 
 ### Мои заявки
@@ -589,6 +592,8 @@ POST /service-requests
 GET /service-requests?status=open&page=1
 → Список своих заявок с фильтром по статусу.
 Статусы: open → in_progress → closed
+→ При переводе заявки в closed её чат архивируется (скрывается из активного списка,
+  становится read-only); при возврате в open/in_progress — разархивируется автоматически.
 ```
 
 ---
@@ -2032,13 +2037,17 @@ QR кодирует строку: `savt://project/{unique_code}`
 
 ## Рут `chats` — чаты
 
-Три типа чатов создаются автоматически:
+Четыре типа чатов:
 - `cabinet` — при привязке ШУ (по QR или одобрении заявки)
 - `support` — при регистрации (общая поддержка с ботом)
-- `notes` — при регистрации (личные заметки)
+- `notes` — при регистрации (личные заметки, видны только самому пользователю)
+- `service_request` — автоматически при создании сервисной заявки (`POST /service-requests`), виден и пользователю, и операторам/админам
 
 ### GET `/chats`
-Список всех чатов текущего пользователя.
+Список чатов текущего пользователя. Параметры:
+- `chat_type` — `cabinet` / `support` / `notes` / `service_request`, без параметра — все типы
+- `archived` — `false` (по умолч.) — активные чаты; `true` — архив (папка «Архив», как в Telegram — чаты закрытых заявок)
+
 ```json
 [
   {
@@ -2052,10 +2061,16 @@ QR кодирует строку: `savt://project/{unique_code}`
     "unread_count": 2,
     "problem_status": "open",
     "bot_active": true,
-    "operator_requested": false
+    "operator_requested": false,
+    "service_request_id": null,
+    "service_request_type": null,
+    "service_request_status": null,
+    "archived_at": null
   }
 ]
 ```
+`service_request_id`/`service_request_type`/`service_request_status` заполнены только для `chat_type: "service_request"`.
+`archived_at` — `null`, пока заявка не закрыта; при `status: "closed"` заполняется автоматически, при повторном открытии заявки — сбрасывается обратно в `null`. Архивный чат — read-only: `POST /chats/{chat_id}/messages` вернёт `403`, но история сообщений (`GET /chats/{chat_id}/messages`) остаётся доступна как обычно. Это только флаг состояния — сообщения физически никуда не переносятся.
 
 ---
 
@@ -2113,6 +2128,8 @@ QR кодирует строку: `savt://project/{unique_code}`
 }
 ```
 Либо текст, либо вложения — хотя бы одно обязательно.
+
+> Архивный чат (закрытая заявка, `archived_at` не `null`) — `403`, отправка недоступна.
 
 ---
 
@@ -2261,12 +2278,14 @@ QR кодирует строку: `savt://project/{unique_code}`
 ---
 
 ### GET `/operator/chats`
-Все `cabinet` и `support` чаты. Параметры:
+Все `cabinet`, `support` и `service_request` чаты (`notes` — личные заметки пользователя, оператору недоступны никогда). Параметры:
 - `search` — поиск по имени/телефону пользователя, номеру/типу/названию ШУ
+- `chat_type` — `cabinet` / `support` / `service_request`, без параметра — все три
+- `archived` — `false` (по умолч.) — активные; `true` — архив (чаты закрытых заявок)
 
 Сортировка: сначала ожидающие оператора (`operator_requested=true`), затем по последнему сообщению.
 
-Каждый чат содержит `user_id`, `user_name`, `cabinet_object_number`.
+Каждый чат содержит `user_id`, `user_name`, `cabinet_object_number`, а для чатов заявок — ещё и `service_request_id`/`service_request_type`/`service_request_status` (см. `GET /chats` выше — формат ответа общий).
 
 > **Оптимизация:** запрос выполняется за 3 DB-запроса независимо от числа чатов (JOIN на User+Cabinet + batch unread counts + batch last messages), вместо 4N+1 в предыдущей версии.
 
@@ -2467,7 +2486,7 @@ es.onmessage = (e) => {
 
 ## Рут `service requests` — сервисные заявки
 
-Типы заявок (`request_type`): `repair`, `maintenance`, `inspection`, `other`.
+Типы заявок (`request_type`): `repair` (ремонт), `diagnostics` (диагностика), `remote_adjustment` (наладка удалённо), `onsite_adjustment` (наладка с выездом), `other` (другое).
 Статусы: `open`, `in_progress`, `closed`. Переход между статусами не валидируется — администратор/оператор может установить любой статус через `PATCH /admin/service-requests/{req_id}/status` (типичный сценарий: `open → in_progress → closed`).
 
 ### POST `/service-requests`
@@ -2481,19 +2500,27 @@ es.onmessage = (e) => {
 ```
 `description` — минимум 10 символов.
 
-После создания заявка асинхронно (в фоне, не блокируя ответ) синхронизируется с Bitrix24 — создаётся задача (`tasks.task.add`) на фиксированного ответственного (`BITRIX_DEFAULT_RESPONSIBLE_ID`). ID созданной задачи попадает в поле `bitrix_task_id` (появится не сразу, а чуть позже создания заявки — обнови список, чтобы увидеть). Если Bitrix не настроен или недоступен — заявка всё равно создаётся, просто `bitrix_task_id` остаётся `null`.
+При создании заявки автоматически создаётся её чат (`chat_type: "service_request"`) — виден и заявителю, и операторам/админам (`GET /chats`, `GET /operator/chats`). `chat_id` из ответа — сразу открыть чат заявки, не нужно искать его в общем списке.
+
+После создания заявка асинхронно (в фоне, не блокируя ответ) синхронизируется с Bitrix24 — создаётся задача (`tasks.task.add`) с исполнителем (`RESPONSIBLE_ID` = `BITRIX_DEFAULT_RESPONSIBLE_ID`) и постановщиком (`CREATED_BY` = `BITRIX_DEFAULT_CREATOR_ID`, если настроен — иначе постановщиком становится технический пользователь вебхука). ID созданной задачи попадает в поле `bitrix_task_id` (появится не сразу, а чуть позже создания заявки — обнови список, чтобы увидеть). Если Bitrix не настроен или недоступен — заявка всё равно создаётся, просто `bitrix_task_id` остаётся `null`.
+
+Заголовок задачи в Bitrix собирается из номера объекта, организации (или ФИО, если пользователь — физлицо) заявителя, назначения ШУ, рабочего кода ШУ в скобках и типа заявки — например:
+```
+26_001 Могилевский водоканал ПНС Вейно (П-228) ремонт
+```
+Части, для которых поле в ШУ не заполнено (`purpose`/`admin_internal_name`), просто пропускаются.
 
 ---
 
 ### GET `/service-requests`
-Свои заявки. Параметры: `status=open|in_progress|closed`, `page`, `size`.
+Свои заявки. Параметры: `status=open|in_progress|closed`, `page`, `size`. Каждая заявка включает `chat_id` её чата.
 
 ---
 
 ### GET `/admin/service-requests`
 Все заявки (для админа/оператора). Параметры:
 - `status`, `cabinet_id`
-- `request_type` — `repair` / `maintenance` / `inspection` / `other` (точное совпадение)
+- `request_type` — `repair` / `diagnostics` / `remote_adjustment` / `onsite_adjustment` / `other` (точное совпадение)
 - `search` — поиск по ФИО/телефону/организации пользователя, номеру/названию ШУ, типу и описанию заявки
 - `sort_by` — `created_at` (по умолч.), `closed_at`, `status`, `user_full_name`, `cabinet_object_number`, `request_type`
 - `sort_order` — `asc` / `desc`
@@ -2516,6 +2543,7 @@ es.onmessage = (e) => {
       "request_type": "repair",
       "description": "Не работает кнопка",
       "status": "open",
+      "chat_id": 12,
       "created_at": "2026-05-15T10:00:00Z",
       "closed_at": null
     }
@@ -2532,6 +2560,8 @@ es.onmessage = (e) => {
 { "status": "in_progress" }
 ```
 Если у заявки есть `bitrix_task_id`, статус асинхронно (в фоне) прокидывается и в задачу Bitrix24: `open` → "Ждёт выполнения", `in_progress` → "Выполняется", `closed` → "Завершена". Направление одностороннее — изменение статуса задачи прямо в Bitrix24 к нам не возвращается.
+
+При переходе в `closed` чат заявки архивируется (`archived_at` заполняется) — пропадает из активного списка чатов, становится read-only. При переходе обратно в `open`/`in_progress` — разархивируется автоматически.
 
 ---
 

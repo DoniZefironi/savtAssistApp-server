@@ -30,10 +30,12 @@ async def update_global_chat_settings(
 # Список чатов пользователя
 @router.get("/chats", response_model=list[ChatListOut])
 async def list_chats(
+    chat_type: str | None = Query(None, pattern="^(cabinet|support|notes|service_request)$"),
+    archived: bool = Query(False),
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    return await ChatService(session).list_chats(current_user.id)
+    return await ChatService(session).list_chats(current_user.id, chat_type=chat_type, archived=archived)
 
 # Получить/создать чат ШУ
 @router.get("/cabinets/{cabinet_id}/chat", response_model=ChatOut)

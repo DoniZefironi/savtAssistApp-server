@@ -16,7 +16,7 @@ from app.services.service_request_service import ServiceRequestService
 router = APIRouter(tags=["service requests"])
 
 _STATUS_PATTERN = "^(open|in_progress|closed)$"
-_REQUEST_TYPE_PATTERN = "^(repair|maintenance|inspection|other)$"
+_REQUEST_TYPE_PATTERN = "^(repair|diagnostics|remote_adjustment|onsite_adjustment|other)$"
 
 
 # --- Пользователь ---

@@ -57,8 +57,36 @@ class ChatService:
             existing = await self.chat_repo.create(user_id, "cabinet", cabinet_id)
         return existing
 
-    async def list_chats(self, user_id: int) -> list[ChatListOut]:
-        chats = await self.chat_repo.list_for_user(user_id)
+    # Чат заявки на обслуживание — один на заявку, привязан к тому же ШУ
+    # (для отображения контекста в списке чатов), видим и пользователю, и операторам
+    async def ensure_service_request_chat(
+        self, user_id: int, service_request_id: int, cabinet_id: int
+    ) -> Chat:
+        existing = await self.chat_repo.find_by_service_request(service_request_id)
+        if existing is None:
+            existing = await self.chat_repo.create(
+                user_id, "service_request", cabinet_id=cabinet_id,
+                service_request_id=service_request_id,
+            )
+        return existing
+
+    # Архивация/разархивация чата заявки (закрытие/повторное открытие заявки) —
+    # просто флаг, сообщения никуда не переносятся и не удаляются
+    async def set_archived(self, chat_id: int, archived: bool) -> Chat | None:
+        chat = await self.chat_repo.get_by_id(chat_id)
+        if chat is None:
+            return None
+        chat.archived_at = datetime.now(timezone.utc) if archived else None
+        await self.session.commit()
+        await publish_chat_updated(chat_id, chat_summary_dict(chat))
+        return chat
+
+    async def list_chats(
+        self, user_id: int, chat_type: str | None = None, archived: bool = False,
+    ) -> list[ChatListOut]:
+        chats = await self.chat_repo.list_for_user(user_id, chat_type=chat_type, archived=archived)
+        sr_ids = [c.service_request_id for c in chats if c.service_request_id is not None]
+        sr_map = await self._get_service_requests(sr_ids)
         result = []
         for chat in chats:
             unread = await self.chat_repo.get_unread_count(chat.id, user_id)
@@ -77,6 +105,8 @@ class ChatService:
                 msg, _ = msgs[0]
                 last_text = msg.text if not msg.deleted_at else "Сообщение удалено"
 
+            sr = sr_map.get(chat.service_request_id) if chat.service_request_id else None
+
             result.append(ChatListOut(
                 id=chat.id,
                 chat_type=chat.chat_type,
@@ -89,17 +119,26 @@ class ChatService:
                 problem_status=chat.problem_status,
                 bot_active=chat.bot_active,
                 operator_requested=chat.operator_requested,
+                service_request_id=chat.service_request_id,
+                service_request_type=sr.request_type if sr else None,
+                service_request_status=sr.status if sr else None,
+                archived_at=chat.archived_at,
             ))
         return result
 
-    async def list_operator_chats(self, operator_id: int, search: str | None = None) -> list[ChatListOut]:
-        rows = await self.chat_repo.list_for_operator(search)
+    async def list_operator_chats(
+        self, operator_id: int, search: str | None = None,
+        chat_type: str | None = None, archived: bool = False,
+    ) -> list[ChatListOut]:
+        rows = await self.chat_repo.list_for_operator(search, chat_type=chat_type, archived=archived)
         if not rows:
             return []
 
         chat_ids = [chat.id for chat, _, _ in rows]
         unread_counts = await self.chat_repo.get_unread_counts_batch(chat_ids, operator_id)
         last_msgs = await self.msg_repo.get_last_messages_batch(chat_ids)
+        sr_ids = [chat.service_request_id for chat, _, _ in rows if chat.service_request_id is not None]
+        sr_map = await self._get_service_requests(sr_ids)
 
         result = []
         for chat, user, cabinet in rows:
@@ -111,6 +150,7 @@ class ChatService:
 
             last_msg = last_msgs.get(chat.id)
             last_text = last_msg.text if last_msg else None
+            sr = sr_map.get(chat.service_request_id) if chat.service_request_id else None
 
             result.append(ChatListOut(
                 id=chat.id,
@@ -126,8 +166,20 @@ class ChatService:
                 problem_status=chat.problem_status,
                 bot_active=chat.bot_active,
                 operator_requested=chat.operator_requested,
+                service_request_id=chat.service_request_id,
+                service_request_type=sr.request_type if sr else None,
+                service_request_status=sr.status if sr else None,
+                archived_at=chat.archived_at,
             ))
         return result
+
+    async def _get_service_requests(self, ids: list[int]) -> dict:
+        if not ids:
+            return {}
+        from sqlalchemy import select
+        from app.models.service_request import ServiceRequest
+        result = await self.session.execute(select(ServiceRequest).where(ServiceRequest.id.in_(ids)))
+        return {r.id: r for r in result.scalars().all()}
 
     async def get_cabinet_chat(self, user_id: int, cabinet_id: int) -> ChatOut:
         from app.repositories.cabinet import UserCabinetRepository
@@ -143,6 +195,8 @@ class ChatService:
         self, chat_id: int, sender_id: int, data: MessageCreateIn
     ) -> MessageOut:
         chat = await self._get_chat_or_403(chat_id, sender_id)
+        if chat.archived_at is not None:
+            raise PermissionDeniedError("Чат архивирован — заявка закрыта, отправка сообщений недоступна")
 
         reply_to = data.reply_to_message_id if data.reply_to_message_id else None
         msg = await self.msg_repo.create(
@@ -510,6 +564,7 @@ def chat_summary_dict(chat: Chat, last_text: str | None = None, user_name: str |
         "id": chat.id,
         "chat_type": chat.chat_type,
         "cabinet_id": chat.cabinet_id,
+        "service_request_id": chat.service_request_id,
         "user_id": chat.user_id,
         "user_name": user_name,
         "last_message_text": last_text,
@@ -517,6 +572,7 @@ def chat_summary_dict(chat: Chat, last_text: str | None = None, user_name: str |
         "problem_status": chat.problem_status,
         "bot_active": chat.bot_active,
         "operator_requested": chat.operator_requested,
+        "archived_at": chat.archived_at.isoformat() if chat.archived_at else None,
     }
 
 
@@ -525,9 +581,11 @@ def _to_chat_out(chat: Chat) -> ChatOut:
         id=chat.id,
         chat_type=chat.chat_type,
         cabinet_id=chat.cabinet_id,
+        service_request_id=chat.service_request_id,
         problem_status=chat.problem_status,
         bot_active=chat.bot_active,
         operator_requested=chat.operator_requested,
+        archived_at=chat.archived_at,
         created_at=chat.created_at,
     )
 

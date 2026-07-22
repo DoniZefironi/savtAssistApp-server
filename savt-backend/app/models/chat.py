@@ -14,10 +14,14 @@ class Chat(Base):
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
-    # cabinet | support | notes
+    # cabinet | support | notes | service_request
     chat_type: Mapped[str] = mapped_column(String(20), index=True)
     # ид шкафа
     cabinet_id: Mapped[int | None] = mapped_column(ForeignKey("cabinets.id"), index=True)
+    # ид заявки на обслуживание (только для chat_type='service_request')
+    service_request_id: Mapped[int | None] = mapped_column(
+        ForeignKey("service_requests.id", ondelete="CASCADE"), index=True
+    )
     # время последнего сообщения
     last_message_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), index=True
@@ -39,6 +43,10 @@ class Chat(Base):
     follow_up_sent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     # время последнего сообщения от пользователя (для follow-up таймера)
     last_user_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # если не NULL - чат в архиве (заявка закрыта): скрыт из активного списка,
+    # read-only для новых сообщений; при повторном открытии заявки сбрасывается в NULL.
+    # Чисто флаг состояния - сообщения физически никуда не переносятся.
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
 
     def __repr__(self) -> str:
         return f"<Chat id={self.id} user_id={self.user_id} type={self.chat_type}>"
@@ -65,12 +73,19 @@ class Chat(Base):
             unique=True,
             postgresql_where=text("chat_type = 'notes'"),
         ),
+        # один чат на заявку
+        Index(
+            "uq_chat_service_request",
+            "service_request_id",
+            unique=True,
+            postgresql_where=text("service_request_id IS NOT NULL"),
+        ),
         CheckConstraint(
             "problem_status IN ('open', 'resolved')",
             name="ck_chat_problem_status",
         ),
         CheckConstraint(
-            "chat_type IN ('cabinet', 'support', 'notes')",
+            "chat_type IN ('cabinet', 'support', 'notes', 'service_request')",
             name="ck_chat_type",
         ),
     )

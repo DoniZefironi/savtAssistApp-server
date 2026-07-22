@@ -99,6 +99,10 @@ class ChatListOut(BaseModel):
     problem_status: str
     bot_active: bool
     operator_requested: bool
+    service_request_id: int | None = None
+    service_request_type: str | None = None
+    service_request_status: str | None = None
+    archived_at: datetime | None = None
 
 
 class WallpaperIn(BaseModel):
@@ -109,9 +113,11 @@ class ChatOut(BaseModel):
     id: int
     chat_type: str
     cabinet_id: int | None
+    service_request_id: int | None = None
     problem_status: str
     bot_active: bool
     operator_requested: bool
+    archived_at: datetime | None = None
     created_at: datetime
 
 
