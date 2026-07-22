@@ -42,6 +42,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
+      - "8080:8080"
     volumes:
       # NGINX_CONF задаётся в .env: по умолчанию боевой nginx.conf (HTTPS + редирект),
       # nginx.http-fallback.conf — пока порт 443 снаружи не проброшен

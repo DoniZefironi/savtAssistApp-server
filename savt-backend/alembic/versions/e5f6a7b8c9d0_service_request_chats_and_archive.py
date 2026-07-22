@@ -31,14 +31,17 @@ def upgrade() -> None:
     op.add_column("chats", sa.Column("archived_at", sa.DateTime(timezone=True), nullable=True))
     op.create_index(op.f("ix_chats_archived_at"), "chats", ["archived_at"])
 
-    op.drop_constraint("ck_chat_type", "chats", type_="check")
+    # ck_chat_type исторически объявлен только в модели (app/models/chat.py),
+    # ни одна прошлая миграция его реально не создавала — на проде констрейнта
+    # может не быть вовсе, поэтому дропаем через IF EXISTS вместо op.drop_constraint
+    op.execute("ALTER TABLE chats DROP CONSTRAINT IF EXISTS ck_chat_type")
     op.create_check_constraint(
         "ck_chat_type", "chats", "chat_type IN ('cabinet', 'support', 'notes', 'service_request')",
     )
 
 
 def downgrade() -> None:
-    op.drop_constraint("ck_chat_type", "chats", type_="check")
+    op.execute("ALTER TABLE chats DROP CONSTRAINT IF EXISTS ck_chat_type")
     op.create_check_constraint(
         "ck_chat_type", "chats", "chat_type IN ('cabinet', 'support', 'notes')",
     )
