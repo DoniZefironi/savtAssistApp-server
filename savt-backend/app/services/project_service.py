@@ -81,6 +81,7 @@ class ProjectService:
             setattr(project, field, value)
         self.audit.log("project.update", "project", project_id, actor_id, actor_role, {"fields": list(changed.keys())})
         await self.session.commit()
+        await self.session.refresh(project)
         return await self.get(project_id)
 
     # Удаление проекта (soft-delete, как у Cabinet)
