@@ -14,6 +14,7 @@ from app.services.realtime_events import (
     publish_message_pinned,
     publish_message_unpinned,
     publish_message_updated,
+    publish_messages_read,
     publish_reaction_changed,
 )
 from app.schemas.chat import (
@@ -299,8 +300,12 @@ class ChatService:
 
     async def mark_read(self, chat_id: int, user_id: int) -> None:
         await self._get_chat_or_403(chat_id, user_id)
-        await self.msg_repo.mark_read(chat_id, user_id)
+        message_ids = await self.msg_repo.mark_read(chat_id, user_id)
         await self.session.commit()
+        # Раньше при "прочитано" ничего не публиковалось в SSE — собеседник узнавал
+        # об этом только после ручного обновления страницы/рефетча
+        if message_ids:
+            await publish_messages_read(chat_id, message_ids, user_id)
 
     async def edit_message(
         self, chat_id: int, msg_id: int, user_id: int, text: str
@@ -534,6 +539,15 @@ class ChatService:
                 attachments=[AttachmentOut.model_validate(a) for a in atts],
             ))
         return make_page(items, total, page, size)
+
+    # Публичная обёртка над _get_chat_or_403 — для мест, которым нужен просто
+    # bool, а не исключение (например, авторизация WS-подключения к чату)
+    async def has_access(self, chat_id: int, user_id: int) -> bool:
+        try:
+            await self._get_chat_or_403(chat_id, user_id)
+            return True
+        except (NotFoundError, PermissionDeniedError):
+            return False
 
     async def _get_chat_or_403(self, chat_id: int, user_id: int) -> Chat:
         chat = await self.chat_repo.get_by_id(chat_id)

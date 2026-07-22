@@ -44,6 +44,7 @@ from app.routers import upload as upload_router
 from app.routers import admin_bot as admin_bot_router
 from app.routers import admin_dashboard as admin_dashboard_router
 from app.routers import operator_events as operator_events_router
+from app.routers import user_events as user_events_router
 from app.routers import projects as projects_router
 from app.routers import admin_projects as admin_projects_router
 from app.routers import admin_project_requests as admin_project_requests_router
@@ -167,6 +168,7 @@ app.include_router(upload_router.router)
 app.include_router(admin_bot_router.router)
 app.include_router(admin_dashboard_router.router)
 app.include_router(operator_events_router.router)
+app.include_router(user_events_router.router)
 app.include_router(projects_router.router)
 app.include_router(admin_projects_router.router)
 app.include_router(admin_project_requests_router.router)

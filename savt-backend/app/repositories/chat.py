@@ -235,9 +235,9 @@ class MessageRepository:
             mapping[rxn.message_id].append(rxn)
         return mapping
 
-    async def mark_read(self, chat_id: int, reader_id: int) -> None:
+    async def mark_read(self, chat_id: int, reader_id: int) -> list[int]:
         from sqlalchemy import update
-        await self.session.execute(
+        result = await self.session.execute(
             update(Message)
             .where(
                 Message.chat_id == chat_id,
@@ -246,7 +246,9 @@ class MessageRepository:
                 Message.deleted_at.is_(None),
             )
             .values(is_read=True)
+            .returning(Message.id)
         )
+        return list(result.scalars().all())
 
     async def add_attachment(self, message_id: int, att_data: dict) -> MessageAttachment:
         att = MessageAttachment(message_id=message_id, **att_data)
