@@ -37,11 +37,11 @@ class ChatRepository:
 
     async def create(
         self, user_id: int, chat_type: str, cabinet_id: int | None = None,
-        service_request_id: int | None = None,
+        service_request_id: int | None = None, bot_active: bool = True,
     ) -> Chat:
         chat = Chat(
             user_id=user_id, chat_type=chat_type, cabinet_id=cabinet_id,
-            service_request_id=service_request_id,
+            service_request_id=service_request_id, bot_active=bot_active,
         )
         self.session.add(chat)
         await self.session.flush()

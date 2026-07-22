@@ -224,7 +224,7 @@ async def handle_message(
         return
 
     chat = await session.get(Chat, chat_id)
-    if chat is None or not chat.bot_active or chat.chat_type == "notes":
+    if chat is None or not chat.bot_active or chat.chat_type in ("notes", "service_request"):
         return
 
     bot_user_id = await get_bot_user_id(session)
@@ -344,7 +344,7 @@ async def send_follow_up(session: AsyncSession) -> None:
                 Chat.bot_active == True,
                 Chat.follow_up_sent == False,
                 Chat.problem_status == "open",
-                Chat.chat_type != "notes",
+                Chat.chat_type.notin_(("notes", "service_request")),
                 Chat.last_user_message_at.isnot(None),
                 Chat.last_user_message_at < cutoff,
             )

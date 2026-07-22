@@ -64,9 +64,10 @@ class ChatService:
     ) -> Chat:
         existing = await self.chat_repo.find_by_service_request(service_request_id)
         if existing is None:
+            # Бот в чатах заявок не участвует — там ведёт человек (см. send_message)
             existing = await self.chat_repo.create(
                 user_id, "service_request", cabinet_id=cabinet_id,
-                service_request_id=service_request_id,
+                service_request_id=service_request_id, bot_active=False,
             )
         return existing
 
@@ -254,8 +255,9 @@ class ChatService:
                 {"chat_id": str(chat_id), "type": "chat_message"},
             )
 
-        # Бот отвечает только на сообщения владельца чата
-        if chat.user_id == sender_id and chat.bot_active and chat.chat_type != "notes":
+        # Бот отвечает только на сообщения владельца чата — не в личных заметках
+        # и не в чатах заявок (там ведёт человек, при необходимости эскалируется в Bitrix)
+        if chat.user_id == sender_id and chat.bot_active and chat.chat_type not in ("notes", "service_request"):
             import asyncio
             import logging
             from app.database import AsyncSessionLocal
