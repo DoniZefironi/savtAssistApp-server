@@ -2065,11 +2065,13 @@ QR кодирует строку: `savt://project/{unique_code}`
     "service_request_id": null,
     "service_request_type": null,
     "service_request_status": null,
+    "service_request_description": null,
+    "service_request_created_at": null,
     "archived_at": null
   }
 ]
 ```
-`service_request_id`/`service_request_type`/`service_request_status` заполнены только для `chat_type: "service_request"`.
+`service_request_id`/`service_request_type`/`service_request_status`/`service_request_description`/`service_request_created_at` заполнены только для `chat_type: "service_request"` — этого достаточно, чтобы отличить в списке разные заявки одного и того же пользователя (тип, дата, текст обращения), не делая отдельный запрос к `GET /service-requests/{id}`.
 `archived_at` — `null`, пока заявка не закрыта; при `status: "closed"` заполняется автоматически, при повторном открытии заявки — сбрасывается обратно в `null`. Архивный чат — read-only: `POST /chats/{chat_id}/messages` вернёт `403`, но история сообщений (`GET /chats/{chat_id}/messages`) остаётся доступна как обычно. Это только флаг состояния — сообщения физически никуда не переносятся.
 
 ---
@@ -2285,7 +2287,7 @@ QR кодирует строку: `savt://project/{unique_code}`
 
 Сортировка: сначала ожидающие оператора (`operator_requested=true`), затем по последнему сообщению.
 
-Каждый чат содержит `user_id`, `user_name`, `cabinet_object_number`, а для чатов заявок — ещё и `service_request_id`/`service_request_type`/`service_request_status` (см. `GET /chats` выше — формат ответа общий).
+Каждый чат содержит `user_id`, `user_name`, `cabinet_object_number`, а для чатов заявок — ещё и `service_request_id`/`service_request_type`/`service_request_status`/`service_request_description`/`service_request_created_at` (см. `GET /chats` выше — формат ответа общий).
 
 > **Оптимизация:** запрос выполняется за 3 DB-запроса независимо от числа чатов (JOIN на User+Cabinet + batch unread counts + batch last messages), вместо 4N+1 в предыдущей версии.
 
@@ -2509,6 +2511,12 @@ es.onmessage = (e) => {
 26_001 Могилевский водоканал ПНС Вейно (П-228) ремонт
 ```
 Части, для которых поле в ШУ не заполнено (`purpose`/`admin_internal_name`), просто пропускаются.
+
+**Синхронизация переписки в Bitrix.** Каждое сообщение **заявителя** (не оператора и не бота) в чате заявки асинхронно дублируется комментарием в ленту Bitrix-задачи (`task.commentitem.add`) в формате:
+```
+Иванов Иван написал: "Не работает кнопка"
+```
+Вложения без текста — прямой ссылкой на файл (`/static/...`, как есть в `file_url`); если в сообщении и текст, и вложения — ссылки идут отдельными строками после текста. Синхронизация одностороннего направления (как и статус) — комментарии, оставленные прямо в Bitrix, к нам не подтягиваются. Если у заявки ещё нет `bitrix_task_id` (Bitrix не настроен/недоступен на момент создания) — сообщение просто не синхронизируется, без ошибки для отправителя.
 
 ---
 

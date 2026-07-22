@@ -47,6 +47,24 @@ async def create_task(title: str, description: str) -> str | None:
     return str(data["result"]["task"]["id"])
 
 
+async def add_comment(task_id: str, text: str) -> None:
+    """Добавляет комментарий в ленту задачи Bitrix24 (task.commentitem.add) —
+    используется для синхронизации сообщений заявителя из чата заявки в задачу."""
+    if not settings.bitrix_webhook_url:
+        return
+
+    url = f"{settings.bitrix_webhook_url.rstrip('/')}/task.commentitem.add.json"
+    resp = await _get_client().post(
+        url,
+        json={"taskId": task_id, "fields": {"POST_MESSAGE": text}},
+    )
+    if not resp.is_success:
+        raise RuntimeError(f"Bitrix task.commentitem.add {resp.status_code}: {resp.text}")
+    data = resp.json()
+    if "error" in data:
+        raise RuntimeError(f"Bitrix task.commentitem.add error: {data}")
+
+
 async def update_task_status(task_id: str, status: str) -> None:
     """Обновляет статус задачи в Bitrix24 (tasks.task.update), отражая изменение
     статуса заявки у нас (open/in_progress/closed). Одностороннее — изменение

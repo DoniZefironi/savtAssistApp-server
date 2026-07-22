@@ -143,6 +143,35 @@ def _sync_status_to_bitrix(bitrix_task_id: str, status: str) -> None:
     asyncio.create_task(_task())
 
 
+# Синхронизация сообщения заявителя из чата заявки в комментарий Bitrix-задачи.
+# Вызывается из ChatService.send_message — публичная (без "_"), т.к. используется
+# из другого модуля. Только сообщения самого заявителя, не операторов/бота.
+def sync_message_to_bitrix(
+    service_request_id: int, sender_name: str, text: str | None, attachment_urls: list[str],
+) -> None:
+    async def _task():
+        from app.database import AsyncSessionLocal
+        from app.models.service_request import ServiceRequest
+        from app.services import bitrix_service
+
+        async with AsyncSessionLocal() as session:
+            req = await session.get(ServiceRequest, service_request_id)
+            task_id = req.bitrix_task_id if req is not None else None
+        if not task_id:
+            return
+
+        parts = [text] if text else []
+        parts.extend(attachment_urls)
+        body = "\n".join(parts)
+        comment = f'{sender_name} написал: "{body}"'
+        try:
+            await bitrix_service.add_comment(task_id, comment)
+        except Exception:
+            _log.exception("Bitrix comment sync failed for service request %s", service_request_id)
+
+    asyncio.create_task(_task())
+
+
 class ServiceRequestService:
     def __init__(self, session: AsyncSession):
         self.session = session

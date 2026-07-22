@@ -102,6 +102,8 @@ class ChatListOut(BaseModel):
     service_request_id: int | None = None
     service_request_type: str | None = None
     service_request_status: str | None = None
+    service_request_description: str | None = None
+    service_request_created_at: datetime | None = None
     archived_at: datetime | None = None
 
 
@@ -114,6 +116,10 @@ class ChatOut(BaseModel):
     chat_type: str
     cabinet_id: int | None
     service_request_id: int | None = None
+    service_request_type: str | None = None
+    service_request_status: str | None = None
+    service_request_description: str | None = None
+    service_request_created_at: datetime | None = None
     problem_status: str
     bot_active: bool
     operator_requested: bool

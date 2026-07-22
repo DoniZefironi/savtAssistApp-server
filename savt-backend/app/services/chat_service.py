@@ -122,6 +122,8 @@ class ChatService:
                 service_request_id=chat.service_request_id,
                 service_request_type=sr.request_type if sr else None,
                 service_request_status=sr.status if sr else None,
+                service_request_description=sr.description if sr else None,
+                service_request_created_at=sr.created_at if sr else None,
                 archived_at=chat.archived_at,
             ))
         return result
@@ -169,6 +171,8 @@ class ChatService:
                 service_request_id=chat.service_request_id,
                 service_request_type=sr.request_type if sr else None,
                 service_request_status=sr.status if sr else None,
+                service_request_description=sr.description if sr else None,
+                service_request_created_at=sr.created_at if sr else None,
                 archived_at=chat.archived_at,
             ))
         return result
@@ -227,6 +231,18 @@ class ChatService:
 
         await publish_message_created(chat_id, result.model_dump(mode="json"))
         await publish_chat_updated(chat_id, chat_summary_dict(chat, result.text))
+
+        # Сообщение заявителя в чате заявки — дублируем в комментарий Bitrix-задачи
+        # (ответы оператора/бота не синхронизируем)
+        if (
+            chat.chat_type == "service_request"
+            and chat.service_request_id is not None
+            and sender_id == chat.user_id
+        ):
+            from app.services.service_request_service import sync_message_to_bitrix
+            sender_name = sender.full_name if sender else str(sender_id)
+            attachment_urls = [att.file_url for att in data.attachments]
+            sync_message_to_bitrix(chat.service_request_id, sender_name, data.text, attachment_urls)
 
         # Push пользователю от оператора
         if sender_id != chat.user_id:
