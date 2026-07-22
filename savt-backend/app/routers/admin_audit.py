@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleName
-from app.core.dependencies import get_session, require_role
+from app.core.dependencies import get_role_from_token, get_session, require_role
 from app.models.user import User
 from app.schemas.audit import AuditLogOut
 from app.schemas.pagination import PageOut
@@ -14,6 +14,16 @@ router = APIRouter(prefix="/admin/audit-logs", tags=["admin: audit"])
 _ROLES = "^(admin|operator|user|system)$"
 _SORT = "^(created_at|action|entity_type|actor_role|actor_id)$"
 _SEARCH_IN = "^(all|action|entity_type|actor_name|payload)$"
+
+# ADMIN/OPERATOR видят только логи по заявкам (создание/одобрение/отклонение) —
+# CUD по шкафам/проектам/документам/пользователям видит только SUPERADMIN
+_REQUEST_ENTITY_TYPES = [
+    "cabinet_addition_request",
+    "cabinet_share_request",
+    "document_request",
+    "project_share_request",
+    "service_request",
+]
 
 
 @router.get("", response_model=PageOut[AuditLogOut])
@@ -36,13 +46,18 @@ async def list_audit_logs(
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
     _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    caller_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ) -> PageOut[AuditLogOut]:
+    # Только суперадмин видит полный лог (CUD по шкафам/проектам/документам/пользователям
+    # + заявки); admin/operator принудительно ограничены логами по заявкам
+    entity_types = None if caller_role == "superadmin" else _REQUEST_ENTITY_TYPES
     return await AuditService(session).list_logs(
         actor_id=actor_id,
         actor_role=actor_role,
         action=action,
         entity_type=entity_type,
+        entity_types=entity_types,
         entity_id=entity_id,
         search=search,
         search_in=search_in,

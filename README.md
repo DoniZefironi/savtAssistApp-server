@@ -1020,6 +1020,7 @@ POST /upload/transcribe (JSON: { file_url: "/static/voices/abc.ogg" })
 }
 ```
 `latitude` (-90…90) и `longitude` (-180…180) — необязательны, геолокация ШУ на карте.
+`warranty_starts_at`/`warranty_ends_at` — тоже необязательны (можно не указывать вообще, если у ШУ нет гарантии); если заданы оба — `warranty_ends_at` должен быть позже `warranty_starts_at`.
 
 **Поле `type`:**
 - Приводится к нижнему регистру автоматически (`"Вентиляция"` = `"вентиляция"`)
@@ -1038,7 +1039,7 @@ POST /upload/transcribe (JSON: { file_url: "/static/voices/abc.ogg" })
 - `has_photos` — `true` / `false` — есть ли фото
 - `has_users` — `true` / `false` — есть ли привязанный пользователь
 - `has_service_requests` — `true` / `false` — есть ли сервисные заявки
-- `warranty_status` — `active` (гарантия действует) / `expired` (истекла) / `none` (не указана)
+- `warranty_status` — `active` (действует, срок > 30 дней) / `expiring_soon` (истекает в течение 30 дней) / `expired` (истекла) / `none` (гарантия не указана вообще)
 - `has_project` — `true` / `false` — привязан ли ШУ к какому-либо проекту (`project_id is not null`)
 - `project_id` — точная привязка к конкретному проекту (`?project_id=3`) — например, для отображения карточек ШУ на странице проекта (полноценных, с гарантией/тегами/т.п.), в отличие от урезанного `cabinets[]` из `GET /admin/projects/{id}`
 - `sort_by` — `type`, `warranty_ends_at`, `object_number`, `admin_internal_name`, `purpose`, `created_at`
@@ -1064,13 +1065,16 @@ POST /upload/transcribe (JSON: { file_url: "/static/voices/abc.ogg" })
   "created_at": "2026-05-01T10:00:00Z"
 }
 ```
-`warranty_status`: `active`, `expiring_soon` (≤30 дней), `expired`.
+`warranty_status`: `active`, `expiring_soon` (≤30 дней), `expired`, `none` (гарантия не указана — `warranty_starts_at`/`warranty_ends_at` оба `null`).
+`warranty_starts_at`/`warranty_ends_at` в самом ШУ — `null`, если гарантия не указана.
 `project_id`/`project_name` — `null`, если ШУ не привязан ни к одному проекту.
 
 ---
 
 ### GET `/admin/cabinets/geo`
-Лёгкий endpoint для карты — возвращает **все** ШУ одним запросом без пагинации.
+Лёгкий endpoint для карты — возвращает **все** ШУ одним запросом без пагинации. Параметры (фильтры под легенду меток на карте):
+- `warranty_status` — `active` / `expiring_soon` / `expired` / `none` (те же 4 состояния, что и в `GET /admin/cabinets`)
+- `has_open_requests` — `true` / `false` — есть ли новая (открытая) сервисная заявка
 
 Ответ (`list[CabinetGeoItem]`):
 ```json
@@ -1087,7 +1091,7 @@ POST /upload/transcribe (JSON: { file_url: "/static/voices/abc.ogg" })
 ]
 ```
 
-`warranty_status`: `active` | `expiring_soon` | `expired`.  
+`warranty_status`: `active` | `expiring_soon` | `expired` | `none`.
 `has_open_requests`: есть ли хотя бы одна сервисная заявка со статусом `open`.  
 ШУ без координат тоже включены (`latitude`/`longitude` = `null`) — фронт фильтрует сам.
 
@@ -3098,7 +3102,9 @@ SELECT source_type, COUNT(*) FROM embeddings GROUP BY source_type;
 ## Рут `admin: audit` — журнал действий
 
 ### GET `/admin/audit-logs`
-Журнал административных действий (создание/удаление пользователей, баны, верификации и т.п.). Доступно администратору и оператору.
+Журнал административных действий. Доступ разный по уровню:
+- **`admin`/`operator`** — видят только логи по заявкам (создание, одобрение, отклонение): `entity_type` принудительно ограничен списком `cabinet_addition_request`, `cabinet_share_request`, `document_request`, `project_share_request`, `service_request` — сервер сам сужает выдачу до этого набора независимо от того, что передано в `entity_type`/`entity_id`.
+- **`superadmin`** — видит вообще всё, без ограничений: CUD по шкафам, проектам, документам, пользователям (баны/верификации), плюс те же заявки.
 
 Параметры:
 - `actor_id` — фильтр по ID исполнителя

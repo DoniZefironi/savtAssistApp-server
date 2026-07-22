@@ -20,7 +20,7 @@ class AdminUserCabinetItem(BaseModel):
     cabinet_id: int
     type: str
     object_number: str
-    warranty_ends_at: datetime
+    warranty_ends_at: datetime | None
     warranty_status: str
     custom_name: str | None
     is_primary: bool

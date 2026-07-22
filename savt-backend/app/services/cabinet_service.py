@@ -1,5 +1,4 @@
 import secrets
-from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +10,7 @@ from app.schemas.cabinet import CabinetCreateIn, CabinetGeoItem, CabinetListOut,
 from app.schemas.tags import TagOut
 from app.schemas.pagination import PageOut, make_page
 from app.services.audit_service import AuditLogger
+from app.utils.warranty import warranty_status as _warranty_status
 
 
 async def _resolve_type(session: AsyncSession, raw_type: str) -> str:
@@ -23,15 +23,6 @@ async def _resolve_type(session: AsyncSession, raw_type: str) -> str:
     if existing is None:
         await repo.create(normalized, "cabinet_type")
     return normalized
-
-
-def _warranty_status(ends_at: datetime) -> str:
-    now = datetime.now(timezone.utc)
-    if ends_at < now:
-        return "expired"
-    if ends_at < now + timedelta(days=30):
-        return "expiring_soon"
-    return "active"
 
 
 class CabinetService:
@@ -178,8 +169,10 @@ class CabinetService:
         self.audit.log("cabinet.set_tags", "cabinet", cabinet_id, actor_id, actor_role, {"tag_ids": tag_ids})
         await self.session.commit()
 
-    async def get_geo(self) -> list[CabinetGeoItem]:
-        rows = await self.repo.get_geo()
+    async def get_geo(
+        self, warranty_status: str | None = None, has_open_requests: bool | None = None,
+    ) -> list[CabinetGeoItem]:
+        rows = await self.repo.get_geo(warranty_status=warranty_status, has_open_requests=has_open_requests)
         return [
             CabinetGeoItem(
                 id=row.id,

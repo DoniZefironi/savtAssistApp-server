@@ -40,6 +40,7 @@ class AuditRepository:
         actor_role: str | None = None,
         action: str | None = None,
         entity_type: str | None = None,
+        entity_types: list[str] | None = None,
         entity_id: int | None = None,
         search: str | None = None,
         search_in: str = "all",
@@ -64,6 +65,10 @@ class AuditRepository:
             conditions.append(AuditLog.action == action)
         if entity_type is not None:
             conditions.append(AuditLog.entity_type == entity_type)
+        # Принудительное сужение по роли вызывающего (см. admin_audit.py) —
+        # не то же самое, что entity_type: это ограничение видимости, а не фильтр пользователя
+        if entity_types is not None:
+            conditions.append(AuditLog.entity_type.in_(entity_types))
         if entity_id is not None:
             conditions.append(AuditLog.entity_id == entity_id)
         if date_from is not None:

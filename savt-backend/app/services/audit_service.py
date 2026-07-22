@@ -51,12 +51,14 @@ class AuditService:
         sort_order: str,
         page: int,
         size: int,
+        entity_types: list[str] | None = None,
     ) -> PageOut[AuditLogOut]:
         rows, total = await self.repo.list_logs(
             actor_id=actor_id,
             actor_role=actor_role,
             action=action,
             entity_type=entity_type,
+            entity_types=entity_types,
             entity_id=entity_id,
             search=search,
             search_in=search_in,

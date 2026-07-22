@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete, exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,7 +26,7 @@ def cabinet_match_conditions(
     has_photos: bool | None = None,
     has_users: bool | None = None,
     has_service_requests: bool | None = None,
-    warranty_status: str | None = None,  # "active" | "expired" | "none"
+    warranty_status: str | None = None,  # "active" | "expiring_soon" | "expired" | "none"
 ) -> list:
     conditions = []
     if tag_ids:
@@ -62,12 +62,20 @@ def cabinet_match_conditions(
         )
         conditions.append(sr_exists if has_service_requests else ~sr_exists)
 
+    # Границы совпадают с _warranty_status() (cabinet_service.py) — фильтр по статусу
+    # должен возвращать ровно то множество, что подписано этим статусом в ответе.
+    now = datetime.now(timezone.utc)
+    soon = now + timedelta(days=30)
     if warranty_status == "active":
         conditions.append(Cabinet.warranty_ends_at.isnot(None))
-        conditions.append(Cabinet.warranty_ends_at >= datetime.now(timezone.utc))
+        conditions.append(Cabinet.warranty_ends_at >= soon)
+    elif warranty_status == "expiring_soon":
+        conditions.append(Cabinet.warranty_ends_at.isnot(None))
+        conditions.append(Cabinet.warranty_ends_at >= now)
+        conditions.append(Cabinet.warranty_ends_at < soon)
     elif warranty_status == "expired":
         conditions.append(Cabinet.warranty_ends_at.isnot(None))
-        conditions.append(Cabinet.warranty_ends_at < datetime.now(timezone.utc))
+        conditions.append(Cabinet.warranty_ends_at < now)
     elif warranty_status == "none":
         conditions.append(Cabinet.warranty_ends_at.is_(None))
 
@@ -175,7 +183,21 @@ class CabinetRepository(BaseRepository[Cabinet]):
         result = await self.session.execute(select(Cabinet).where(*conditions))
         return list(result.scalars().all())
 
-    async def get_geo(self) -> list[tuple]:
+    async def get_geo(
+        self, warranty_status: str | None = None, has_open_requests: bool | None = None,
+    ) -> list[tuple]:
+        conditions = [Cabinet.deleted_at.is_(None)]
+        conditions.extend(cabinet_match_conditions(warranty_status=warranty_status))
+
+        if has_open_requests is not None:
+            open_sr_exists = exists(
+                select(ServiceRequest.id).where(
+                    ServiceRequest.cabinet_id == Cabinet.id,
+                    ServiceRequest.status == "open",
+                )
+            )
+            conditions.append(open_sr_exists if has_open_requests else ~open_sr_exists)
+
         open_sr = exists(
             select(ServiceRequest.id).where(
                 ServiceRequest.cabinet_id == Cabinet.id,
@@ -192,7 +214,7 @@ class CabinetRepository(BaseRepository[Cabinet]):
                 Cabinet.longitude,
                 open_sr,
             )
-            .where(Cabinet.deleted_at.is_(None))
+            .where(*conditions)
         )
         return result.all()
 

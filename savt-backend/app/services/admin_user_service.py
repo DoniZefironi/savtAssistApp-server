@@ -1,5 +1,3 @@
-from datetime import datetime, timedelta, timezone
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError, PermissionDeniedError
@@ -16,15 +14,7 @@ from app.schemas.admin_users import (
     CreateOperatorIn,
 )
 from app.schemas.pagination import PageOut, make_page
-
-# Расчет статуса
-def _warranty_status(ends_at: datetime) -> str:
-    now = datetime.now(timezone.utc)
-    if ends_at < now:
-        return "expired"
-    if ends_at < now + timedelta(days=30):
-        return "expiring_soon"
-    return "active"
+from app.utils.warranty import warranty_status as _warranty_status
 
 
 class AdminUserService:

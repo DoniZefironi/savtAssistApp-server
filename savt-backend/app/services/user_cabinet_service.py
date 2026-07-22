@@ -1,5 +1,3 @@
-from datetime import datetime, timedelta, timezone
-
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,15 +7,7 @@ from app.models.message import Message
 from app.repositories.cabinet import CabinetRepository, CabinetRequestRepository, UserCabinetRepository
 from app.repositories.project import ProjectRepository
 from app.schemas.cabinet import UserCabinetDetailOut, UserCabinetListItemOut, UserCabinetPatchIn
-
-# Подсчет статуса гарантии
-def _warranty_status(ends_at: datetime) -> str:
-    now = datetime.now(timezone.utc)
-    if ends_at < now:
-        return "expired"
-    if ends_at < now + timedelta(days=30):
-        return "expiring_soon"
-    return "active"
+from app.utils.warranty import warranty_status as _warranty_status
 
 
 class UserCabinetService:

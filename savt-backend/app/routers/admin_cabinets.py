@@ -32,7 +32,7 @@ async def list_cabinets(
     has_photos: bool | None = Query(None),
     has_users: bool | None = Query(None),
     has_service_requests: bool | None = Query(None),
-    warranty_status: str | None = Query(None, pattern="^(active|expired|none)$"),
+    warranty_status: str | None = Query(None, pattern="^(active|expiring_soon|expired|none)$"),
     has_project: bool | None = Query(None),
     project_id: int | None = Query(None, gt=0),
     sort_by: str = Query("created_at", pattern="^(type|warranty_ends_at|object_number|admin_internal_name|purpose|created_at)$"),
@@ -53,10 +53,14 @@ async def list_cabinets(
 # Гео-данные всех ШУ — ДОЛЖЕН быть ДО /{cabinet_id}
 @router.get("/geo", response_model=list[CabinetGeoItem])
 async def get_cabinets_geo(
+    warranty_status: str | None = Query(None, pattern="^(active|expiring_soon|expired|none)$"),
+    has_open_requests: bool | None = Query(None),
     _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
-    return await CabinetService(session).get_geo()
+    return await CabinetService(session).get_geo(
+        warranty_status=warranty_status, has_open_requests=has_open_requests,
+    )
 
 
 # Подробнее о ШУ

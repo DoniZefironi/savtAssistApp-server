@@ -29,7 +29,7 @@ async def list_projects(
     has_photos: bool | None = Query(None),
     has_users: bool | None = Query(None),
     has_service_requests: bool | None = Query(None),
-    warranty_status: str | None = Query(None, pattern="^(active|expired|none)$"),
+    warranty_status: str | None = Query(None, pattern="^(active|expiring_soon|expired|none)$"),
     sort_by: str = Query("created_at", pattern="^(name|created_at)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
@@ -54,7 +54,7 @@ async def get_project(
     has_photos: bool | None = Query(None),
     has_users: bool | None = Query(None),
     has_service_requests: bool | None = Query(None),
-    warranty_status: str | None = Query(None, pattern="^(active|expired|none)$"),
+    warranty_status: str | None = Query(None, pattern="^(active|expiring_soon|expired|none)$"),
     _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):

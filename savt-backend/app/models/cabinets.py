@@ -21,10 +21,10 @@ class Cabinet(Base):
     object_number: Mapped[str] = mapped_column(String(100))
     # описание
     description: Mapped[str | None] = mapped_column(Text)
-    # начало гарантии
-    warranty_starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    # окончание гарантии
-    warranty_ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    # начало гарантии (null - гарантии нет вообще)
+    warranty_starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # окончание гарантии (null - гарантии нет вообще)
+    warranty_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     # рабочее название
     admin_internal_name: Mapped[str | None] = mapped_column(String(200))
     # комментарий администратора

@@ -18,8 +18,8 @@ class CabinetCreateIn(BaseModel):
     type: str = Field(..., min_length=1, max_length=100)
     object_number: str = Field(..., min_length=1, max_length=100)
     description: str | None = Field(None, max_length=2000)
-    warranty_starts_at: datetime
-    warranty_ends_at: datetime
+    warranty_starts_at: datetime | None = None
+    warranty_ends_at: datetime | None = None
     admin_internal_name: str | None = Field(None, min_length=1, max_length=200)
     admin_comment: str | None = Field(None, max_length=2000)
     purpose: str | None = Field(None, min_length=1, max_length=200)
@@ -28,7 +28,8 @@ class CabinetCreateIn(BaseModel):
 
     @model_validator(mode="after")
     def validate_warranty_dates(self) -> "CabinetCreateIn":
-        if self.warranty_ends_at <= self.warranty_starts_at:
+        s, e = self.warranty_starts_at, self.warranty_ends_at
+        if s is not None and e is not None and e <= s:
             raise ValueError("Дата окончания гарантии должна быть позже даты начала")
         return self
 
@@ -59,8 +60,8 @@ class CabinetOut(BaseModel):
     type: str
     object_number: str
     description: str | None
-    warranty_starts_at: datetime
-    warranty_ends_at: datetime
+    warranty_starts_at: datetime | None
+    warranty_ends_at: datetime | None
     admin_internal_name: str | None
     admin_comment: str | None
     purpose: str | None
@@ -81,8 +82,8 @@ class CabinetListOut(BaseModel):
     type: str
     object_number: str
     purpose: str | None
-    warranty_starts_at: datetime
-    warranty_ends_at: datetime
+    warranty_starts_at: datetime | None
+    warranty_ends_at: datetime | None
     warranty_status: str
     admin_internal_name: str | None
     admin_comment: str | None
@@ -98,7 +99,7 @@ class UserCabinetListItemOut(BaseModel):
     cabinet_id: int
     type: str
     object_number: str
-    warranty_ends_at: datetime
+    warranty_ends_at: datetime | None
     warranty_status: str
     custom_name: str | None
     is_primary: bool
@@ -113,8 +114,8 @@ class UserCabinetDetailOut(BaseModel):
     object_number: str
     description: str | None
     purpose: str | None
-    warranty_starts_at: datetime
-    warranty_ends_at: datetime
+    warranty_starts_at: datetime | None
+    warranty_ends_at: datetime | None
     warranty_status: str
     latitude: float | None
     longitude: float | None
