@@ -103,6 +103,7 @@ class CabinetRepository(BaseRepository[Cabinet]):
         has_service_requests: bool | None = None,
         warranty_status: str | None = None,  # "active" | "expired" | "none"
         has_project: bool | None = None,
+        project_id: int | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
         offset: int = 0,
@@ -124,6 +125,9 @@ class CabinetRepository(BaseRepository[Cabinet]):
 
         if has_project is not None:
             conditions.append(Cabinet.project_id.isnot(None) if has_project else Cabinet.project_id.is_(None))
+
+        if project_id is not None:
+            conditions.append(Cabinet.project_id == project_id)
 
         count_stmt = select(func.count(Cabinet.id))
         if conditions:

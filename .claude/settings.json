@@ -30,7 +30,9 @@
     ],
     "additionalDirectories": [
       "C:\\code\\uploads",
-      "C:\\Users\\ShaboldaV\\AppData\\Local\\Temp"
+      "C:\\Users\\ShaboldaV\\AppData\\Local\\Temp",
+      "C:\\Users\\ShaboldaV\\AppData\\Local\\Temp\\claude\\c--Users-ShaboldaV-Documents-GitHub-savtAssistApp-server\\55d1e6a3-b129-4083-b4ef-02da138b4066\\scratchpad",
+      "C:\\Users\\ShaboldaV\\AppData\\Local\\Temp\\savt_check_venv4"
     ]
   }
 }

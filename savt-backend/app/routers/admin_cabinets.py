@@ -34,6 +34,7 @@ async def list_cabinets(
     has_service_requests: bool | None = Query(None),
     warranty_status: str | None = Query(None, pattern="^(active|expired|none)$"),
     has_project: bool | None = Query(None),
+    project_id: int | None = Query(None, gt=0),
     sort_by: str = Query("created_at", pattern="^(type|warranty_ends_at|object_number|admin_internal_name|purpose|created_at)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
@@ -45,7 +46,7 @@ async def list_cabinets(
         query=search, tag_ids=tag_ids or None,
         has_documents=has_documents, has_photos=has_photos,
         has_users=has_users, has_service_requests=has_service_requests,
-        warranty_status=warranty_status, has_project=has_project,
+        warranty_status=warranty_status, has_project=has_project, project_id=project_id,
         sort_by=sort_by, sort_order=sort_order, page=page, size=size,
     )
 

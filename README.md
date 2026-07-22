@@ -684,7 +684,8 @@ POST /upload/transcribe (JSON: { file_url: "/static/voices/abc.ogg" })
 
 ### Админ-панель
 - [ ] Раздел **«Проекты»**: список (`GET /admin/projects`, поиск/сортировка/пагинация), создание (`POST /admin/projects` — только название), переименование (`PATCH .../{id}`), удаление (`DELETE .../{id}`, с предупреждением что это soft-delete).
-- [ ] Карточка проекта — `GET /admin/projects/{id}`, список привязанных шкафов, кнопка «Показать QR» → `GET /admin/projects/{id}/qr` (аналогично существующей кнопке QR у шкафа), кнопка «Печать/скачать».
+- [ ] Карточка проекта — `GET /admin/projects/{id}` для метаданных проекта, но список шкафов на странице лучше грузить отдельно через `GET /admin/cabinets?project_id={id}` (полноценные карточки ШУ — с гарантией, тегами и т.п., плюс пагинация/поиск/фильтры/сортировка как в общем списке ШУ); `cabinets[]` из `GET /admin/projects/{id}` — урезанный (`id`/`type`/`object_number`/`admin_internal_name`), годится только для лёгкого превью. Кнопка «Показать QR» → `GET /admin/projects/{id}/qr` (аналогично существующей кнопке QR у шкафа), кнопка «Печать/скачать».
+- [ ] В карточке/списке ШУ показывать проект по полям `project_id`/`project_name` из ответа **самого эндпоинта ШУ** (`GET /admin/cabinets`, `GET /admin/cabinets/{id}`, `GET /cabinets`, `GET /cabinets/{id}`) — не выводить его из того, откуда была открыта карточка (например, что «открыли со страницы проекта X»). Раньше эти поля не отдавались вообще, из-за чего карточка ШУ всегда показывала «Без проекта» независимо от контекста — теперь отдаются везде, `null`/`null`, если ШУ ни к какому проекту не привязан.
 - [ ] В карточке/форме ШУ (там где сейчас редактируются теги через `PUT /admin/cabinets/{id}/tags`) добавить поле **«Проект»** — выпадающий список из `GET /admin/projects`, сохранение через `PATCH /admin/cabinets/{cabinet_id}/project` (`{ project_id: null }` для отвязки). Стоит явно предупредить админа в UI, что если у проекта уже есть участники — они получат доступ к этому шкафу сразу, без дополнительного подтверждения.
 - [ ] Новый раздел заявок **«Заявки на проекты»** (`GET /admin/project-requests`) — верстается один-в-один как уже существующий «Заявки на доступ к ШУ» (`shares`): та же таблица, те же кнопки «Одобрить»/«Отклонить» (`POST .../{id}/approve|reject`). Доступен на просмотр оператору, одобрение/отклонение — только админу (как и у заявок на ШУ).
 - [ ] На дашборде (`GET /admin/dashboard`) пока нет счётчика pending-заявок на проекты — если нужно, стоит завести отдельный тикет на бэкенд, сейчас в `stats` его нет.
@@ -1034,6 +1035,7 @@ POST /upload/transcribe (JSON: { file_url: "/static/voices/abc.ogg" })
 - `has_service_requests` — `true` / `false` — есть ли сервисные заявки
 - `warranty_status` — `active` (гарантия действует) / `expired` (истекла) / `none` (не указана)
 - `has_project` — `true` / `false` — привязан ли ШУ к какому-либо проекту (`project_id is not null`)
+- `project_id` — точная привязка к конкретному проекту (`?project_id=3`) — например, для отображения карточек ШУ на странице проекта (полноценных, с гарантией/тегами/т.п.), в отличие от урезанного `cabinets[]` из `GET /admin/projects/{id}`
 - `sort_by` — `type`, `warranty_ends_at`, `object_number`, `admin_internal_name`, `purpose`, `created_at`
 - `sort_order` — `asc`, `desc`
 - `page`, `size` — пагинация (по умолч. `1` / `20`, максимум `100`)
@@ -1052,10 +1054,13 @@ POST /upload/transcribe (JSON: { file_url: "/static/voices/abc.ogg" })
   "admin_internal_name": "ШУ-18К",
   "admin_comment": "Внутренний комментарий",
   "tags": [{ "id": 2, "name": "Электрика", "scope": "cabinet" }],
+  "project_id": 3,
+  "project_name": "Бизнес-центр Космос",
   "created_at": "2026-05-01T10:00:00Z"
 }
 ```
 `warranty_status`: `active`, `expiring_soon` (≤30 дней), `expired`.
+`project_id`/`project_name` — `null`, если ШУ не привязан ни к одному проекту.
 
 ---
 
@@ -1084,7 +1089,7 @@ POST /upload/transcribe (JSON: { file_url: "/static/voices/abc.ogg" })
 ---
 
 ### GET `/admin/cabinets/{cabinet_id}`
-Детальная информация о ШУ с тегами.
+Детальная информация о ШУ с тегами. Ответ (`CabinetOut`) включает `project_id`/`project_name` (оба `null`, если ШУ не привязан к проекту) — это единственный источник истины для отображения проекта в карточке ШУ, независимо от того, откуда её открыли (из общего списка или со страницы проекта).
 
 ---
 
@@ -1512,12 +1517,15 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
     "warranty_status": "active",
     "custom_name": "ШУ-18К",
     "is_primary": true,
-    "unread_count": 3
+    "unread_count": 3,
+    "project_id": 3,
+    "project_name": "Бизнес-центр Космос"
   }
 ]
 ```
 - `custom_name` — пользовательское название; если не задано, возвращается `admin_internal_name`
 - `unread_count` — количество непрочитанных сообщений в чате этого ШУ
+- `project_id`/`project_name` — `null`, если ШУ не привязан ни к одному проекту
 
 ---
 
@@ -1537,10 +1545,13 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
   "longitude": 27.5615,
   "custom_name": "Мой шкаф",
   "custom_comment": "Комментарий",
-  "is_primary": true
+  "is_primary": true,
+  "project_id": 3,
+  "project_name": "Бизнес-центр Космос"
 }
 ```
 `latitude`/`longitude` — `null` если геолокация не задана. Используется для отображения ШУ на карте.
+`project_id`/`project_name` — `null`, если ШУ не привязан ни к одному проекту.
 
 ---
 

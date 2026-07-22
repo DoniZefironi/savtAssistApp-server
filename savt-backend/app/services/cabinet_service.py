@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
 from app.repositories.cabinet import CabinetRepository
+from app.repositories.project import ProjectRepository
 from app.repositories.tag import TagRepository
 from app.schemas.cabinet import CabinetCreateIn, CabinetGeoItem, CabinetListOut, CabinetOut, CabinetUpdateIn
 from app.schemas.tags import TagOut
@@ -36,6 +37,7 @@ def _warranty_status(ends_at: datetime) -> str:
 class CabinetService:
     def __init__(self, session: AsyncSession):
         self.repo = CabinetRepository(session)
+        self.project_repo = ProjectRepository(session)
         self.session = session
         self.audit = AuditLogger(session)
 
@@ -67,6 +69,9 @@ class CabinetService:
         if cabinet is None:
             raise NotFoundError("ШУ не найден")
         tags_map = await self.repo.get_tags([cabinet_id])
+        project_names = await self.project_repo.get_names_by_ids(
+            [cabinet.project_id] if cabinet.project_id is not None else []
+        )
         return CabinetOut(
             id=cabinet.id,
             unique_code=cabinet.unique_code,
@@ -81,6 +86,8 @@ class CabinetService:
             latitude=cabinet.latitude,
             longitude=cabinet.longitude,
             tags=[TagOut.model_validate(t) for t in tags_map.get(cabinet_id, [])],
+            project_id=cabinet.project_id,
+            project_name=project_names.get(cabinet.project_id) if cabinet.project_id is not None else None,
             created_at=cabinet.created_at,
             updated_at=cabinet.updated_at,
         )
@@ -122,6 +129,7 @@ class CabinetService:
         has_service_requests: bool | None = None,
         warranty_status: str | None = None,
         has_project: bool | None = None,
+        project_id: int | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
         page: int = 1,
@@ -132,12 +140,14 @@ class CabinetService:
             query=query, tag_ids=tag_ids,
             has_documents=has_documents, has_photos=has_photos,
             has_users=has_users, has_service_requests=has_service_requests,
-            warranty_status=warranty_status, has_project=has_project,
+            warranty_status=warranty_status, has_project=has_project, project_id=project_id,
             sort_by=sort_by, sort_order=sort_order,
             offset=offset, limit=size,
         )
         cabinet_ids = [c.id for c in cabinets]
         tags_map = await self.repo.get_tags(cabinet_ids)
+        project_ids = list({c.project_id for c in cabinets if c.project_id is not None})
+        project_names = await self.project_repo.get_names_by_ids(project_ids)
         items = [
             CabinetListOut(
                 id=c.id,
@@ -151,6 +161,8 @@ class CabinetService:
                 admin_internal_name=c.admin_internal_name,
                 admin_comment=c.admin_comment,
                 tags=[TagOut.model_validate(t) for t in tags_map.get(c.id, [])],
+                project_id=c.project_id,
+                project_name=project_names.get(c.project_id) if c.project_id is not None else None,
                 created_at=c.created_at,
             )
             for c in cabinets

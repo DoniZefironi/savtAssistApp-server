@@ -31,6 +31,17 @@ class ProjectRepository(BaseRepository[Project]):
         project.deleted_at = datetime.now(timezone.utc)
         await self.session.flush()
 
+    # Bulk-подстановка названий проектов в карточки ШУ (CabinetOut/CabinetListOut/...) —
+    # включает и удалённые проекты (deleted_at не фильтруется), т.к. cabinet.project_id
+    # мог остаться проставленным на уже мягко удалённый проект.
+    async def get_names_by_ids(self, project_ids: list[int]) -> dict[int, str]:
+        if not project_ids:
+            return {}
+        result = await self.session.execute(
+            select(Project.id, Project.name).where(Project.id.in_(project_ids))
+        )
+        return {pid: name for pid, name in result.all()}
+
     async def search(
         self,
         query: str | None = None,

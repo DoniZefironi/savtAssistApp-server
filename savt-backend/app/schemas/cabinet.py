@@ -67,6 +67,8 @@ class CabinetOut(BaseModel):
     latitude: float | None
     longitude: float | None
     tags: list[TagOut] = []
+    project_id: int | None
+    project_name: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -85,6 +87,8 @@ class CabinetListOut(BaseModel):
     admin_internal_name: str | None
     admin_comment: str | None
     tags: list[TagOut] = []
+    project_id: int | None
+    project_name: str | None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -99,6 +103,8 @@ class UserCabinetListItemOut(BaseModel):
     custom_name: str | None
     is_primary: bool
     unread_count: int
+    project_id: int | None
+    project_name: str | None
 
 
 class UserCabinetDetailOut(BaseModel):
@@ -115,6 +121,8 @@ class UserCabinetDetailOut(BaseModel):
     custom_name: str | None
     custom_comment: str | None
     is_primary: bool
+    project_id: int | None
+    project_name: str | None
 
 
 class UserCabinetPatchIn(BaseModel):

@@ -7,6 +7,7 @@ from app.core.exceptions import AlreadyExistsError, NotFoundError
 from app.models.chat import Chat
 from app.models.message import Message
 from app.repositories.cabinet import CabinetRepository, CabinetRequestRepository, UserCabinetRepository
+from app.repositories.project import ProjectRepository
 from app.schemas.cabinet import UserCabinetDetailOut, UserCabinetListItemOut, UserCabinetPatchIn
 
 # Подсчет статуса гарантии
@@ -23,6 +24,7 @@ class UserCabinetService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.cabinet_repo = CabinetRepository(session)
+        self.project_repo = ProjectRepository(session)
         self.user_cabinet_repo = UserCabinetRepository(session)
         self.request_repo = CabinetRequestRepository(session)
 
@@ -34,6 +36,8 @@ class UserCabinetService:
 
         cabinet_ids = [uc.cabinet_id for uc, _ in rows]
         unread = await self._get_unread_counts(user_id, cabinet_ids)
+        project_ids = list({cab.project_id for _, cab in rows if cab.project_id is not None})
+        project_names = await self.project_repo.get_names_by_ids(project_ids)
 
         return [
             UserCabinetListItemOut(
@@ -45,6 +49,8 @@ class UserCabinetService:
                 custom_name=uc.custom_name or cab.admin_internal_name or cab.object_number,
                 is_primary=uc.is_primary,
                 unread_count=unread.get(cab.id, 0),
+                project_id=cab.project_id,
+                project_name=project_names.get(cab.project_id) if cab.project_id is not None else None,
             )
             for uc, cab in rows
         ]
@@ -55,6 +61,9 @@ class UserCabinetService:
         if row is None:
             raise NotFoundError("ШУ не найден")
         uc, cab = row
+        project_names = await self.project_repo.get_names_by_ids(
+            [cab.project_id] if cab.project_id is not None else []
+        )
         return UserCabinetDetailOut(
             cabinet_id=cab.id,
             type=cab.type,
@@ -69,6 +78,8 @@ class UserCabinetService:
             custom_name=uc.custom_name or cab.admin_internal_name or cab.object_number,
             custom_comment=uc.custom_comment,
             is_primary=uc.is_primary,
+            project_id=cab.project_id,
+            project_name=project_names.get(cab.project_id) if cab.project_id is not None else None,
         )
 
     # Обновление ШУ
