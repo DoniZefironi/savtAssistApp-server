@@ -42,18 +42,26 @@ def _reindex_document(doc_id: int) -> None:
 @router.post("/admin/documents", response_model=DocumentOut, status_code=status.HTTP_201_CREATED)
 async def create_document(
     file: UploadFile = File(...),
-    cabinet_id: str = Form(...),
+    cabinet_id: str | None = Form(None),
+    project_id: str | None = Form(None),
     title: str | None = Form(None),
     requires_approval: bool = Form(False),
     actor: User = Depends(require_role(RoleName.ADMIN)),
     actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):
-    if not cabinet_id or not cabinet_id.strip().isdigit():
-        raise HTTPException(status_code=422, detail="cabinet_id обязателен и должен быть числом")
+    cabinet_id = cabinet_id.strip() if cabinet_id else None
+    project_id = project_id.strip() if project_id else None
+    if bool(cabinet_id) == bool(project_id):
+        raise HTTPException(status_code=422, detail="Нужно указать ровно одно из cabinet_id/project_id")
+    if cabinet_id and not cabinet_id.isdigit():
+        raise HTTPException(status_code=422, detail="cabinet_id должен быть числом")
+    if project_id and not project_id.isdigit():
+        raise HTTPException(status_code=422, detail="project_id должен быть числом")
     doc = await AdminDocumentService(session).create_document(
         file=file,
-        cabinet_id=int(cabinet_id),
+        cabinet_id=int(cabinet_id) if cabinet_id else None,
+        project_id=int(project_id) if project_id else None,
         title=title.strip() or None if title else None,
         requires_approval=requires_approval,
         actor_id=actor.id,
@@ -66,6 +74,7 @@ async def create_document(
 @router.get("/admin/documents", response_model=PageOut[DocumentOut])
 async def list_documents(
     cabinet_id: int | None = Query(None),
+    project_id: int | None = Query(None),
     doc_type: str | None = Query(None),
     requires_approval: bool | None = Query(None),
     tag_ids: list[int] = Query(default=[]),
@@ -77,7 +86,7 @@ async def list_documents(
     session: AsyncSession = Depends(get_session),
 ):
     return await AdminDocumentService(session).list_documents(
-        cabinet_id=cabinet_id, doc_type=doc_type,
+        cabinet_id=cabinet_id, project_id=project_id, doc_type=doc_type,
         requires_approval=requires_approval,
         tag_ids=tag_ids or None,
         sort_by=sort_by, sort_order=sort_order,

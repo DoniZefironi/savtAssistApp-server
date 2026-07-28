@@ -11,8 +11,10 @@ class DocumentRequest(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     # ссылка на пользователя
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    # ссылка на ШУ
-    cabinet_id: Mapped[int] = mapped_column(ForeignKey("cabinets.id"), index=True)
+    # ссылка на ШУ (null, если запрошенный документ — документация проекта, см. project_id)
+    cabinet_id: Mapped[int | None] = mapped_column(ForeignKey("cabinets.id"), nullable=True, index=True)
+    # ссылка на проект (если запрошенный документ привязан к проекту, а не к ШУ)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True, index=True)
     # ссылка на документ
     # null если документ ещё не существует — админ должен его создать при одобрении
     document_id: Mapped[int | None] = mapped_column(

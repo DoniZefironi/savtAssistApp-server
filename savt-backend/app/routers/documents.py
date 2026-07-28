@@ -38,6 +38,26 @@ async def list_cabinet_documents(
     )
 
 
+@router.get("/projects/{project_id}/documents", response_model=PageOut[UserDocumentOut])
+async def list_project_documents(
+    project_id: int,
+    tag_ids: list[int] = Query(default=[]),
+    doc_type: str | None = Query(None),
+    sort_by: str = Query("created_at", pattern=_SORT_PATTERN),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$"),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await UserDocumentService(session).list_project_documents(
+        user_id=current_user.id, project_id=project_id,
+        tag_ids=tag_ids or None, doc_type=doc_type,
+        sort_by=sort_by, sort_order=sort_order,
+        page=page, size=size,
+    )
+
+
 @router.get("/documents/{doc_id}/download")
 async def download_document(
     doc_id: int,

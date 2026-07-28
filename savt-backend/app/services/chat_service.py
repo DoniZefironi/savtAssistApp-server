@@ -198,7 +198,7 @@ class ChatService:
         return _to_chat_out(chat)
 
     async def send_message(
-        self, chat_id: int, sender_id: int, data: MessageCreateIn
+        self, chat_id: int, sender_id: int, data: MessageCreateIn, sync_to_bitrix: bool = True
     ) -> MessageOut:
         chat = await self._get_chat_or_403(chat_id, sender_id)
         if chat.archived_at is not None:
@@ -234,12 +234,15 @@ class ChatService:
         await publish_message_created(chat_id, result.model_dump(mode="json"))
         await publish_chat_updated(chat_id, chat_summary_dict(chat, result.text))
 
-        # Сообщение заявителя в чате заявки — дублируем в комментарий Bitrix-задачи
-        # (ответы оператора/бота не синхронизируем)
+        # Сообщение в чате заявки — дублируем в комментарий Bitrix-задачи,
+        # от заявителя и от оператора/админа/суперадмина одинаково
+        # (бот в чатах заявок не участвует, см. проверку ниже — синхронизировать нечего).
+        # sync_to_bitrix=False — для сообщений, которые сами пришли из Bitrix
+        # (см. bitrix_webhook_service.py), иначе комментарий уйдёт туда же по кругу
         if (
-            chat.chat_type == "service_request"
+            sync_to_bitrix
+            and chat.chat_type == "service_request"
             and chat.service_request_id is not None
-            and sender_id == chat.user_id
         ):
             from app.services.service_request_service import sync_message_to_bitrix
             sender_name = sender.full_name if sender else str(sender_id)

@@ -1,4 +1,4 @@
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.cabinet_photo import CabinetPhoto
@@ -41,6 +41,7 @@ class DocumentRepository:
     async def list_admin(
         self,
         cabinet_id: int | None = None,
+        project_id: int | None = None,
         doc_type: str | None = None,
         requires_approval: bool | None = None,
         tag_ids: list[int] | None = None,
@@ -52,6 +53,8 @@ class DocumentRepository:
         conditions = []
         if cabinet_id is not None:
             conditions.append(Document.cabinet_id == cabinet_id)
+        if project_id is not None:
+            conditions.append(Document.project_id == project_id)
         if doc_type:
             conditions.append(Document.doc_type == doc_type)
         if requires_approval is not None:
@@ -89,11 +92,42 @@ class DocumentRepository:
         offset: int = 0,
         limit: int = 20,
     ) -> tuple[list[tuple], int]:
-        scope = or_(
-            Document.cabinet_id == cabinet_id,
-            Document.cabinet_id.is_(None),
+        return await self._list_for_user_scoped(
+            user_id, Document.cabinet_id == cabinet_id,
+            tag_ids=tag_ids, doc_type=doc_type,
+            sort_by=sort_by, sort_order=sort_order, offset=offset, limit=limit,
         )
 
+    # Документы проекта в целом (не привязанные к конкретному ШУ) — отдельный
+    # список, не подмешивается в list_for_user (см. решение по UX документации проекта)
+    async def list_for_project(
+        self,
+        user_id: int,
+        project_id: int,
+        tag_ids: list[int] | None = None,
+        doc_type: str | None = None,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+        offset: int = 0,
+        limit: int = 20,
+    ) -> tuple[list[tuple], int]:
+        return await self._list_for_user_scoped(
+            user_id, Document.project_id == project_id,
+            tag_ids=tag_ids, doc_type=doc_type,
+            sort_by=sort_by, sort_order=sort_order, offset=offset, limit=limit,
+        )
+
+    async def _list_for_user_scoped(
+        self,
+        user_id: int,
+        scope,
+        tag_ids: list[int] | None = None,
+        doc_type: str | None = None,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+        offset: int = 0,
+        limit: int = 20,
+    ) -> tuple[list[tuple], int]:
         # Документы с requires_approval=True тоже видны в списке (чтобы
         # пользователь вообще знал об их существовании и мог запросить
         # доступ) — file_url для них скрывается на уровне сервиса

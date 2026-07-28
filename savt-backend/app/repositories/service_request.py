@@ -25,6 +25,12 @@ class ServiceRequestRepository:
     async def get_by_id(self, req_id: int) -> ServiceRequest | None:
         return await self.session.get(ServiceRequest, req_id)
 
+    async def find_by_bitrix_task_id(self, bitrix_task_id: str) -> ServiceRequest | None:
+        result = await self.session.execute(
+            select(ServiceRequest).where(ServiceRequest.bitrix_task_id == bitrix_task_id)
+        )
+        return result.scalar_one_or_none()
+
     async def list_for_user(
         self, user_id: int, status: str | None = None,
         offset: int = 0, limit: int = 20

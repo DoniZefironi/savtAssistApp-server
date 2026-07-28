@@ -7,7 +7,8 @@ from app.schemas.tags import TagOut
 
 class DocumentOut(BaseModel):
     id: int
-    cabinet_id: int
+    cabinet_id: int | None
+    project_id: int | None
     title: str
     doc_type: str
     file_url: str
@@ -24,7 +25,8 @@ class DocumentOut(BaseModel):
 
 class UserDocumentOut(BaseModel):
     id: int
-    cabinet_id: int
+    cabinet_id: int | None
+    project_id: int | None
     title: str
     doc_type: str
     file_url: str | None  # null если requires_approval=true и нет доступа
@@ -65,6 +67,7 @@ class DocumentRequestOut(BaseModel):
     user_registered_at: datetime
     document_id: int | None
     cabinet_id: int | None
+    project_id: int | None
     doc_type: str
     status: str
     user_message: str | None

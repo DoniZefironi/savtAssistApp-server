@@ -48,6 +48,7 @@ from app.routers import user_events as user_events_router
 from app.routers import projects as projects_router
 from app.routers import admin_projects as admin_projects_router
 from app.routers import admin_project_requests as admin_project_requests_router
+from app.routers import bitrix_webhooks as bitrix_webhooks_router
 from app.services.sms_service import SmsSendError
 from app.core.firebase import init_firebase
 from app.services.warranty_scheduler import check_warranty_expiry
@@ -172,6 +173,7 @@ app.include_router(user_events_router.router)
 app.include_router(projects_router.router)
 app.include_router(admin_projects_router.router)
 app.include_router(admin_project_requests_router.router)
+app.include_router(bitrix_webhooks_router.router)
 app.mount("/static", StaticFiles(directory="/code/uploads"), name="static")
 
 # Бэзик эндпоинты

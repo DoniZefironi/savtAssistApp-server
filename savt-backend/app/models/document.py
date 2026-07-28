@@ -9,9 +9,13 @@ class Document(Base):
     __tablename__ = "documents"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    #  ссылка на ШУ
-    cabinet_id: Mapped[int] = mapped_column(
-        ForeignKey("cabinets.id", ondelete="CASCADE"), index=True
+    #  ссылка на ШУ — ровно одна из cabinet_id/project_id всегда заполнена (см. CHECK в БД)
+    cabinet_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cabinets.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    # ссылка на проект (документация проекта в целом, не привязанная к конкретному ШУ)
+    project_id: Mapped[int | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True
     )
     # тип документа
     doc_type: Mapped[str] = mapped_column(String(50), index=True)
@@ -39,4 +43,4 @@ class Document(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<Document id={self.id} cabinet_id={self.cabinet_id} type={self.doc_type}>"
+        return f"<Document id={self.id} cabinet_id={self.cabinet_id} project_id={self.project_id} type={self.doc_type}>"

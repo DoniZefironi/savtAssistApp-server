@@ -36,6 +36,7 @@ class AdminDocumentService:
         self,
         file: UploadFile,
         cabinet_id: int | None,
+        project_id: int | None,
         title: str | None,
         requires_approval: bool,
         actor_id: int = 0,
@@ -44,6 +45,7 @@ class AdminDocumentService:
         info = await save_attachment_with_meta(file)
         doc = await self.doc_repo.create(
             cabinet_id=cabinet_id,
+            project_id=project_id,
             title=title or (file.filename or "Документ"),
             doc_type=info.doc_type,
             file_url=info.url,
@@ -53,7 +55,7 @@ class AdminDocumentService:
         )
         await self.session.flush()
         self.audit.log("document.create", "document", doc.id, actor_id, actor_role,
-                       {"title": doc.title, "cabinet_id": cabinet_id})
+                       {"title": doc.title, "cabinet_id": cabinet_id, "project_id": project_id})
         await self.session.commit()
         await self.session.refresh(doc)
         return DocumentOut.model_validate(doc)
@@ -61,6 +63,7 @@ class AdminDocumentService:
     async def list_documents(
         self,
         cabinet_id: int | None = None,
+        project_id: int | None = None,
         doc_type: str | None = None,
         requires_approval: bool | None = None,
         tag_ids: list[int] | None = None,
@@ -71,6 +74,7 @@ class AdminDocumentService:
     ) -> PageOut[DocumentOut]:
         items, total = await self.doc_repo.list_admin(
             cabinet_id=cabinet_id,
+            project_id=project_id,
             doc_type=doc_type,
             requires_approval=requires_approval,
             tag_ids=tag_ids,
@@ -170,6 +174,7 @@ class AdminDocumentService:
                 user_registered_at=user.created_at,
                 document_id=req.document_id,
                 cabinet_id=req.cabinet_id,
+                project_id=req.project_id,
                 doc_type=req.doc_type,
                 status=req.status,
                 user_message=req.user_message,
@@ -251,6 +256,45 @@ class UserDocumentService:
             items.append(UserDocumentOut(
                 id=doc.id,
                 cabinet_id=doc.cabinet_id,
+                project_id=doc.project_id,
+                title=doc.title,
+                doc_type=doc.doc_type,
+                file_url=doc.file_url if has_access else None,
+                file_size_bytes=doc.file_size_bytes,
+                mime_type=doc.mime_type,
+                has_access=has_access,
+                tags=tags_map.get(doc.id, []),
+            ))
+        return make_page(items, total, page, size)
+
+    # Документация проекта в целом — отдельный список от документов ШУ
+    # (см. list_documents), даже если ШУ входит в этот проект
+    async def list_project_documents(
+        self,
+        user_id: int,
+        project_id: int,
+        tag_ids: list[int] | None = None,
+        doc_type: str | None = None,
+        sort_by: str = "created_at",
+        sort_order: str = "desc",
+        page: int = 1,
+        size: int = 20,
+    ) -> PageOut[UserDocumentOut]:
+        rows, total = await self.doc_repo.list_for_project(
+            user_id=user_id, project_id=project_id,
+            tag_ids=tag_ids, doc_type=doc_type,
+            sort_by=sort_by, sort_order=sort_order,
+            offset=(page - 1) * size, limit=size,
+        )
+        doc_ids = [doc.id for doc, _ in rows]
+        tags_map = await self.tag_repo.get_tags_for_documents(doc_ids)
+        items = []
+        for doc, access_doc_id in rows:
+            has_access = not doc.requires_approval or access_doc_id is not None
+            items.append(UserDocumentOut(
+                id=doc.id,
+                cabinet_id=doc.cabinet_id,
+                project_id=doc.project_id,
                 title=doc.title,
                 doc_type=doc.doc_type,
                 file_url=doc.file_url if has_access else None,
@@ -296,6 +340,7 @@ class UserDocumentService:
             user_id=user_id,
             document_id=doc_id,
             cabinet_id=doc.cabinet_id,
+            project_id=doc.project_id,
             doc_type=doc.doc_type,
             user_message=user_message,
         )

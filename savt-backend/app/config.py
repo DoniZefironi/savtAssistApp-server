@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     # Постановщик задачи (CREATED_BY) — отдельно от исполнителя (RESPONSIBLE_ID).
     # Если не задан — Bitrix сам подставит технического пользователя вебхука.
     bitrix_default_creator_id: int = 0
+    # Секрет для проверки входящих вебхуков из Bitrix (комментарии к задаче) —
+    # должен совпадать с application_token исходящего вебхука в настройках Bitrix24
+    bitrix_incoming_webhook_token: str = ""
 
 
 settings = Settings()
