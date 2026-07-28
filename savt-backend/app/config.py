@@ -18,12 +18,16 @@ class Settings(BaseSettings):
     sms_code_max_attempts: int = 5
     sms_code_resend_cooldown_seconds: int = 60
 
-    # SMS сервис для кодиков
-    sms_provider: str = "smscenter"  # "mock" | "smscenter"
-    smscenter_login: str = ""
-    smscenter_password: str = ""
-    smscenter_sender: str = ""
-    smscenter_base_url: str = "https://smscentre.by"
+    # Доставка кода подтверждения телефона — Telegram/Viber бот (SMS отключено полностью)
+    telegram_bot_token: str = ""
+    telegram_bot_username: str = ""  # без @, для t.me/<username>?start=...
+    telegram_webhook_secret: str = ""  # X-Telegram-Bot-Api-Secret-Token
+
+    viber_bot_token: str = ""
+    viber_bot_uri: str = ""  # chatURI из настроек Viber Public Account, для viber://pa?chatURI=...
+
+    # Сколько живёт токен "рукопожатия" (пока пользователь не откроет deep-link на бота)
+    messenger_link_request_ttl_minutes: int = 15
 
     # Firebase
     firebase_credentials_path: str = ""

@@ -37,6 +37,8 @@ from app.models.chat_pinned_message import ChatPinnedMessage
 from app.models.project import Project
 from app.models.user_project import UserProject
 from app.models.project_share_request import ProjectShareRequest
+from app.models.messenger_link import MessengerLink
+from app.models.messenger_link_request import MessengerLinkRequest
 
 __all__ = [
     "Role", "User", "RefreshToken", "PhoneVerificationCode",
@@ -49,4 +51,5 @@ __all__ = [
     "DocumentTag", "KbArticleTag", "CabinetTag", "KbArticleAttachment", "UserFavorite",
     "WarrantyNotifLog", "Embedding", "ChatUserSettings", "ChatPinnedMessage",
     "Project", "UserProject", "ProjectShareRequest",
+    "MessengerLink", "MessengerLinkRequest",
 ]

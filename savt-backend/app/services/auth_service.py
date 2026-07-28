@@ -1,3 +1,4 @@
+import secrets
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,8 +22,9 @@ from app.core.security import (
 )
 from app.models.user import User
 from app.repositories.auth import PhoneCodeRepository, RefreshTokenRepository
+from app.repositories.messenger import MessengerLinkRepository, MessengerLinkRequestRepository
 from app.repositories.user import UserRepository
-from app.services.sms_service import sms_service
+from app.services import messenger_service
 from app.models.role import Role
 
 
@@ -39,16 +41,20 @@ class AuthService:
         self.user_repo = UserRepository(session) # работа с пользователем
         self.code_repo = PhoneCodeRepository(session) # работа с кодами
         self.token_repo = RefreshTokenRepository(session) # работа с токеном
+        self.messenger_link_repo = MessengerLinkRepository(session) # подключённые Telegram/Viber
+        self.messenger_link_request_repo = MessengerLinkRequestRepository(session) # ожидающие рукопожатия
 
-    # Начальная регистрация, вводим все поля после запрашиваем код
+    # Начальная регистрация, вводим все поля после запрашиваем код.
+    # channel — "telegram" | "viber", куда доставить код (SMS отключено полностью)
     async def register_start(
         self,
         phone: str,
         password: str,
         full_name: str | None,
         user_type: str,
-        organization_name: str | None
-    ) -> int:
+        organization_name: str | None,
+        channel: str,
+    ) -> tuple[int, str | None]:
 
         # Проверяем, может уже есть такой телефончек
         existing_user = await self.user_repo.find_by_phone(phone)
@@ -59,18 +65,13 @@ class AuthService:
             )
 
         # Проверяем кулдаун, чтоб не спамили школьники
-        latest = await self.code_repo.find_latest(phone, PURPOSE_REGISTRATION)
-        if latest is not None:
-            elapsed = (datetime.now(timezone.utc) - latest.created_at).total_seconds()
-            cooldown = settings.sms_code_resend_cooldown_seconds
-            if elapsed < cooldown:
-                raise RateLimitError(
-                    f"Повторная отправка возможна через {int(cooldown - elapsed)} сек."
-                )
+        remaining = await self._resend_cooldown_remaining(phone, PURPOSE_REGISTRATION)
+        if remaining > 0:
+            raise RateLimitError(f"Повторная отправка возможна через {remaining} сек.")
 
         # Если пользователя нет - создаем(телефон не подтвержден)
         if existing_user is None:
-            await self.user_repo.create(
+            user = await self.user_repo.create(
                 phone=phone,
                 full_name=full_name,
                 hashed_password=hash_password(password),
@@ -86,25 +87,11 @@ class AuthService:
             existing_user.full_name = full_name
             existing_user.user_type = user_type
             existing_user.organization_name = organization_name
+            user = existing_user
 
-        # Генерируем и создаем кодик
-        code = generate_sms_code()
-        expires_at = datetime.now(timezone.utc) + timedelta(
-            minutes=settings.sms_code_ttl_minutes
-        )
-        await self.code_repo.create(
-            phone=phone,
-            code_hash=hash_token(code),
-            purpose=PURPOSE_REGISTRATION,
-            expires_at=expires_at,
-            max_attempts=settings.sms_code_max_attempts,
-        )
-
-        # Отправляем эсэмэску
-        await sms_service.send_verification_code(phone, code)
-
-        await self.session.commit()
-        return settings.sms_code_resend_cooldown_seconds
+        # Отправляем код в Telegram/Viber — либо сразу (канал уже подключён),
+        # либо возвращаем deep-link на рукопожатие с ботом (см. _start_verification)
+        return await self._start_verification(phone, PURPOSE_REGISTRATION, channel, user.id)
 
     # Подтверждение телефона
     async def register_complete(
@@ -306,37 +293,22 @@ class AuthService:
         return access_token, refresh_token, refresh_obj
 
     # Сброс пароля (почти как регистрация)
-    async def password_reset_start(self, phone: str) -> int:
+    async def password_reset_start(self, phone: str, channel: str) -> tuple[int, str | None]:
 
         cooldown = settings.sms_code_resend_cooldown_seconds
 
-        # Тихо, неспеша, проверяем существование пользователя, даже если он не найдет, то все равно шлем cooldown(чтоб школьники не перебирали телефоны)
+        # Тихо, неспеша, проверяем существование пользователя, даже если он не найден, то все равно шлем cooldown
+        # без deep_link (чтоб школьники не перебирали телефоны и не отличали "нет такого" от "есть, но лимит")
         user = await self.user_repo.find_by_phone(phone)
 
         if user is None or not user.is_active or not user.is_phone_verified:
-            return cooldown
+            return cooldown, None
 
-        latest = await self.code_repo.find_latest(phone, PURPOSE_PASSWORD_RESET)
-        if latest is not None:
-            elapsed = (datetime.now(timezone.utc) - latest.created_at).total_seconds()
-            if elapsed < cooldown:
+        remaining = await self._resend_cooldown_remaining(phone, PURPOSE_PASSWORD_RESET)
+        if remaining > 0:
+            return cooldown, None
 
-                return cooldown
-
-        code = generate_sms_code()
-        expires_at = datetime.now(timezone.utc) + timedelta(
-            minutes=settings.sms_code_ttl_minutes
-        )
-        await self.code_repo.create(
-            phone=phone,
-            code_hash=hash_token(code),
-            purpose=PURPOSE_PASSWORD_RESET,
-            expires_at=expires_at,
-            max_attempts=settings.sms_code_max_attempts,
-        )
-        await sms_service.send_verification_code(phone, code)
-        await self.session.commit()
-        return cooldown
+        return await self._start_verification(phone, PURPOSE_PASSWORD_RESET, channel, user.id)
 
     # Устанавливаем новый пароль
     async def password_reset_complete(
@@ -373,7 +345,7 @@ class AuthService:
         await self.session.commit()
 
     # Повторно код запросить
-    async def register_resend_code(self, phone: str) -> int:
+    async def register_resend_code(self, phone: str, channel: str) -> tuple[int, str | None]:
 
         user = await self.user_repo.find_by_phone(phone)
         if user is None:
@@ -382,29 +354,11 @@ class AuthService:
         if user.is_phone_verified:
             raise AlreadyExistsError("Пользователь уже подтверждён")
 
-        latest = await self.code_repo.find_latest(phone, PURPOSE_REGISTRATION)
-        cooldown = settings.sms_code_resend_cooldown_seconds
-        if latest is not None:
-            elapsed = (datetime.now(timezone.utc) - latest.created_at).total_seconds()
-            if elapsed < cooldown:
-                raise RateLimitError(
-                    f"Повторная отправка возможна через {int(cooldown - elapsed)} сек."
-                )
+        remaining = await self._resend_cooldown_remaining(phone, PURPOSE_REGISTRATION)
+        if remaining > 0:
+            raise RateLimitError(f"Повторная отправка возможна через {remaining} сек.")
 
-        code = generate_sms_code()
-        expires_at = datetime.now(timezone.utc) + timedelta(
-            minutes=settings.sms_code_ttl_minutes
-        )
-        await self.code_repo.create(
-            phone=phone,
-            code_hash=hash_token(code),
-            purpose=PURPOSE_REGISTRATION,
-            expires_at=expires_at,
-            max_attempts=settings.sms_code_max_attempts,
-        )
-        await sms_service.send_verification_code(phone, code)
-        await self.session.commit()
-        return cooldown
+        return await self._start_verification(phone, PURPOSE_REGISTRATION, channel, user.id)
     
     # смена пароля
     async def change_password(
@@ -446,32 +400,20 @@ class AuthService:
         return user
 
     # Смена номера — шаг 1: код на новый номер
-    async def change_phone_start(self, user: User, new_phone: str) -> int:
+    async def change_phone_start(self, user: User, new_phone: str, channel: str) -> tuple[int, str | None]:
         if user.phone == new_phone:
             raise AlreadyExistsError("Это уже ваш текущий номер")
         existing = await self.user_repo.find_by_phone(new_phone)
         if existing is not None:
             raise AlreadyExistsError("Этот номер уже занят другим пользователем")
-        latest = await self.code_repo.find_latest(new_phone, PURPOSE_PHONE_CHANGE)
-        cooldown = settings.sms_code_resend_cooldown_seconds
-        if latest is not None:
-            elapsed = (datetime.now(timezone.utc) - latest.created_at).total_seconds()
-            if elapsed < cooldown:
-                raise RateLimitError(
-                    f"Повторная отправка возможна через {int(cooldown - elapsed)} сек."
-                )
-        code = generate_sms_code()
-        expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.sms_code_ttl_minutes)
-        await self.code_repo.create(
-            phone=new_phone,
-            code_hash=hash_token(code),
-            purpose=PURPOSE_PHONE_CHANGE,
-            expires_at=expires_at,
-            max_attempts=settings.sms_code_max_attempts,
-        )
-        await sms_service.send_verification_code(new_phone, code)
-        await self.session.commit()
-        return cooldown
+
+        remaining = await self._resend_cooldown_remaining(new_phone, PURPOSE_PHONE_CHANGE)
+        if remaining > 0:
+            raise RateLimitError(f"Повторная отправка возможна через {remaining} сек.")
+
+        # user.id — если Telegram/Viber уже подключён у этого аккаунта (например, во время
+        # регистрации), рукопожатие заново проходить не нужно, код улетит сразу
+        return await self._start_verification(new_phone, PURPOSE_PHONE_CHANGE, channel, user.id)
 
     # Смена номера — шаг 2: подтвердить и сменить
     async def change_phone_complete(self, user: User, new_phone: str, code: str) -> None:
@@ -489,4 +431,85 @@ class AuthService:
             raise InvalidCodeError("Неверный код")
         await self.code_repo.mark_used(active_code)
         user.phone = new_phone
+        await self.session.commit()
+
+    # Сколько секунд осталось до следующей попытки — смотрим и на уже отправленные
+    # коды, и на незавершённые заявки на рукопожатие с ботом (иначе можно обойти
+    # кулдаун, просто переключившись на другой мессенджер посреди ожидания)
+    async def _resend_cooldown_remaining(self, phone: str, purpose: str) -> int:
+        cooldown = settings.sms_code_resend_cooldown_seconds
+        candidates: list[datetime] = []
+
+        latest_code = await self.code_repo.find_latest(phone, purpose)
+        if latest_code is not None:
+            candidates.append(latest_code.created_at)
+
+        latest_request = await self.messenger_link_request_repo.find_latest(phone, purpose)
+        if latest_request is not None:
+            candidates.append(latest_request.created_at)
+
+        if not candidates:
+            return 0
+
+        elapsed = (datetime.now(timezone.utc) - max(candidates)).total_seconds()
+        remaining = cooldown - elapsed
+        return int(remaining) if remaining > 0 else 0
+
+    # Общая точка отправки/переотправки кода для всех 4 сценариев (регистрация,
+    # переотправка, сброс пароля, смена телефона). Если канал (Telegram/Viber) уже
+    # подключён у этого пользователя — код генерируется и шлётся сразу, как раньше
+    # с SMS. Если нет — код вообще не создаётся (нечего было бы доставить), вместо
+    # этого заводим заявку на рукопожатие и возвращаем deep-link на бота; сам код
+    # будет сгенерирован и отправлен только когда бот получит /start (см.
+    # app/services/messenger_webhook_service.py).
+    async def _start_verification(
+        self, phone: str, purpose: str, channel: str, user_id: int,
+    ) -> tuple[int, str | None]:
+        cooldown = settings.sms_code_resend_cooldown_seconds
+
+        link = await self.messenger_link_repo.find_by_user_and_channel(user_id, channel)
+        if link is not None:
+            await self._deliver_code(user_id, phone, purpose, channel, link.external_chat_id)
+            return cooldown, None
+
+        token = secrets.token_urlsafe(24)
+        expires_at = datetime.now(timezone.utc) + timedelta(
+            minutes=settings.messenger_link_request_ttl_minutes
+        )
+        await self.messenger_link_request_repo.create(
+            token=token, user_id=user_id, phone=phone, purpose=purpose,
+            channel=channel, expires_at=expires_at,
+        )
+        await self.session.commit()
+        return cooldown, messenger_service.build_deep_link(channel, token)
+
+    # Публичная обёртка над _deliver_code — вызывается из messenger_webhook_service.py
+    # сразу после того, как бот подтвердил рукопожатие (получил /start с токеном)
+    async def deliver_code_after_link(
+        self, user_id: int, phone: str, purpose: str, channel: str, external_chat_id: str,
+    ) -> None:
+        await self._deliver_code(user_id, phone, purpose, channel, external_chat_id)
+
+    # Генерирует код, сохраняет хэш и шлёт его в уже подключённый канал —
+    # вызывается и отсюда (канал был подключён заранее), и из вебхука бота
+    # (сразу после того, как рукопожатие только что подтвердилось)
+    async def _deliver_code(
+        self, user_id: int, phone: str, purpose: str, channel: str, external_chat_id: str,
+    ) -> None:
+        code = generate_sms_code()
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.sms_code_ttl_minutes)
+        await self.code_repo.create(
+            phone=phone,
+            code_hash=hash_token(code),
+            purpose=purpose,
+            expires_at=expires_at,
+            max_attempts=settings.sms_code_max_attempts,
+        )
+        try:
+            await messenger_service.send_verification_code(channel, external_chat_id, code)
+        except messenger_service.MessengerSendError:
+            # Бот заблокирован/чат недоступен — чистим связку, чтобы следующий
+            # запрос кода заново запустил рукопожатие, а не бился в ту же стену
+            await self.messenger_link_repo.delete_by_user_and_channel(user_id, channel)
+            raise
         await self.session.commit()

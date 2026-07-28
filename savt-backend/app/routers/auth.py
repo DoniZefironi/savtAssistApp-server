@@ -44,14 +44,15 @@ async def register_start(
     session: AsyncSession = Depends(get_session),
 ):
     service = AuthService(session) # создание сервиса
-    cooldown = await service.register_start(
+    cooldown, deep_link = await service.register_start(
         phone=payload.phone,
         password=payload.password,
         full_name=payload.full_name,
         user_type=payload.user_type,
-        organization_name=payload.organization_name
+        organization_name=payload.organization_name,
+        channel=payload.channel,
     )
-    return RegisterStartOut(resend_after_seconds=cooldown)
+    return RegisterStartOut(resend_after_seconds=cooldown, deep_link=deep_link)
 
 # Подтверждение кода
 @router.post("/register/complete", response_model=TokenPairOut, status_code=status.HTTP_201_CREATED)
@@ -80,8 +81,8 @@ async def register_resend(
     session: AsyncSession = Depends(get_session),
 ):
     service = AuthService(session)
-    cooldown = await service.register_resend_code(payload.phone)
-    return RegisterStartOut(resend_after_seconds=cooldown)
+    cooldown, deep_link = await service.register_resend_code(payload.phone, payload.channel)
+    return RegisterStartOut(resend_after_seconds=cooldown, deep_link=deep_link)
 
 # Вход для администратора / оператора
 @router.post("/admin-login", response_model=TokenPairOut)
@@ -173,8 +174,8 @@ async def password_reset_start(
     session: AsyncSession = Depends(get_session),
 ):
     service = AuthService(session)
-    cooldown = await service.password_reset_start(payload.phone)
-    return PasswordResetStartOut(resend_after_seconds=cooldown)
+    cooldown, deep_link = await service.password_reset_start(payload.phone, payload.channel)
+    return PasswordResetStartOut(resend_after_seconds=cooldown, deep_link=deep_link)
 
 # Восстановление пароля: новый пароль
 @router.post("/password-reset/complete", status_code=status.HTTP_204_NO_CONTENT)
@@ -253,8 +254,8 @@ async def change_phone_start(
     session: AsyncSession = Depends(get_session),
 ):
     service = AuthService(session)
-    cooldown = await service.change_phone_start(current_user, payload.new_phone)
-    return RegisterStartOut(resend_after_seconds=cooldown)
+    cooldown, deep_link = await service.change_phone_start(current_user, payload.new_phone, payload.channel)
+    return RegisterStartOut(resend_after_seconds=cooldown, deep_link=deep_link)
 
 # Смена номера телефона — подтверждение
 @router.post("/change-phone/complete", status_code=status.HTTP_204_NO_CONTENT)

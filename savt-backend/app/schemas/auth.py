@@ -18,6 +18,14 @@ def _normalize_phone(phone: str) -> str:
         raise ValueError(f"Неверный формат телефона: {e}")
 
 
+# Канал доставки кода подтверждения — SMS отключено, только Telegram/Viber
+def _validate_channel(v: str) -> str:
+    allowed = ("telegram", "viber")
+    if v not in allowed:
+        raise ValueError(f"channel должен быть один из {', '.join(allowed)}")
+    return v
+
+
 # Валидация
 # Регистрация
 class RegisterStartIn(BaseModel):
@@ -27,12 +35,18 @@ class RegisterStartIn(BaseModel):
     full_name: str = Field(..., min_length=1, max_length=200)
     user_type: str = Field(...)
     organization_name: str | None = Field(None)
+    channel: str = Field(...)  # "telegram" | "viber" — куда доставить код
 
     @field_validator("phone")
     @classmethod
     def validate_phone(cls, v: str) -> str:
         return _normalize_phone(v)
-    
+
+    @field_validator("channel")
+    @classmethod
+    def validate_channel(cls, v: str) -> str:
+        return _validate_channel(v)
+
     @field_validator("user_type")
     @classmethod
     def validate_user_type(cls, v: str) -> str:
@@ -55,16 +69,25 @@ class RegisterStartIn(BaseModel):
 
 class ResendCodeIn(BaseModel):
     phone: str
+    channel: str = Field(...)  # "telegram" | "viber"
 
     @field_validator("phone")
     @classmethod
     def validate_phone(cls, v: str) -> str:
         return _normalize_phone(v)
 
+    @field_validator("channel")
+    @classmethod
+    def validate_channel(cls, v: str) -> str:
+        return _validate_channel(v)
+
 
 class RegisterStartOut(BaseModel):
     message: str = "Код подтверждения отправлен"
     resend_after_seconds: int
+    # не None, если канал ещё не подключён — нужно открыть ссылку на бота,
+    # код будет отправлен только после того, как бот получит /start
+    deep_link: str | None = None
 
 
 class RegisterCompleteIn(BaseModel):
@@ -122,16 +145,23 @@ class UserMeOut(BaseModel):
 # Сброс пароля
 class PasswordResetStartIn(BaseModel):
     phone: str
+    channel: str = Field(...)  # "telegram" | "viber"
 
     @field_validator("phone")
     @classmethod
     def validate_phone(cls, v: str) -> str:
         return _normalize_phone(v)
 
+    @field_validator("channel")
+    @classmethod
+    def validate_channel(cls, v: str) -> str:
+        return _validate_channel(v)
+
 
 class PasswordResetStartOut(BaseModel):
     message: str = "На телефон отправлен код"
     resend_after_seconds: int
+    deep_link: str | None = None
 
 
 class PasswordResetCompleteIn(BaseModel):
@@ -171,11 +201,17 @@ class UpdateProfileIn(BaseModel):
 # Смена номера телефона
 class ChangePhoneStartIn(BaseModel):
     new_phone: str
+    channel: str = Field(...)  # "telegram" | "viber"
 
     @field_validator("new_phone")
     @classmethod
     def validate_phone(cls, v: str) -> str:
         return _normalize_phone(v)
+
+    @field_validator("channel")
+    @classmethod
+    def validate_channel(cls, v: str) -> str:
+        return _validate_channel(v)
 
 
 class ChangePhoneCompleteIn(BaseModel):
