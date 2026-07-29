@@ -63,6 +63,9 @@ from app.database import AsyncSessionLocal
 # project_folder_service и т.п.) молча теряются — корневой уровень по умолчанию WARNING,
 # и до сих пор виден был только SQLAlchemy engine (у него echo настраивает свой логгер отдельно).
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+# echo=True (см. app/database.py) сам вешает свой хендлер на sqlalchemy.engine —
+# без этого его записи дублировались бы (свой хендлер + после basicConfig ещё и корневой)
+logging.getLogger("sqlalchemy.engine.Engine").propagate = False
 
 
 async def _bot_follow_up_job() -> None:

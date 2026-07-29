@@ -70,15 +70,16 @@ async def add_comment(task_id: str, text: str) -> None:
         raise RuntimeError(f"Bitrix task.commentitem.add error: {data}")
 
 
-async def get_task_comment_text(task_id: str, comment_id: str) -> str | None:
-    """Дотягивает текст комментария задачи (task.commentitem.get) — событие
-    ONTASKCOMMENTADD присылает только TASK_ID/COMMENT_ID, самого текста в
-    вебхуке нет (см. handle_task_comment_webhook)."""
+async def get_task_comment(task_id: str, message_id: str) -> dict | None:
+    """Дотягивает комментарий задачи целиком (task.commentitem.get) — событие
+    ONTASKCOMMENTADD присылает только TASK_ID/MESSAGE_ID, ни текста, ни автора
+    в самом вебхуке нет (см. handle_task_comment_webhook). Из результата берутся
+    POST_MESSAGE и AUTHOR_ID."""
     if not settings.bitrix_webhook_url:
         return None
     url = f"{settings.bitrix_webhook_url.rstrip('/')}/task.commentitem.get.json"
     try:
-        resp = await _get_client().post(url, json={"taskId": task_id, "itemId": comment_id})
+        resp = await _get_client().post(url, json={"taskId": task_id, "itemId": message_id})
     except httpx.RequestError:
         return None
     if not resp.is_success:
@@ -86,8 +87,7 @@ async def get_task_comment_text(task_id: str, comment_id: str) -> str | None:
     data = resp.json()
     if "error" in data:
         return None
-    result = data.get("result") or {}
-    return result.get("POST_MESSAGE")
+    return data.get("result") or None
 
 
 async def update_task_status(task_id: str, status: str) -> None:

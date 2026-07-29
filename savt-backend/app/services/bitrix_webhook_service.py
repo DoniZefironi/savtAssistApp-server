@@ -46,22 +46,22 @@ async def handle_task_comment_webhook(form: dict) -> None:
     Комментарии, которые сами являются нашей же синхронизацией сообщений в Bitrix
     (см. sync_message_to_bitrix), никогда не начинаются с этого префикса, поэтому
     естественным образом не попадают обратно в приложение — отдельной защиты от петли не требуется.
-    Сам вебхук несёт только TASK_ID/COMMENT_ID, текст комментария в payload не
-    приходит — его отдельно дотягиваем через bitrix_service.get_task_comment_text
-    (см. аналогичный приём для сделок — get_deal_title)."""
+    Сам вебхук несёт только data[FIELDS_AFTER][TASK_ID]/[MESSAGE_ID] — ни текста,
+    ни автора в payload нет, оба дотягиваются отдельным запросом
+    bitrix_service.get_task_comment (см. аналогичный приём для сделок — get_deal_title)."""
     task_id = _extract(form, "[task_id]")
-    comment_id = _extract(form, "[comment_id]")
-    author_id = _extract(form, "[author_id]")
+    message_id = _extract(form, "[message_id]")
 
-    if not task_id or not comment_id:
-        _log.info("Bitrix webhook: не удалось извлечь task_id/comment_id из payload: %s", form)
+    if not task_id or not message_id:
+        _log.info("Bitrix webhook: не удалось извлечь task_id/message_id из payload: %s", form)
         return
 
     from app.services import bitrix_service
 
-    text = await bitrix_service.get_task_comment_text(task_id, comment_id)
+    comment = await bitrix_service.get_task_comment(task_id, message_id)
+    text = comment.get("POST_MESSAGE") if comment else None
     if not text:
-        _log.info("Bitrix webhook: не удалось получить текст комментария task_id=%s comment_id=%s", task_id, comment_id)
+        _log.info("Bitrix webhook: не удалось получить текст комментария task_id=%s message_id=%s", task_id, message_id)
         return
 
     stripped = text.strip()
@@ -86,6 +86,7 @@ async def handle_task_comment_webhook(form: dict) -> None:
             _log.info("Bitrix webhook: чат заявки %s не найден", req.id)
             return
 
+        author_id = comment.get("AUTHOR_ID")
         author_name = await bitrix_service.get_user_name(author_id) if author_id else None
         message_text = f"{author_name}: {forwarded_text}" if author_name else forwarded_text
 
