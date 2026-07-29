@@ -15,6 +15,7 @@ from app.models.project import Project
 from app.repositories.cabinet import CabinetRepository
 from app.repositories.document import DocumentRepository
 from app.repositories.project import ProjectRepository
+from app.services.qr_service import generate_qr
 from app.services.upload_service import UPLOAD_ROOT
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,7 @@ TEMPLATE_SUBFOLDERS = [
     "Переписка",
 ]
 
+_QR_FILENAME = "QR.png"
 _INVALID_CHARS_RE = re.compile(r'[\\/:*?"<>|]')
 # Синхронизация продолжается ещё столько дней после истечения гарантии — если
 # гарантию продлят позже, синхронизация возобновится сама при следующем прогоне
@@ -96,12 +98,21 @@ async def remove_document_from_nas(root: Path, title: str, file_url: str | None)
         await asyncio.to_thread(dest.unlink)
 
 
+async def write_project_qr(root: Path, project: Project) -> None:
+    """Кладёт QR-код проекта (тот же savt://project/{unique_code}, что и в приложении)
+    картинкой в _Маркировка — печатается и клеится на объект физически."""
+    image_bytes = generate_qr(f"savt://project/{project.unique_code}")
+    dest = root / "_Маркировка" / _QR_FILENAME
+    await asyncio.to_thread(dest.write_bytes, image_bytes)
+
+
 async def create_project_folder_structure(project: Project, project_repo: ProjectRepository) -> None:
     if not settings.project_folders_root:
         logger.info("project_folders_root не настроен — пропускаю создание папки (project_id=%s)", project.id)
         return
     root = await _project_root_path(project, project_repo)
     await _ensure_structure(root)
+    await write_project_qr(root, project)
 
 
 async def sync_project_folder(session: AsyncSession, project: Project) -> None:
@@ -127,6 +138,10 @@ async def sync_project_folder(session: AsyncSession, project: Project) -> None:
 
     root = parent_root / project.folder_name
     await _ensure_structure(root)
+
+    qr_path = root / "_Маркировка" / _QR_FILENAME
+    if not await asyncio.to_thread(qr_path.exists):
+        await write_project_qr(root, project)
 
     doc_repo = DocumentRepository(session)
     docs, _ = await doc_repo.list_admin(project_id=project.id, limit=10_000)

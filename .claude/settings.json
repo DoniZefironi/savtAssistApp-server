@@ -40,7 +40,9 @@
       "Bash(py -m py_compile app/services/chat_service.py)",
       "Bash(py -c \"from cryptography.fernet import Fernet, InvalidToken; print\\('ok'\\)\")",
       "Bash(py -m pip install --quiet cryptography==43.0.1)",
-      "Bash(py -c ' *)"
+      "Bash(py -c ' *)",
+      "Bash(python -m py_compile app/services/project_folder_service.py)",
+      "PowerShell(docker compose ps 2>&1)"
     ],
     "additionalDirectories": [
       "C:\\code\\uploads",

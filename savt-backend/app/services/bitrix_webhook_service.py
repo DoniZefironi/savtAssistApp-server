@@ -45,13 +45,23 @@ async def handle_task_comment_webhook(form: dict) -> None:
     Пересылает в чат заявки только текст с префиксом /all — остальное игнорируется.
     Комментарии, которые сами являются нашей же синхронизацией сообщений в Bitrix
     (см. sync_message_to_bitrix), никогда не начинаются с /all, поэтому естественным
-    образом не попадают обратно в приложение — отдельной защиты от петли не требуется."""
+    образом не попадают обратно в приложение — отдельной защиты от петли не требуется.
+    Сам вебхук несёт только TASK_ID/COMMENT_ID, текст комментария в payload не
+    приходит — его отдельно дотягиваем через bitrix_service.get_task_comment_text
+    (см. аналогичный приём для сделок — get_deal_title)."""
     task_id = _extract(form, "[task_id]")
-    text = _extract(form, "[post_message]", "[message]", "[comment]")
+    comment_id = _extract(form, "[comment_id]")
     author_id = _extract(form, "[author_id]")
 
-    if not task_id or not text:
-        _log.info("Bitrix webhook: не удалось извлечь task_id/текст комментария из payload: %s", form)
+    if not task_id or not comment_id:
+        _log.info("Bitrix webhook: не удалось извлечь task_id/comment_id из payload: %s", form)
+        return
+
+    from app.services import bitrix_service
+
+    text = await bitrix_service.get_task_comment_text(task_id, comment_id)
+    if not text:
+        _log.info("Bitrix webhook: не удалось получить текст комментария task_id=%s comment_id=%s", task_id, comment_id)
         return
 
     stripped = text.strip()
@@ -63,7 +73,6 @@ async def handle_task_comment_webhook(form: dict) -> None:
 
     from app.repositories.chat import ChatRepository
     from app.repositories.service_request import ServiceRequestRepository
-    from app.services import bitrix_service
     from app.services.chat_service import ChatService
 
     async with AsyncSessionLocal() as session:
