@@ -124,6 +124,7 @@ class ProjectService:
         if project is None or project.deleted_at is not None:
             raise NotFoundError("Проект не найден")
         await project_folder_service.sync_project_folder(self.session, project)
+        await self.session.refresh(project)
         return await self.get(project_id)
 
     # Удаление проекта (soft-delete, как у Cabinet)
