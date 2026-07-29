@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -57,6 +58,11 @@ from app.services.project_folder_service import sync_all_project_folders
 from app.services.service_request_service import sync_statuses_from_bitrix
 from app.core.limiter import limiter
 from app.database import AsyncSessionLocal
+
+# Без этого логгеры вида logging.getLogger(__name__) в сервисах (bitrix_webhook_service,
+# project_folder_service и т.п.) молча теряются — корневой уровень по умолчанию WARNING,
+# и до сих пор виден был только SQLAlchemy engine (у него echo настраивает свой логгер отдельно).
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
 async def _bot_follow_up_job() -> None:
