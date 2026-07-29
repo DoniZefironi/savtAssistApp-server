@@ -94,6 +94,7 @@ async def handle_task_comment_webhook(form: dict) -> None:
             await ChatService(session).send_message(
                 chat.id, bitrix_user_id, MessageCreateIn(text=message_text), sync_to_bitrix=False,
             )
+            _log.info("Bitrix webhook: сообщение переслано в чат %s заявки %s: %s", chat.id, req.id, message_text)
         except Exception:
             # Например, чат уже архивирован (заявка закрыта) — комментарий в Bitrix
             # продолжили писать уже после закрытия. Просто не пересылаем, не роняем вебхук.
