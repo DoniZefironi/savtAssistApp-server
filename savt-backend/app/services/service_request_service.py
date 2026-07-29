@@ -27,6 +27,16 @@ _REQUEST_TYPE_LABELS = {
     "other": "другое",
 }
 
+# Обратный маппинг статусов Bitrix (см. STATUS в tasks.task.* — 1 Новая, 2 Ждёт
+# выполнения, 3 Выполняется, 4 Ждёт контроля, 5 Завершена, 6 Отложена, 7 Отклонена)
+# в наши 4 статуса. "Отклонена" считаем закрытой (дальше по заявке работать не нужно)
+_BITRIX_TO_STATUS = {
+    "1": "open", "2": "open",
+    "3": "in_progress", "4": "in_progress",
+    "6": "postponed",
+    "5": "closed", "7": "closed",
+}
+
 
 async def _get_chat_ids(session: AsyncSession, request_ids: list[int]) -> dict[int, int]:
     if not request_ids:
@@ -172,6 +182,47 @@ def sync_message_to_bitrix(
     asyncio.create_task(_task())
 
 
+# Опрос Bitrix за статусами задач (кто-то поменял статус прямо в Bitrix, минуя
+# приложение) — вызывается из cron в main.py. Не трогает уже закрытые у нас заявки.
+async def sync_statuses_from_bitrix() -> None:
+    from app.database import AsyncSessionLocal
+    from app.models.service_request import ServiceRequest
+    from app.services import bitrix_service
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(ServiceRequest).where(
+                ServiceRequest.bitrix_task_id.is_not(None),
+                ServiceRequest.status != "closed",
+            )
+        )
+        requests = list(result.scalars().all())
+        if not requests:
+            return
+
+        try:
+            statuses = await bitrix_service.get_task_statuses(
+                [r.bitrix_task_id for r in requests]
+            )
+        except Exception:
+            _log.exception("Не удалось опросить статусы задач Bitrix")
+            return
+
+        service = ServiceRequestService(session)
+        for req in requests:
+            bitrix_status = statuses.get(req.bitrix_task_id)
+            new_status = _BITRIX_TO_STATUS.get(bitrix_status) if bitrix_status else None
+            if new_status is None or new_status == req.status:
+                continue
+            try:
+                await service.update_status(
+                    req.id, ServiceRequestStatusIn(status=new_status),
+                    actor_id=0, actor_role="bitrix", sync_to_bitrix=False,
+                )
+            except Exception:
+                _log.exception("Не удалось применить статус из Bitrix для заявки %s", req.id)
+
+
 class ServiceRequestService:
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -239,7 +290,8 @@ class ServiceRequestService:
         return make_page([_to_detail(r, u, c, chat_ids.get(r.id)) for r, u, c in rows], total, page, size)
 
     async def update_status(
-        self, req_id: int, data: ServiceRequestStatusIn, actor_id: int = 0, actor_role: str = "admin"
+        self, req_id: int, data: ServiceRequestStatusIn, actor_id: int = 0, actor_role: str = "admin",
+        sync_to_bitrix: bool = True,
     ) -> ServiceRequestDetailOut:
         req = await self.repo.get_by_id(req_id)
         if req is None:
@@ -257,7 +309,9 @@ class ServiceRequestService:
         await self.session.commit()
         await self.session.refresh(req)
 
-        if req.bitrix_task_id:
+        # sync_to_bitrix=False — когда статус только что пришёл ИЗ Bitrix (см.
+        # sync_statuses_from_bitrix), иначе он тут же уйдёт обратно по кругу
+        if sync_to_bitrix and req.bitrix_task_id:
             _sync_status_to_bitrix(req.bitrix_task_id, req.status)
 
         # Закрытие заявки архивирует её чат (read-only, скрыт из активного списка);

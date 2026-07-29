@@ -1,8 +1,9 @@
+import logging
 import secrets
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import AlreadyExistsError, NotFoundError
 from app.repositories.cabinet import CabinetRepository
 from app.repositories.project import ProjectRepository, UserProjectRepository
 from app.schemas.pagination import PageOut, make_page
@@ -14,8 +15,11 @@ from app.schemas.project import (
     ProjectOut,
     ProjectUpdateIn,
 )
+from app.services import project_folder_service
 from app.services.audit_service import AuditLogger
 from app.services.project_reconciliation import reconcile_cabinet_access
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectService:
@@ -28,11 +32,20 @@ class ProjectService:
 
     # Создание проекта
     async def create(self, data: ProjectCreateIn, actor_id: int, actor_role: str) -> ProjectOut:
+        if data.parent_project_id is not None:
+            parent = await self.repo.get_by_id(data.parent_project_id)
+            if parent is None or parent.deleted_at is not None:
+                raise NotFoundError("Родительский проект не найден")
+
         unique_code = await self._generate_unique_code()
-        project = await self.repo.create(name=data.name, unique_code=unique_code)
+        project = await self.repo.create(
+            name=data.name, unique_code=unique_code, parent_project_id=data.parent_project_id,
+        )
         await self.session.flush()
+        project.folder_name = project_folder_service.sanitize_folder_name(data.name)
         self.audit.log("project.create", "project", project.id, actor_id, actor_role, {"name": project.name})
         await self.session.commit()
+        project_folder_service.schedule_folder_creation(project.id)
         return await self.get(project.id)
 
     # Получение проекта со всеми его шкафами (админский вид, без ограничений по владению).
@@ -61,6 +74,7 @@ class ProjectService:
             name=project.name,
             unique_code=project.unique_code,
             parent_project_id=project.parent_project_id,
+            folder_synced_at=project.folder_synced_at,
             cabinets=[
                 ProjectCabinetItem(
                     id=c.id, type=c.type, object_number=c.object_number, admin_internal_name=c.admin_internal_name,
@@ -77,11 +91,39 @@ class ProjectService:
         if project is None or project.deleted_at is not None:
             raise NotFoundError("Проект не найден")
         changed = data.model_dump(exclude_unset=True)
+
+        if "parent_project_id" in changed:
+            new_parent_id = changed["parent_project_id"]
+            if new_parent_id is not None:
+                parent = await self.repo.get_by_id(new_parent_id)
+                if parent is None or parent.deleted_at is not None:
+                    raise NotFoundError("Родительский проект не найден")
+                if await self.repo.would_create_cycle(project_id, new_parent_id):
+                    raise AlreadyExistsError("Нельзя сделать проект вложенным сам в себя")
+            if project.folder_name:
+                logger.warning(
+                    "Проект %s сменил родителя, но папка уже создана на NAS — "
+                    "перенесите её вручную, автоматический перенос не выполняется",
+                    project_id,
+                )
+
+        name_changed = "name" in changed and changed["name"] != project.name
         for field, value in changed.items():
             setattr(project, field, value)
         self.audit.log("project.update", "project", project_id, actor_id, actor_role, {"fields": list(changed.keys())})
         await self.session.commit()
         await self.session.refresh(project)
+        if name_changed:
+            project_folder_service.schedule_folder_sync(project_id)
+        return await self.get(project_id)
+
+    # Ручной запуск синхронизации папки проекта на NAS (вне расписания и вне
+    # проверки is_sync_eligible — явное действие админа должно срабатывать всегда)
+    async def sync_folder(self, project_id: int) -> ProjectOut:
+        project = await self.repo.get_by_id(project_id)
+        if project is None or project.deleted_at is not None:
+            raise NotFoundError("Проект не найден")
+        await project_folder_service.sync_project_folder(self.session, project)
         return await self.get(project_id)
 
     # Удаление проекта (soft-delete, как у Cabinet)

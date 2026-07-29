@@ -27,6 +27,7 @@ services:
     volumes:
       - ./uploads:/code/uploads
       - ./firebase-credentials.json:/code/firebase-credentials.json:ro
+      - project_folders:/mnt/projects
     depends_on:
       db:
         condition: service_healthy
@@ -57,3 +58,13 @@ services:
       options:
         max-size: "20m"
         max-file: "3"
+
+# Сетевая шара NAS с папками проектов (см. app/services/project_folder_service.py).
+# Учётные данные — из .env, не хранятся здесь. Если NAS_SHARE_DEVICE пуст/недоступен,
+# монтирование при старте упадёт — тогда временно уберите том и PROJECT_FOLDERS_ROOT из .env.
+volumes:
+  project_folders:
+    driver_opts:
+      type: cifs
+      device: "${NAS_SHARE_DEVICE}"
+      o: "username=${NAS_SHARE_USER},password=${NAS_SHARE_PASSWORD},vers=3.0,uid=1000,gid=1000,iocharset=utf8"

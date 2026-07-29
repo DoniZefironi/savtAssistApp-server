@@ -8,11 +8,13 @@ _HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 class AttachmentOut(BaseModel):
     id: int
     attachment_type: str
-    file_url: str
-    file_name: str
-    file_size_bytes: int
-    mime_type: str
+    file_url: str | None
+    file_name: str | None
+    file_size_bytes: int | None
+    mime_type: str | None
     duration_seconds: int | None
+    latitude: float | None = None
+    longitude: float | None = None
 
     model_config = {"from_attributes": True}
 
@@ -44,11 +46,13 @@ class ChatAttachmentOut(BaseModel):
     id: int
     message_id: int
     attachment_type: str
-    file_url: str
-    file_name: str
-    file_size_bytes: int
-    mime_type: str
+    file_url: str | None
+    file_name: str | None
+    file_size_bytes: int | None
+    mime_type: str | None
     duration_seconds: int | None
+    latitude: float | None = None
+    longitude: float | None = None
     created_at: datetime
 
 
@@ -66,11 +70,29 @@ class MessageSearchOut(BaseModel):
 
 
 class AttachmentIn(BaseModel):
-    file_url: str = Field(..., max_length=500)
-    file_name: str = Field(..., min_length=1, max_length=255)
-    file_size_bytes: int = Field(..., gt=0)
-    mime_type: str = Field(..., max_length=100)
+    # Файловое вложение — все 4 поля обязательны вместе.
+    file_url: str | None = Field(None, max_length=500)
+    file_name: str | None = Field(None, min_length=1, max_length=255)
+    file_size_bytes: int | None = Field(None, gt=0)
+    mime_type: str | None = Field(None, max_length=100)
     duration_seconds: int | None = Field(None, ge=0)
+    # Геолокация — вместо файла, latitude/longitude обязательны вместе
+    latitude: float | None = Field(None, ge=-90, le=90)
+    longitude: float | None = Field(None, ge=-180, le=180)
+
+    @model_validator(mode="after")
+    def validate_file_xor_location(self) -> "AttachmentIn":
+        is_location = self.latitude is not None or self.longitude is not None
+        is_file = any([self.file_url, self.file_name, self.file_size_bytes, self.mime_type])
+        if is_location and is_file:
+            raise ValueError("Вложение должно быть либо файлом, либо геолокацией, не тем и другим")
+        if is_location and (self.latitude is None or self.longitude is None):
+            raise ValueError("Для геолокации нужны и latitude, и longitude")
+        if is_file and not all([self.file_url, self.file_name, self.file_size_bytes, self.mime_type]):
+            raise ValueError("Для файлового вложения нужны file_url, file_name, file_size_bytes и mime_type")
+        if not is_location and not is_file:
+            raise ValueError("Вложение должно содержать либо файл, либо геолокацию")
+        return self
 
 
 class MessageCreateIn(BaseModel):

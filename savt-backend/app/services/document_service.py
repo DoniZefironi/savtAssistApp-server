@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import AlreadyExistsError, NotFoundError, PermissionDeniedError
 from app.repositories.document import DocumentRepository, DocumentRequestRepository, PhotoRepository
 from app.repositories.tag import TagRepository
+from app.services import project_folder_service
 from app.services.audit_service import AuditLogger
 from app.services.upload_service import UPLOAD_ROOT
 from app.schemas.documents import (
@@ -58,6 +59,8 @@ class AdminDocumentService:
                        {"title": doc.title, "cabinet_id": cabinet_id, "project_id": project_id})
         await self.session.commit()
         await self.session.refresh(doc)
+        if project_id is not None:
+            project_folder_service.schedule_document_mirror(project_id, doc.id)
         return DocumentOut.model_validate(doc)
 
     async def list_documents(
@@ -104,8 +107,11 @@ class AdminDocumentService:
                 Embedding.source_id == doc_id,
             )
         )
+        project_id, title, file_url = doc.project_id, doc.title, doc.file_url
         await self.doc_repo.delete(doc)
         await self.session.commit()
+        if project_id is not None:
+            project_folder_service.schedule_document_removal(project_id, title, file_url)
 
     async def create_photo(
         self,

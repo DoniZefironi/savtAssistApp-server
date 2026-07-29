@@ -4,10 +4,12 @@ from pydantic import BaseModel, Field
 
 class ProjectCreateIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
+    parent_project_id: int | None = Field(None, gt=0)
 
 
 class ProjectUpdateIn(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=200)
+    parent_project_id: int | None = Field(None, gt=0)
 
 
 class ProjectCabinetItem(BaseModel):
@@ -22,6 +24,7 @@ class ProjectOut(BaseModel):
     name: str
     unique_code: str
     parent_project_id: int | None
+    folder_synced_at: datetime | None = None
     cabinets: list[ProjectCabinetItem] = []
     created_at: datetime
     updated_at: datetime
@@ -70,3 +73,11 @@ class AddProjectByQrIn(BaseModel):
 class AddProjectByQrOut(BaseModel):
     status: str
     message: str
+
+
+class DecodeProjectCodeIn(BaseModel):
+    code: str = Field(..., min_length=1, max_length=200)
+
+
+class DecodeProjectCodeOut(BaseModel):
+    production_number: str

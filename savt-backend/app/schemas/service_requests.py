@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 
 
 _REQUEST_TYPES = ["repair", "diagnostics", "remote_adjustment", "onsite_adjustment", "other"]
-_STATUSES = ["open", "in_progress", "closed"]
+_STATUSES = ["open", "in_progress", "postponed", "closed"]
 
 
 class ServiceRequestCreateIn(BaseModel):
@@ -36,4 +36,4 @@ class ServiceRequestDetailOut(ServiceRequestOut):
 
 
 class ServiceRequestStatusIn(BaseModel):
-    status: str = Field(..., pattern="^(open|in_progress|closed)$")
+    status: str = Field(..., pattern="^(open|in_progress|postponed|closed)$")

@@ -1,4 +1,4 @@
-from sqlalchemy import String, ForeignKey, BigInteger, Integer, DateTime, func
+from sqlalchemy import String, ForeignKey, BigInteger, Integer, Double, DateTime, func
 from datetime import datetime
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -13,18 +13,21 @@ class MessageAttachment(Base):
     message_id: Mapped[int] = mapped_column(
         ForeignKey("messages.id", ondelete="CASCADE"), index=True
     )
-    # тип вложения
+    # тип вложения — image | video | voice | document | location
     attachment_type: Mapped[str] = mapped_column(String(20), index=True)
-    # юрл файла
-    file_url: Mapped[str] = mapped_column(String(500))
+    # юрл файла — NULL для геолокации (см. latitude/longitude), см. CHECK в БД
+    file_url: Mapped[str | None] = mapped_column(String(500))
     # имя файла
-    file_name: Mapped[str] = mapped_column(String(255))
+    file_name: Mapped[str | None] = mapped_column(String(255))
     # размер байт
-    file_size_bytes: Mapped[int] = mapped_column(BigInteger)
+    file_size_bytes: Mapped[int | None] = mapped_column(BigInteger)
     # миме тип
-    mime_type: Mapped[str] = mapped_column(String(100))
+    mime_type: Mapped[str | None] = mapped_column(String(100))
     # длительность
     duration_seconds: Mapped[int | None] = mapped_column(Integer)
+    # координаты — заполнены только при attachment_type="location"
+    latitude: Mapped[float | None] = mapped_column(Double)
+    longitude: Mapped[float | None] = mapped_column(Double)
     # дата создания
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

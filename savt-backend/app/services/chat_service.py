@@ -213,14 +213,21 @@ class ChatService:
         )
 
         for att in data.attachments:
-            await self.msg_repo.add_attachment(msg.id, {
-                "attachment_type": _attachment_type(att.mime_type),
-                "file_url": att.file_url,
-                "file_name": att.file_name,
-                "file_size_bytes": att.file_size_bytes,
-                "mime_type": att.mime_type,
-                "duration_seconds": att.duration_seconds,
-            })
+            if att.latitude is not None and att.longitude is not None:
+                await self.msg_repo.add_attachment(msg.id, {
+                    "attachment_type": "location",
+                    "latitude": att.latitude,
+                    "longitude": att.longitude,
+                })
+            else:
+                await self.msg_repo.add_attachment(msg.id, {
+                    "attachment_type": _attachment_type(att.mime_type),
+                    "file_url": att.file_url,
+                    "file_name": att.file_name,
+                    "file_size_bytes": att.file_size_bytes,
+                    "mime_type": att.mime_type,
+                    "duration_seconds": att.duration_seconds,
+                })
         chat.last_message_at = datetime.now(timezone.utc)
         if chat.user_id == sender_id:
             chat.last_user_message_at = chat.last_message_at
@@ -453,6 +460,8 @@ class ChatService:
                 file_size_bytes=att.file_size_bytes,
                 mime_type=att.mime_type,
                 duration_seconds=att.duration_seconds,
+                latitude=att.latitude,
+                longitude=att.longitude,
                 created_at=msg.created_at,
             )
             for att, msg in rows

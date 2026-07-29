@@ -37,7 +37,10 @@
       "PowerShell(py -c \"print\\('ok'\\)\")",
       "Bash(py -m py_compile app/models/document.py app/models/document_request.py app/schemas/documents.py app/repositories/document.py app/services/document_service.py app/routers/admin_documents.py app/routers/documents.py alembic/versions/b7c8d9e0f1a2_add_project_documents.py)",
       "Bash(py -c \"import fastapi, sqlalchemy, alembic; print\\('deps ok'\\)\")",
-      "Bash(py -m py_compile app/services/chat_service.py)"
+      "Bash(py -m py_compile app/services/chat_service.py)",
+      "Bash(py -c \"from cryptography.fernet import Fernet, InvalidToken; print\\('ok'\\)\")",
+      "Bash(py -m pip install --quiet cryptography==43.0.1)",
+      "Bash(py -c ' *)"
     ],
     "additionalDirectories": [
       "C:\\code\\uploads",

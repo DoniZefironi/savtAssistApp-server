@@ -11,12 +11,26 @@ class Project(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     # название проекта
     name: Mapped[str] = mapped_column(String(200))
-    # секретный кур-код
-    unique_code: Mapped[str] = mapped_column(String(100), unique=True, index=True)
-    # зарезервировано под будущую вложенность (проект в проекте), пока не используется
+    # секретный кур-код — для проектов из Bitrix это Fernet-токен (номер проекта,
+    # зашифрованный обратимо, см. app/services/project_code_service.py), поэтому
+    # шире, чем у Cabinet.unique_code
+    unique_code: Mapped[str] = mapped_column(String(200), unique=True, index=True)
+    # открытый номер проекта из Bitrix (например "26_138") — для поиска "уже есть
+    # ли проект с таким номером" при повторных вызовах вебхука. unique_code для
+    # этого не годится: шифруется со случайным IV, при каждом вызове получается
+    # новая строка даже для одного и того же номера. null — проекты, заведённые
+    # не из Bitrix (вручную через админку)
+    production_number: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+    # вложенность (проект в проекте) — например, отдельная партия отгрузки внутри
+    # одного производственного проекта
     parent_project_id: Mapped[int | None] = mapped_column(
         ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # санитизированное имя папки на NAS, реально использованное при последнем
+    # создании/переименовании — по нему определяем, разошлось ли name с папкой на диске
+    folder_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    # когда последний раз успешно прогонялась синхронизация папки с NAS
+    folder_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # дата создания
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

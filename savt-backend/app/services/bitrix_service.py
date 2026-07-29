@@ -13,6 +13,7 @@ _INCOMING_USER_NAME = "Bitrix"
 _STATUS_TO_BITRIX = {
     "open": "2",
     "in_progress": "3",
+    "postponed": "6",
     "closed": "5",
 }
 
@@ -71,8 +72,9 @@ async def add_comment(task_id: str, text: str) -> None:
 
 async def update_task_status(task_id: str, status: str) -> None:
     """Обновляет статус задачи в Bitrix24 (tasks.task.update), отражая изменение
-    статуса заявки у нас (open/in_progress/closed). Одностороннее — изменение
-    статуса задачи прямо в Bitrix обратно к нам не подтягивается."""
+    статуса заявки у нас (open/in_progress/closed). Обратное направление —
+    изменение статуса прямо в Bitrix — подтягивается отдельным опросом,
+    см. get_task_statuses и service_request_service.sync_statuses_from_bitrix."""
     if not settings.bitrix_webhook_url:
         return
     bitrix_status = _STATUS_TO_BITRIX.get(status)
@@ -89,6 +91,72 @@ async def update_task_status(task_id: str, status: str) -> None:
     data = resp.json()
     if "error" in data:
         raise RuntimeError(f"Bitrix tasks.task.update error: {data}")
+
+
+async def get_task_statuses(task_ids: list[str]) -> dict[str, str]:
+    """Опрашивает Bitrix24 (tasks.task.list) за текущим STATUS пачки задач разом —
+    используется для обратной синхронизации (кто-то поменял статус прямо в Bitrix,
+    минуя приложение). Возвращает {task_id: STATUS}, пропуская не найденные задачи.
+    Не бросает исключение при отсутствии настройки — просто отдаёт пустой словарь."""
+    if not settings.bitrix_webhook_url or not task_ids:
+        return {}
+
+    url = f"{settings.bitrix_webhook_url.rstrip('/')}/tasks.task.list.json"
+    resp = await _get_client().post(
+        url,
+        json={"filter": {"ID": task_ids}, "select": ["ID", "STATUS"]},
+    )
+    if not resp.is_success:
+        raise RuntimeError(f"Bitrix tasks.task.list {resp.status_code}: {resp.text}")
+    data = resp.json()
+    if "error" in data:
+        raise RuntimeError(f"Bitrix tasks.task.list error: {data}")
+
+    # Форма ответа (result.tasks vs просто result) не проверена вживую — если не
+    # совпадёт, поправить после реального теста опроса
+    result = data.get("result")
+    tasks = result.get("tasks", []) if isinstance(result, dict) else (result or [])
+    return {str(t["id"]): str(t["status"]) for t in tasks if "id" in t and "status" in t}
+
+
+async def get_deal_title(deal_id: str) -> str | None:
+    """Дотягивает название сделки CRM по её ID (crm.deal.get) — событие ONCRMDEALADD/
+    ONCRMDEALUPDATE присылает только ID, полей сделки в самом вебхуке нет. Требует,
+    чтобы у входящего вебхука (BITRIX_WEBHOOK_URL) была включена область "CRM"."""
+    if not settings.bitrix_webhook_url:
+        return None
+    url = f"{settings.bitrix_webhook_url.rstrip('/')}/crm.deal.get.json"
+    try:
+        resp = await _get_client().get(url, params={"ID": deal_id})
+    except httpx.RequestError:
+        return None
+    if not resp.is_success:
+        return None
+    data = resp.json()
+    if "error" in data:
+        return None
+    result = data.get("result") or {}
+    return result.get("TITLE")
+
+
+async def list_deal_titles(start: int = 0) -> tuple[dict[str, str], int | None]:
+    """Одна страница сделок CRM (ID -> TITLE) через crm.deal.list — для разового
+    импорта уже существующих сделок (app/cli.py import-bitrix-deals). Возвращает
+    (страница, next) — next передаётся в следующий вызов как start, None — сделок больше нет."""
+    if not settings.bitrix_webhook_url:
+        return {}, None
+
+    url = f"{settings.bitrix_webhook_url.rstrip('/')}/crm.deal.list.json"
+    resp = await _get_client().post(url, json={"select": ["ID", "TITLE"], "start": start})
+    if not resp.is_success:
+        raise RuntimeError(f"Bitrix crm.deal.list {resp.status_code}: {resp.text}")
+    data = resp.json()
+    if "error" in data:
+        raise RuntimeError(f"Bitrix crm.deal.list error: {data}")
+
+    deals = data.get("result") or []
+    page = {str(d["ID"]): d["TITLE"] for d in deals if "ID" in d and "TITLE" in d}
+    return page, data.get("next")
 
 
 async def get_user_name(bitrix_user_id: str) -> str | None:

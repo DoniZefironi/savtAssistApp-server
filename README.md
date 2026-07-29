@@ -41,15 +41,20 @@
 | `BITRIX_DEFAULT_RESPONSIBLE_ID` | ID сотрудника Bitrix24, назначаемого исполнителем (`RESPONSIBLE_ID`) по всем автосозданным задачам |
 | `BITRIX_DEFAULT_GROUP_ID` | ID проекта (рабочей группы) Bitrix24, необязательно — без него задачи создаются без привязки к проекту |
 | `BITRIX_DEFAULT_CREATOR_ID` | ID сотрудника Bitrix24, назначаемого постановщиком (`CREATED_BY`) задачи — отдельно от исполнителя. Необязательно: без него постановщиком становится технический пользователь вебхука |
+| `BITRIX_INCOMING_WEBHOOK_TOKENS` | Секреты для проверки исходящих вебхуков Bitrix24 (`application_token`), через запятую — Bitrix генерирует свой токен на каждое правило отдельно, свой не задать, поэтому тут может быть несколько значений сразу. См. раздел «Вебхуки внешних интеграций» |
+| `PROJECT_FOLDERS_ROOT` | Путь внутри контейнера к смонтированной шаре NAS с папками проектов (по умолч. `/mnt/projects`). Пусто — папки проектов не создаются вовсе |
+| `NAS_SHARE_DEVICE` | UNC-путь шары NAS (`//host/share/...`) — нужен только `docker-compose.yml` для CIFS-монтирования, самому приложению не передаётся |
+| `NAS_SHARE_USER` / `NAS_SHARE_PASSWORD` | Учётные данные для монтирования шары NAS — тоже только для `docker-compose.yml` |
 | `APP_ENV` | Окружение (`dev`/`prod`), в `dev` включает SQL-логирование |
-| `SMS_PROVIDER` | Провайдер SMS: `mock` (по умолч.) или `smscenter` |
-| `SMSCENTER_LOGIN` | Логин аккаунта smscenter.by |
-| `SMSCENTER_PASSWORD` | Пароль аккаунта smscenter.by |
-| `SMSCENTER_SENDER` | Имя отправителя SMS (Sender ID), необязательно |
-| `SMSCENTER_BASE_URL` | Базовый URL API smscenter.by (по умолч. `https://smscentre.by`) |
-| `SMS_CODE_TTL_MINUTES` | Срок действия SMS-кода в минутах (по умолч. `10`) |
-| `SMS_CODE_MAX_ATTEMPTS` | Максимум попыток ввода SMS-кода (по умолч. `5`) |
-| `SMS_CODE_RESEND_COOLDOWN_SECONDS` | Кулдаун повторной отправки SMS-кода в секундах (по умолч. `60`) |
+| `TELEGRAM_BOT_TOKEN` | Токен бота от @BotFather — доставка кода подтверждения телефона (SMS отключено полностью) |
+| `TELEGRAM_BOT_USERNAME` | Юзернейм бота без `@` — для сборки deep-link `t.me/<username>?start=...` |
+| `TELEGRAM_WEBHOOK_SECRET` | Свой случайный секрет (НЕ от Telegram) — сверяется с заголовком `X-Telegram-Bot-Api-Secret-Token` при вызове `setWebhook` |
+| `VIBER_BOT_TOKEN` | Auth Token аккаунта Viber Public Account |
+| `VIBER_BOT_URI` | chatURI аккаунта — для deep-link `viber://pa?chatURI=...` |
+| `MESSENGER_LINK_REQUEST_TTL_MINUTES` | Сколько живёт токен "рукопожатия" с ботом, пока пользователь не откроет deep-link (по умолч. `15`) |
+| `SMS_CODE_TTL_MINUTES` | Срок действия кода подтверждения телефона в минутах (по умолч. `10`) |
+| `SMS_CODE_MAX_ATTEMPTS` | Максимум попыток ввода кода подтверждения (по умолч. `5`) |
+| `SMS_CODE_RESEND_COOLDOWN_SECONDS` | Кулдаун повторной отправки кода в секундах (по умолч. `60`) |
 
 ---
 
@@ -150,6 +155,43 @@ curl https://helper.savt.by/health      # → {"app":"ok","db":true}
 
 ---
 
+## Вебхуки внешних интеграций
+
+Эти эндпоинты не вызываются фронтендом — их дёргают внешние сервисы (Bitrix24, Telegram, Viber). Настройка — на стороне соответствующего сервиса, не в коде.
+
+### POST `/webhooks/bitrix/task-comment`
+Исходящий вебхук Bitrix24 на событие `ONTASKCOMMENTADD` (добавление комментария к задаче). Пересылает в чат заявки в приложении только комментарии, начинающиеся с префикса `/all` — остальная переписка в задаче остаётся только в Bitrix.
+
+Настройка в Bitrix24: Приложения → Разработчикам → Другое → **Исходящий вебхук** → событие "Добавление комментария к задаче" → обработчик `https://<домен>/webhooks/bitrix/task-comment` → полученный `application_token` добавить в `BITRIX_INCOMING_WEBHOOK_TOKENS` (через запятую, если там уже есть токен от другого правила — например, от вебхука сделок ниже).
+
+Обратное направление уже работает всегда: сообщения из чата заявки в приложении (от заявителя **и** от оператора/админа/суперадмина) дублируются в комментарии Bitrix-задачи через `task.commentitem.add` — это не требует отдельной настройки, работает через уже существующий `BITRIX_WEBHOOK_URL`.
+
+### POST `/webhooks/telegram`
+Вебхук Telegram Bot API — принимает `/start <token>` при открытии пользователем deep-link из `/auth/register/start` (и аналогичных эндпоинтов). Проверяется заголовком `X-Telegram-Bot-Api-Secret-Token` (сверяется с `TELEGRAM_WEBHOOK_SECRET`).
+
+Настройка (разово, curl):
+```bash
+curl -X POST "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://<домен>/webhooks/telegram", "secret_token": "<TELEGRAM_WEBHOOK_SECRET>"}'
+```
+Проверка: `curl "https://api.telegram.org/bot<TOKEN>/getWebhookInfo"` — смотреть на `last_error_message`.
+
+### POST `/webhooks/viber`
+Вебхук Viber REST API. MVP-механизм — пользователь сам отправляет боту предзаполненное сообщение с токеном (deep-link `viber://pa?chatURI=<VIBER_BOT_URI>&text=<token>`), автоматической отправки как в Telegram нет. Подпись проверяется через `X-Viber-Content-Signature` (HMAC-SHA256 от тела запроса, ключ — `VIBER_BOT_TOKEN`).
+
+Настройка (разово, curl):
+```bash
+curl -X POST https://chatapi.viber.com/pa/set_webhook \
+  -H "X-Viber-Auth-Token: <VIBER_BOT_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://<домен>/webhooks/viber", "event_types": ["message"]}'
+```
+
+> Точные имена полей во входящих payload'ах Telegram/Viber/Bitrix стоит свериться на реальном тесте — при неудачном парсинге сырой payload логируется, см. `app/services/*_webhook_service.py`.
+
+---
+
 # savtAssistApp — сервер мобильного приложения поддержки SAVT
 
 API для управления пользователями, шкафами управления (ШУ), документацией, QR-кодами, чатами, сервисными заявками, уведомлениями, базой знаний и FAQ.
@@ -174,11 +216,27 @@ API для управления пользователями, шкафами у�
 ## 1. Авторизация
 
 ### Регистрация пользователя
+
+> **SMS отключено полностью.** Код подтверждения телефона теперь доставляется ботом в
+> Telegram или Viber — пользователь выбирает канал (`channel: "telegram" | "viber"`).
+> Бот не может написать первым тому, кто с ним не общался, поэтому если канал ещё
+> не подключён — вместо кода в ответе приходит `deep_link` на бота: нужно показать
+> пользователю кнопку "Открыть Telegram/Viber", а не сразу экран ввода кода.
+
 ```
 1. POST /auth/register/start
-   Тело: { phone, password, password_confirm, full_name, user_type, organization_name? }
-   Ответ: { message, resend_after_seconds }
-   → Показать экран ввода SMS-кода. Запустить таймер resend_after_seconds.
+   Тело: { phone, password, password_confirm, full_name, user_type, organization_name?, channel }
+   Ответ: { message, resend_after_seconds, deep_link }
+
+   deep_link == null → канал уже подключён, код уже отправлен в чат с ботом.
+     → Показать экран ввода кода. Запустить таймер resend_after_seconds.
+   deep_link != null → канал не подключён впервые.
+     → Показать кнопку "Открыть Telegram/Viber" (открыть deep_link).
+     → Пользователь жмёт Start (Telegram) / отправляет сообщение (Viber) в самом мессенджере.
+     → Бот присылает код после этого — фронту нужно как-то дождаться этого момента
+       (например, поллингом /auth/register/resend с тем же channel, пока не вернётся
+       deep_link: null, либо просто дать пользователю самому вернуться в приложение
+       и ввести код, когда он придёт) — см. чек-лист ниже.
 
 2. POST /auth/register/complete
    Тело: { phone, code }
@@ -187,7 +245,7 @@ API для управления пользователями, шкафами у�
 
    Если код не пришёл или истёк:
    POST /auth/register/resend
-   Тело: { phone }
+   Тело: { phone, channel }
 ```
 
 ### Вход пользователя
@@ -240,11 +298,12 @@ POST /auth/logout
 ### Смена номера телефона
 ```
 1. POST /auth/change-phone/start
-   Тело: { new_phone: "+375291234568" }
-   → SMS-код отправляется на НОВЫЙ номер.
-   Ответ: { resend_after_seconds: 60 }
+   Тело: { new_phone: "+375291234568", channel }
+   → Код отправляется на НОВЫЙ номер, через Telegram/Viber (см. регистрацию выше
+     про deep_link — если у аккаунта канал уже подключён, код улетит сразу).
+   Ответ: { resend_after_seconds: 60, deep_link }
 
-2. Пользователь вводит код из SMS
+2. Пользователь вводит код
 3. POST /auth/change-phone/complete
    Тело: { new_phone: "+375291234568", code: "123456" }
    → Номер изменён.
@@ -433,6 +492,13 @@ POST /chats/{chat_id}/messages
        duration_seconds: 15
      }]
    }
+
+Геолокация (без загрузки файла — просто координаты):
+POST /chats/{chat_id}/messages
+Тело: {
+  attachments: [{ latitude: 53.9045, longitude: 27.5615 }]
+}
+→ Вложение придёт с attachment_type: "location", остальные поля вложения — null.
 ```
 
 ### Отметить прочитанным
@@ -700,10 +766,26 @@ POST /upload/transcribe (JSON: { file_url: "/static/voices/abc.ogg" })
 
 ---
 
+## Чек-лист: что добавить на фронте для авторизации через Telegram/Viber
+
+SMS отключено полностью, фронт под новую доставку кода (Telegram/Viber) ещё не готов нигде.
+
+### Мобильное приложение (пользователь)
+- [ ] На экранах регистрации, сброса пароля и смены телефона — выбор канала (`"Получить код в Telegram"` / `"...в Viber"`) вместо предположения "SMS всегда". Значение уходит как `channel` в `/auth/register/start`, `/register/resend`, `/password-reset/start`, `/change-phone/start`.
+- [ ] Новое состояние экрана — когда в ответе пришёл непустой `deep_link` (первое обращение к боту с этого аккаунта): кнопка **«Открыть Telegram/Viber»**, а не сразу поле ввода кода. Код в этот момент ещё не существует — генерируется только после того, как бот получит подтверждение (пользователь нажал Start в Telegram или отправил сообщение в Viber).
+- [ ] Способ узнать, что рукопожатие завершилось и код отправлен — пока не решено на бэкенде однозначно; проще всего, когда пользователь вернулся в приложение (по свайпу/уведомлению), дать ему обычный экран ввода кода — код к этому моменту уже должен быть у него в чате с ботом.
+- [ ] Если повторно нажать «получить код» уже после того, как канал подключён (`deep_link: null` в ответе) — сразу показывать обычный экран ввода кода, без кнопки открытия бота.
+
+### Общее
+- [ ] Пока самостоятельная регистрация Viber Public Account у мобильных разработчиков/продукта под вопросом (см. историю переписки) — Viber может быть недоступен как канал до отдельного согласования с Viber Business. Telegram работает уже сейчас.
+
+---
+
 ## Рут `auth` — авторизация и аккаунт
 
 ### POST `/auth/register/start`
-Начало регистрации. Пользователь вводит данные, на телефон отправляется SMS-код.
+Начало регистрации. Пользователь вводит данные, код подтверждения телефона доставляется
+ботом в Telegram или Viber (SMS отключено полностью).
 ```json
 {
   "phone": "+375291234567",
@@ -711,7 +793,8 @@ POST /upload/transcribe (JSON: { file_url: "/static/voices/abc.ogg" })
   "password_confirm": "minLength8",
   "full_name": "Иванов Иван Иванович",
   "user_type": "individual",
-  "organization_name": null
+  "organization_name": null,
+  "channel": "telegram"
 }
 ```
 - `phone` — номер в международном формате, проверяется на корректность
@@ -719,15 +802,23 @@ POST /upload/transcribe (JSON: { file_url: "/static/voices/abc.ogg" })
 - `password_confirm` — должен совпадать с `password`
 - `user_type` — `individual` или `organization`
 - `organization_name` — обязателен если `user_type = organization`
+- `channel` — `telegram` или `viber`, куда доставить код
 
 Ответ:
 ```json
 {
   "message": "Код подтверждения отправлен",
-  "resend_after_seconds": 60
+  "resend_after_seconds": 60,
+  "deep_link": null
 }
 ```
 - `resend_after_seconds` — кулдаун в секундах до возможности повторно запросить код
+- `deep_link` — `null`, если канал (Telegram/Viber) у аккаунта уже подключён и код уже
+  отправлен в чат с ботом. Если это первое обращение к боту с этого аккаунта — вместо
+  кода приходит ссылка вида `https://t.me/<bot>?start=<token>` (или `viber://pa?chatURI=...`):
+  бот не может написать первым тому, кто с ним не общался, поэтому нужно сначала
+  открыть эту ссылку и подтвердить диалог с ботом — только после этого код будет
+  сгенерирован и отправлен. Код не создаётся заранее, если рукопожатие ещё не пройдено.
 
 ---
 
@@ -754,10 +845,11 @@ POST /upload/transcribe (JSON: { file_url: "/static/voices/abc.ogg" })
 Повторная отправка кода (если не пришёл или истёк).
 ```json
 {
-  "phone": "+375291234567"
+  "phone": "+375291234567",
+  "channel": "telegram"
 }
 ```
-Ответ аналогичен `/register/start`.
+Ответ аналогичен `/register/start` (включая возможный `deep_link`).
 
 ---
 
@@ -829,17 +921,20 @@ POST /upload/transcribe (JSON: { file_url: "/static/voices/abc.ogg" })
 ---
 
 ### POST `/auth/password-reset/start`
-Запрос SMS-кода для сброса пароля.
+Запрос кода для сброса пароля (доставка в Telegram/Viber, см. `/register/start`).
 ```json
-{ "phone": "+375291234567" }
+{ "phone": "+375291234567", "channel": "telegram" }
 ```
 Ответ:
 ```json
 {
   "message": "На телефон отправлен код",
-  "resend_after_seconds": 60
+  "resend_after_seconds": 60,
+  "deep_link": null
 }
 ```
+Если телефон не найден/не подтверждён/деактивирован — ответ тот же (`deep_link: null`,
+код никуда не уходит), чтобы нельзя было по ответу узнать, существует ли номер в системе.
 
 ---
 
@@ -884,11 +979,14 @@ POST /upload/transcribe (JSON: { file_url: "/static/voices/abc.ogg" })
 ---
 
 ### POST `/auth/change-phone/start`
-Запрос SMS-кода для смены номера телефона. Код отправляется на **новый** номер. Лимит — 5 запросов в минуту.
+Запрос кода для смены номера телефона (Telegram/Viber, см. `/register/start`). Код
+отправляется на **новый** номер. Лимит — 5 запросов в минуту.
 ```json
-{ "new_phone": "+375291234568" }
+{ "new_phone": "+375291234568", "channel": "telegram" }
 ```
-Ответ: `{ "message": "...", "resend_after_seconds": 60 }`.
+Ответ: `{ "message": "...", "resend_after_seconds": 60, "deep_link": null }`.
+Если у аккаунта канал уже подключён (например, ещё с регистрации) — рукопожатие
+заново проходить не нужно, код улетает сразу.
 
 Ошибки:
 - `409` — новый номер уже используется другим пользователем
@@ -1647,9 +1745,30 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 ### POST `/admin/projects`
 Создание проекта. `unique_code` генерируется автоматически, как у ШУ.
 ```json
-{ "name": "Бизнес-центр Космос" }
+{ "name": "Бизнес-центр Космос", "parent_project_id": null }
 ```
+- `parent_project_id` — необязателен, вложенность проекта в проект (например, отдельная партия отгрузки внутри одного производственного проекта — свои шкафы, своя гарантия). `404`, если указанный родитель не существует.
+
 Ответ — полная информация о проекте, включая `unique_code` и (пока пустой) список `cabinets`.
+
+При создании сервер автоматически заводит на NAS (если настроен `PROJECT_FOLDERS_ROOT`, см. переменные окружения) папку с шаблонной структурой:
+```
+📁 Название_проекта/                  ← корень, основная документация проекта
+├── 📁 _Проект/                       ← схемы, ТЗ на сборку
+├── 📁 _Программа/
+│   ├── 📁 SCADA/
+│   ├── 📁 ПЛК/
+│   └── 📁 HMI/
+├── 📁 _Маркировка/
+│   ├── 📁 Облако/
+│   ├── 📁 Coral/
+│   └── 📁 Wago/
+├── 📁 _Руководство/
+├── 📁 Фото/
+├── 📁 _Доп.информация/
+└── 📁 Переписка/
+```
+Вложенный проект (`parent_project_id` задан) получает свою полную папку-шаблон **внутри** папки родителя, а не отдельной папкой верхнего уровня. Создание папки — фоновая, best-effort операция: сбой сети/NAS не роняет создание проекта, недостающее досоздаст ближайший ночной прогон синхронизации (см. ниже).
 
 ---
 
@@ -1683,6 +1802,7 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
   "name": "Бизнес-центр Космос",
   "unique_code": "A3F7BC1254E8D9F0",
   "parent_project_id": null,
+  "folder_synced_at": "2026-07-29T02:00:00Z",
   "cabinets": [
     { "id": 5, "type": "Вентиляционная установка", "object_number": "29_099", "admin_internal_name": "ШУ-18К" }
   ],
@@ -1691,7 +1811,8 @@ QR кодирует строку: `savt://cabinet/{unique_code}`
 }
 ```
 `cabinets` — уже отфильтрован сервером переданными параметрами (без параметров — все шкафы проекта).
-`parent_project_id` — зарезервировано под будущую вложенность проектов (проект внутри проекта), сейчас всегда `null`, на фронте можно не отображать.
+`parent_project_id` — родительский проект, если этот вложен в другой (`null`, если проект верхнего уровня).
+`folder_synced_at` — когда последний раз успешно прошла синхронизация папки проекта на NAS (`null`, если ни разу или `PROJECT_FOLDERS_ROOT` не настроен).
 
 ---
 
@@ -1705,10 +1826,19 @@ QR кодирует строку: `savt://project/{unique_code}`
 ---
 
 ### PATCH `/admin/projects/{project_id}`
-Переименование проекта.
+Переименование и/или смена родителя. Оба поля опциональны — передавать только изменённые.
 ```json
-{ "name": "Новое название" }
+{ "name": "Новое название", "parent_project_id": null }
 ```
+- Смена `name` — если папка на NAS уже существовала, она переименовывается автоматически (фоново).
+- Смена `parent_project_id` — `404`, если родитель не найден; `409`, если это создаст цикл (проект не может быть вложен сам в себя, в т.ч. через цепочку). **Папка на NAS при смене родителя не переносится автоматически** — если она уже была создана, её нужно перенести на диске вручную, сервер только меняет связь в БД (и пишет предупреждение в лог).
+
+---
+
+### POST `/admin/projects/{project_id}/sync-folder`
+Ручной запуск синхронизации папки проекта на NAS — работает всегда (в отличие от ночного автопрогона, не проверяет актуальность гарантии). Проверяет/чинит структуру подпапок, переименовывает корень при рассинхроне с `name`, докопировает в корень отсутствующие файлы документов проекта. Ответ — `ProjectOut` с обновлённым `folder_synced_at`.
+
+> **Автоматическая синхронизация** дополнительно прогоняется раз в сутки ночью — но только для проектов, у которых гарантия ещё актуальна: берётся крайняя (`MAX`) дата окончания гарантии среди ШУ проекта, плюс неделя запаса после истечения. Если гарантию продлить позже — синхронизация возобновится сама при ближайшем ночном прогоне, никакого отдельного действия не требуется. У проекта без ШУ/без указанной гарантии синхронизация не блокируется.
 
 ---
 
@@ -1792,24 +1922,34 @@ QR кодирует строку: `savt://project/{unique_code}`
 
 ## Рут `admin: documents` — документы и фото ШУ (админ/оператор)
 
-Документы всегда привязаны к конкретному ШУ.
+Документ привязан либо к ШУ, либо к проекту в целом (документация, общая для всего
+проекта, не для конкретного шкафа) — ровно к одному из двух.
 
 ### POST `/admin/documents`
-Загрузка документа к ШУ. `multipart/form-data`.
+Загрузка документа. `multipart/form-data`.
 
 | Поле | Тип | Обязательно |
 |---|---|---|
 | `file` | файл | ✅ |
-| `cabinet_id` | int | ✅ |
+| `cabinet_id` | int | ровно одно из `cabinet_id`/`project_id` |
+| `project_id` | int | ровно одно из `cabinet_id`/`project_id` |
 | `title` | string | нет (берётся имя файла) |
 | `requires_approval` | bool | нет (по умолчанию `false`) |
 
-`doc_type`, `mime_type`, `file_size_bytes` извлекаются автоматически.
+`doc_type`, `mime_type`, `file_size_bytes` извлекаются автоматически. Если передать оба
+поля или ни одного — `422`.
+
+Если задан `project_id` (и настроен `PROJECT_FOLDERS_ROOT`) — файл дополнительно (фоново,
+best-effort) зеркалится в **корень** папки проекта на NAS, рядом с шаблонными подпапками
+(см. «Рут `admin: projects`»). Источник истины для скачивания через API остаётся
+`/code/uploads` — копия на NAS только для тех, кто открывает файлы напрямую с шары.
+Удаление документа (`DELETE /admin/documents/{doc_id}`) аналогично убирает зеркальную
+копию из корня папки.
 
 ---
 
 ### GET `/admin/documents`
-Список документов. Параметры: `cabinet_id`, `doc_type`, `requires_approval`, `tag_ids`, `sort_by`, `sort_order`, `page`, `size`.
+Список документов. Параметры: `cabinet_id`, `project_id`, `doc_type`, `requires_approval`, `tag_ids`, `sort_by`, `sort_order`, `page`, `size`.
 
 `sort_by`: `title`, `doc_type`, `file_size_bytes`, `created_at`.
 
@@ -1882,6 +2022,7 @@ QR кодирует строку: `savt://project/{unique_code}`
       "user_registered_at": "2025-11-01T08:30:00Z",
       "document_id": 12,
       "cabinet_id": 5,
+      "project_id": null,
       "doc_type": "passport",
       "status": "pending",
       "user_message": "Нужен для проверки",
@@ -1918,7 +2059,7 @@ QR кодирует строку: `savt://project/{unique_code}`
 ## Рут `documents` — документы и фото для пользователя
 
 ### GET `/cabinets/{cabinet_id}/documents`
-Список документов ШУ. Параметры: `tag_ids`, `doc_type`, `sort_by`, `sort_order`, `page`, `size`.
+Список документов конкретного ШУ. Параметры: `tag_ids`, `doc_type`, `sort_by`, `sort_order`, `page`, `size`.
 
 ```json
 {
@@ -1926,6 +2067,7 @@ QR кодирует строку: `savt://project/{unique_code}`
     {
       "id": 1,
       "cabinet_id": 5,
+      "project_id": null,
       "title": "Паспорт ШУ-18К",
       "doc_type": "pdf",
       "file_url": "/static/documents/abc.pdf",
@@ -1939,6 +2081,14 @@ QR кодирует строку: `savt://project/{unique_code}`
 }
 ```
 - `file_url` — `null` если `has_access=false` (документ закрыт, доступ не выдан)
+- `cabinet_id`/`project_id` — ровно одно из двух не `null` (документ либо к ШУ, либо к проекту)
+
+---
+
+### GET `/projects/{project_id}/documents`
+Документация проекта в целом (не привязанная к конкретному ШУ) — **отдельный список**
+от документов ШУ, не подмешивается туда автоматически, даже если ШУ входит в этот
+проект. Параметры и формат ответа — те же, что у `GET /cabinets/{cabinet_id}/documents`.
 
 ---
 
@@ -2117,7 +2267,7 @@ QR кодирует строку: `savt://project/{unique_code}`
 ---
 
 ### POST `/chats/{chat_id}/messages`
-Отправить сообщение. Вложения передаются как URL (предварительно загрузить через `/upload/attachment` или `/upload/voice`).
+Отправить сообщение. Вложения передаются как URL (предварительно загрузить через `/upload/attachment` или `/upload/voice`), либо как геолокация — без файла.
 ```json
 {
   "text": "Текст сообщения",
@@ -2133,7 +2283,11 @@ QR кодирует строку: `savt://project/{unique_code}`
   ]
 }
 ```
-Либо текст, либо вложения — хотя бы одно обязательно.
+Геолокация — элемент `attachments[]` вместо файла:
+```json
+{ "attachments": [{ "latitude": 53.9045, "longitude": 27.5615 }] }
+```
+Каждый элемент `attachments[]` — **либо** файл (`file_url`+`file_name`+`file_size_bytes`+`mime_type`), **либо** геолокация (`latitude`+`longitude`), смешивать поля одного вложения нельзя (`422`). Либо текст, либо вложения — хотя бы одно обязательно.
 
 > Архивный чат (закрытая заявка, `archived_at` не `null`) — `403`, отправка недоступна.
 
@@ -2214,11 +2368,12 @@ QR кодирует строку: `savt://project/{unique_code}`
 Удалить per-chat override (откат к глобальным настройкам). `204 No Content`.
 
 ### GET `/chats/{chat_id}/attachments`
-Все вложения чата: изображения, голосовые, документы, видео. Параметр `type` — фильтр по типу:
+Все вложения чата: изображения, голосовые, документы, видео, геолокации. Параметр `type` — фильтр по типу:
 - `image` — изображения
 - `voice` — голосовые сообщения
 - `document` — документы
 - `video` — видео
+- `location` — геолокации
 
 ```json
 [
@@ -2231,7 +2386,22 @@ QR кодирует строку: `savt://project/{unique_code}`
     "file_size_bytes": 204800,
     "mime_type": "image/jpeg",
     "duration_seconds": null,
+    "latitude": null,
+    "longitude": null,
     "created_at": "2026-06-10T14:30:00Z"
+  },
+  {
+    "id": 6,
+    "message_id": 43,
+    "attachment_type": "location",
+    "file_url": null,
+    "file_name": null,
+    "file_size_bytes": null,
+    "mime_type": null,
+    "duration_seconds": null,
+    "latitude": 53.9045,
+    "longitude": 27.5615,
+    "created_at": "2026-06-10T14:35:00Z"
   }
 ]
 ```
@@ -2279,7 +2449,7 @@ QR кодирует строку: `savt://project/{unique_code}`
 ---
 
 ### GET `/operator/chats/{chat_id}/attachments`
-Все вложения чата. Параметр `type`: `image` / `voice` / `document` / `video`. Ответ — такой же список `ChatAttachmentOut` как в `/chats/{chat_id}/attachments`.
+Все вложения чата. Параметр `type`: `image` / `voice` / `document` / `video` / `location`. Ответ — такой же список `ChatAttachmentOut` как в `/chats/{chat_id}/attachments`.
 
 ---
 

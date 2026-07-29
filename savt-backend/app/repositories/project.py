@@ -27,9 +27,52 @@ class ProjectRepository(BaseRepository[Project]):
         )
         return result.scalar_one_or_none()
 
+    # Поиск по открытому номеру проекта из Bitrix (для идемпотентности вебхука
+    # сделок — см. app/services/bitrix_webhook_service.py handle_deal_event)
+    async def find_by_production_number(self, production_number: str) -> Project | None:
+        result = await self.session.execute(
+            select(Project).where(
+                Project.production_number == production_number,
+                Project.deleted_at.is_(None),
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def soft_delete(self, project: Project) -> None:
         project.deleted_at = datetime.now(timezone.utc)
         await self.session.flush()
+
+    async def list_all_active(self) -> list[Project]:
+        result = await self.session.execute(
+            select(Project).where(Project.deleted_at.is_(None))
+        )
+        return list(result.scalars().all())
+
+    # Цепочка предков от корня до непосредственного родителя (сам project_id не включается).
+    # Защищено от зацикливания на случай испорченных данных.
+    async def get_ancestors(self, project_id: int) -> list[Project]:
+        ancestors: list[Project] = []
+        seen = {project_id}
+        current = await self.get_by_id(project_id)
+        while current is not None and current.parent_project_id is not None:
+            if current.parent_project_id in seen:
+                break
+            parent = await self.get_by_id(current.parent_project_id)
+            if parent is None:
+                break
+            ancestors.append(parent)
+            seen.add(parent.id)
+            current = parent
+        return list(reversed(ancestors))
+
+    # Проверка, что project_id не станет сам себе потомком, если ему назначить
+    # родителем new_parent_id (new_parent_id не должен быть project_id, и project_id
+    # не должен быть уже предком new_parent_id)
+    async def would_create_cycle(self, project_id: int, new_parent_id: int) -> bool:
+        if new_parent_id == project_id:
+            return True
+        ancestors = await self.get_ancestors(new_parent_id)
+        return any(a.id == project_id for a in ancestors)
 
     # Bulk-подстановка названий проектов в карточки ШУ (CabinetOut/CabinetListOut/...) —
     # включает и удалённые проекты (deleted_at не фильтруется), т.к. cabinet.project_id
