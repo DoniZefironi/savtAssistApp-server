@@ -12,9 +12,12 @@ _log = logging.getLogger(__name__)
 _FORWARD_PREFIX = "/all"
 
 # Номер объекта — самое первое "слово" в названии сделки, до пробела, например
-# "26_138" из "26_138 МГКУП Горсвет_конверт (1-20)". Якорь ^ + требование начинаться
-# с цифр_ — просто защита от случайного совпадения на сделках без номера в начале.
-_PRODUCTION_NUMBER_RE = re.compile(r"^(\d+_\S+)")
+# "26_138" из "26_138 МГКУП Горсвет_конверт (1-20)". Обязательный префикс (год
+# производства, settings.bitrix_production_number_prefix) отсекает сделки с
+# номерами других лет/форматов — например "24_004" не попадёт при префиксе "26".
+_PRODUCTION_NUMBER_RE = re.compile(
+    rf"^({re.escape(settings.bitrix_production_number_prefix)}_\S+)"
+)
 
 
 def _extract(form: dict, *suffixes: str) -> str | None:
