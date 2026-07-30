@@ -44,7 +44,8 @@
       "Bash(python -m py_compile app/services/project_folder_service.py)",
       "PowerShell(docker compose ps 2>&1)",
       "WebFetch(domain:apidocs.bitrix24.com)",
-      "Bash(git fetch *)"
+      "Bash(git fetch *)",
+      "Bash(nginx -t -c \"$\\(pwd\\)/savt-backend/nginx.conf\")"
     ],
     "additionalDirectories": [
       "C:\\code\\uploads",
