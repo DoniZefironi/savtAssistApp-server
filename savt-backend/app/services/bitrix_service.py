@@ -57,43 +57,76 @@ async def create_task(title: str, description: str) -> str | None:
 
 
 async def add_comment(task_id: str, text: str) -> None:
-    """Добавляет комментарий в ленту задачи Bitrix24 (task.commentitem.add) —
-    используется для синхронизации сообщений заявителя из чата заявки в задачу."""
+    """Отправляет сообщение в чат задачи (tasks.task.chat.message.send) —
+    используется для синхронизации сообщений заявителя из чата заявки в задачу.
+    Старый task.commentitem.add не работает с новой карточкой задачи, где
+    комментарии физически хранятся в чате (IM), см. get_task_chat_id/get_dialog_message."""
     if not settings.bitrix_webhook_url:
         return
 
-    url = f"{settings.bitrix_webhook_url.rstrip('/')}/task.commentitem.add.json"
+    url = f"{settings.bitrix_webhook_url.rstrip('/')}/tasks.task.chat.message.send.json"
     resp = await _get_client().post(
         url,
-        json={"taskId": task_id, "fields": {"POST_MESSAGE": text}},
+        json={"fields": {"taskId": task_id, "text": text}},
     )
     if not resp.is_success:
-        raise RuntimeError(f"Bitrix task.commentitem.add {resp.status_code}: {resp.text}")
+        raise RuntimeError(f"Bitrix tasks.task.chat.message.send {resp.status_code}: {resp.text}")
     data = resp.json()
     if "error" in data:
-        raise RuntimeError(f"Bitrix task.commentitem.add error: {data}")
+        raise RuntimeError(f"Bitrix tasks.task.chat.message.send error: {data}")
 
 
-async def get_task_comment(task_id: str, message_id: str) -> dict | None:
-    """Дотягивает комментарий задачи целиком (task.commentitem.get) — событие
-    ONTASKCOMMENTADD присылает только TASK_ID/MESSAGE_ID, ни текста, ни автора
-    в самом вебхуке нет (см. handle_task_comment_webhook). Из результата берутся
-    POST_MESSAGE и AUTHOR_ID."""
+async def get_task_chat_id(task_id: str) -> str | None:
+    """Дотягивает DIALOG_ID чата задачи (tasks.task.get) для последующего чтения
+    сообщений через im.dialog.messages.get — в новой карточке задачи комментарии
+    физически хранятся в чате, отдельного chat_id в вебхуке ONTASKCOMMENTADD нет."""
     if not settings.bitrix_webhook_url:
         return None
-    url = f"{settings.bitrix_webhook_url.rstrip('/')}/task.commentitem.get.json"
+    url = f"{settings.bitrix_webhook_url.rstrip('/')}/tasks.task.get.json"
     try:
-        resp = await _get_client().post(url, json={"taskId": task_id, "itemId": message_id})
+        resp = await _get_client().post(url, json={"taskId": task_id, "select": ["ID"]})
     except httpx.RequestError:
         return None
     if not resp.is_success:
-        _log.warning("Bitrix task.commentitem.get %s: %s", resp.status_code, resp.text)
+        _log.warning("Bitrix tasks.task.get %s: %s", resp.status_code, resp.text)
         return None
     data = resp.json()
     if "error" in data:
-        _log.warning("Bitrix task.commentitem.get error: %s", data)
+        _log.warning("Bitrix tasks.task.get error: %s", data)
         return None
-    return data.get("result") or None
+    task = (data.get("result") or {}).get("task") or {}
+    chat_id = task.get("chatId") or task.get("CHAT_ID")
+    return f"chat{chat_id}" if chat_id else None
+
+
+async def get_dialog_message(dialog_id: str, message_id: str) -> dict | None:
+    """Дотягивает одно конкретное сообщение чата задачи (im.dialog.messages.get)
+    по ID, который приходит в вебхуке ONTASKCOMMENTADD как MESSAGE_ID."""
+    if not settings.bitrix_webhook_url:
+        return None
+    url = f"{settings.bitrix_webhook_url.rstrip('/')}/im.dialog.messages.get.json"
+    try:
+        target_id = int(message_id)
+    except ValueError:
+        return None
+    try:
+        resp = await _get_client().post(
+            url, json={"DIALOG_ID": dialog_id, "FIRST_ID": target_id - 1, "LIMIT": 5},
+        )
+    except httpx.RequestError:
+        return None
+    if not resp.is_success:
+        _log.warning("Bitrix im.dialog.messages.get %s: %s", resp.status_code, resp.text)
+        return None
+    data = resp.json()
+    if "error" in data:
+        _log.warning("Bitrix im.dialog.messages.get error: %s", data)
+        return None
+    messages = (data.get("result") or {}).get("messages") or []
+    for m in messages:
+        if str(m.get("id")) == str(message_id):
+            return m
+    return None
 
 
 async def update_task_status(task_id: str, status: str) -> None:

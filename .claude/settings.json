@@ -42,7 +42,8 @@
       "Bash(py -m pip install --quiet cryptography==43.0.1)",
       "Bash(py -c ' *)",
       "Bash(python -m py_compile app/services/project_folder_service.py)",
-      "PowerShell(docker compose ps 2>&1)"
+      "PowerShell(docker compose ps 2>&1)",
+      "WebFetch(domain:apidocs.bitrix24.com)"
     ],
     "additionalDirectories": [
       "C:\\code\\uploads",
