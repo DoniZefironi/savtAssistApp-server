@@ -182,8 +182,24 @@ def sync_message_to_bitrix(
     asyncio.create_task(_task())
 
 
+async def _apply_bitrix_status(service: "ServiceRequestService", req, bitrix_status: str | None) -> str | None:
+    """Общая часть для планового опроса и вебхука ONTASKUPDATE: маппит статус
+    Bitrix в наш и применяет, если он реально отличается. Возвращает новый статус,
+    если применили (после вызова req.status уже перезаписан на него же), иначе None."""
+    new_status = _BITRIX_TO_STATUS.get(bitrix_status) if bitrix_status else None
+    if new_status is None or new_status == req.status:
+        return None
+    await service.update_status(
+        req.id, ServiceRequestStatusIn(status=new_status),
+        actor_id=0, actor_role="bitrix", sync_to_bitrix=False,
+    )
+    return new_status
+
+
 # Опрос Bitrix за статусами задач (кто-то поменял статус прямо в Bitrix, минуя
 # приложение) — вызывается из cron в main.py. Не трогает уже закрытые у нас заявки.
+# Подстраховка на случай, если вебхук ONTASKUPDATE (sync_single_task_status) не
+# настроен/не долетел — тогда статус всё равно подтянется в течение 15 минут.
 async def sync_statuses_from_bitrix() -> None:
     from app.database import AsyncSessionLocal
     from app.models.service_request import ServiceRequest
@@ -198,6 +214,7 @@ async def sync_statuses_from_bitrix() -> None:
         )
         requests = list(result.scalars().all())
         if not requests:
+            _log.info("Bitrix status poll: нет заявок с привязанным bitrix_task_id — опрос пропущен")
             return
 
         try:
@@ -208,19 +225,57 @@ async def sync_statuses_from_bitrix() -> None:
             _log.exception("Не удалось опросить статусы задач Bitrix")
             return
 
+        _log.info(
+            "Bitrix status poll: заявки=%s, получено статусов=%s",
+            {r.id: r.bitrix_task_id for r in requests}, statuses,
+        )
+
         service = ServiceRequestService(session)
         for req in requests:
             bitrix_status = statuses.get(req.bitrix_task_id)
-            new_status = _BITRIX_TO_STATUS.get(bitrix_status) if bitrix_status else None
-            if new_status is None or new_status == req.status:
-                continue
+            old_status = req.status
             try:
-                await service.update_status(
-                    req.id, ServiceRequestStatusIn(status=new_status),
-                    actor_id=0, actor_role="bitrix", sync_to_bitrix=False,
-                )
+                new_status = await _apply_bitrix_status(service, req, bitrix_status)
+                if new_status:
+                    _log.info(
+                        "Bitrix status poll: заявка %s task=%s статус %s -> %s (bitrix=%s)",
+                        req.id, req.bitrix_task_id, old_status, new_status, bitrix_status,
+                    )
             except Exception:
                 _log.exception("Не удалось применить статус из Bitrix для заявки %s", req.id)
+
+
+# Вебхук ONTASKUPDATE (см. bitrix_webhook_service.handle_task_update_webhook) —
+# мгновенная реакция на смену статуса задачи вместо ожидания ближайшего опроса.
+# Событие несёт только TASK_ID, не говорит, какое именно поле изменилось —
+# поэтому просто перепроверяем текущий статус этой одной задачи.
+async def sync_single_task_status(task_id: str) -> None:
+    from app.database import AsyncSessionLocal
+    from app.repositories.service_request import ServiceRequestRepository
+    from app.services import bitrix_service
+
+    async with AsyncSessionLocal() as session:
+        req = await ServiceRequestRepository(session).find_by_bitrix_task_id(task_id)
+        if req is None or req.status == "closed":
+            return
+
+        try:
+            statuses = await bitrix_service.get_task_statuses([task_id])
+        except Exception:
+            _log.exception("Bitrix task webhook: не удалось получить статус задачи %s", task_id)
+            return
+
+        bitrix_status = statuses.get(task_id)
+        old_status = req.status
+        try:
+            new_status = await _apply_bitrix_status(ServiceRequestService(session), req, bitrix_status)
+            if new_status:
+                _log.info(
+                    "Bitrix task webhook: заявка %s task=%s статус %s -> %s (bitrix=%s)",
+                    req.id, task_id, old_status, new_status, bitrix_status,
+                )
+        except Exception:
+            _log.exception("Bitrix task webhook: не удалось применить статус для заявки %s", req.id)
 
 
 class ServiceRequestService:

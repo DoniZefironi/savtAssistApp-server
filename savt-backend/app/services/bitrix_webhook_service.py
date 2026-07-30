@@ -102,6 +102,20 @@ async def handle_task_comment_webhook(form: dict) -> None:
             _log.exception("Bitrix webhook: не удалось записать сообщение в чат %s", chat.id)
 
 
+async def handle_task_update_webhook(form: dict) -> None:
+    """Обрабатывает ONTASKUPDATE — любое изменение задачи (статус, дедлайн и т.п.).
+    Событие не говорит, какое именно поле изменилось, поэтому просто перепроверяем
+    текущий статус этой задачи (sync_single_task_status) — мгновенная реакция на
+    смену статуса вместо ожидания ближайшего планового опроса (раз в 15 минут)."""
+    task_id = _extract(form, "[task_id]")
+    if not task_id:
+        _log.info("Bitrix task webhook: не удалось извлечь task_id из payload: %s", form)
+        return
+
+    from app.services.service_request_service import sync_single_task_status
+    await sync_single_task_status(task_id)
+
+
 def extract_production_number(title: str) -> str | None:
     match = _PRODUCTION_NUMBER_RE.match(title)
     return match.group(1) if match else None

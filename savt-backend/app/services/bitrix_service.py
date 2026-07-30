@@ -1,7 +1,11 @@
+import logging
+
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+
+_log = logging.getLogger(__name__)
 
 _client: httpx.AsyncClient | None = None
 
@@ -132,11 +136,19 @@ async def get_task_statuses(task_ids: list[str]) -> dict[str, str]:
     if "error" in data:
         raise RuntimeError(f"Bitrix tasks.task.list error: {data}")
 
-    # Форма ответа (result.tasks vs просто result) не проверена вживую — если не
-    # совпадёт, поправить после реального теста опроса
+    _log.info("Bitrix tasks.task.list сырой ответ: %s", data)
     result = data.get("result")
     tasks = result.get("tasks", []) if isinstance(result, dict) else (result or [])
-    return {str(t["id"]): str(t["status"]) for t in tasks if "id" in t and "status" in t}
+
+    # Регистр полей у tasks.task.list не документирован надёжно (в этой сессии уже
+    # дважды не совпадал с ожидаемым для других методов Bitrix) — берём и id/status, и ID/STATUS
+    parsed = {}
+    for t in tasks:
+        task_id = t.get("id") or t.get("ID")
+        status = t.get("status") or t.get("STATUS")
+        if task_id is not None and status is not None:
+            parsed[str(task_id)] = str(status)
+    return parsed
 
 
 async def get_deal_title(deal_id: str) -> str | None:
