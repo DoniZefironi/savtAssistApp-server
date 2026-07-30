@@ -104,12 +104,13 @@ async def handle_task_comment_webhook(form: dict) -> None:
 
 async def handle_task_update_webhook(form: dict) -> None:
     """Обрабатывает ONTASKUPDATE — любое изменение задачи (статус, дедлайн и т.п.).
-    Событие не говорит, какое именно поле изменилось, поэтому просто перепроверяем
-    текущий статус этой задачи (sync_single_task_status) — мгновенная реакция на
-    смену статуса вместо ожидания ближайшего планового опроса (раз в 15 минут)."""
-    task_id = _extract(form, "[task_id]")
+    ID задачи здесь приходит просто как data[FIELDS_AFTER][ID] (в отличие от
+    ONTASKCOMMENTADD, где тот же смысл несёт TASK_ID) — событие не говорит, какое
+    именно поле изменилось, поэтому просто перепроверяем текущий статус этой задачи
+    (sync_single_task_status) — мгновенная реакция вместо ожидания планового опроса."""
+    task_id = _extract(form, "[id]")
     if not task_id:
-        _log.info("Bitrix task webhook: не удалось извлечь task_id из payload: %s", form)
+        _log.info("Bitrix task webhook: не удалось извлечь id задачи из payload: %s", form)
         return
 
     from app.services.service_request_service import sync_single_task_status

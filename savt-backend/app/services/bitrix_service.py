@@ -87,9 +87,11 @@ async def get_task_comment(task_id: str, message_id: str) -> dict | None:
     except httpx.RequestError:
         return None
     if not resp.is_success:
+        _log.warning("Bitrix task.commentitem.get %s: %s", resp.status_code, resp.text)
         return None
     data = resp.json()
     if "error" in data:
+        _log.warning("Bitrix task.commentitem.get error: %s", data)
         return None
     return data.get("result") or None
 
