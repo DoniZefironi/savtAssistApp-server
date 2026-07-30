@@ -191,7 +191,9 @@ async def _apply_bitrix_status(service: "ServiceRequestService", req, bitrix_sta
         return None
     await service.update_status(
         req.id, ServiceRequestStatusIn(status=new_status),
-        actor_id=0, actor_role="bitrix", sync_to_bitrix=False,
+        # actor_id=None, не 0 — audit_logs.actor_id это nullable FK на users.id,
+        # а пользователя с id=0 не существует (упадёт с нарушением FK на commit)
+        actor_id=None, actor_role="bitrix", sync_to_bitrix=False,
     )
     return new_status
 
@@ -345,7 +347,7 @@ class ServiceRequestService:
         return make_page([_to_detail(r, u, c, chat_ids.get(r.id)) for r, u, c in rows], total, page, size)
 
     async def update_status(
-        self, req_id: int, data: ServiceRequestStatusIn, actor_id: int = 0, actor_role: str = "admin",
+        self, req_id: int, data: ServiceRequestStatusIn, actor_id: int | None = None, actor_role: str = "admin",
         sync_to_bitrix: bool = True,
     ) -> ServiceRequestDetailOut:
         req = await self.repo.get_by_id(req_id)
