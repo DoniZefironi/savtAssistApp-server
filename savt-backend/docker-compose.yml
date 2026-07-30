@@ -40,6 +40,11 @@ services:
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
+    # Фронтенд деплоится отдельно (не в этом compose) и публикует свой порт 3000
+    # на хост — из контейнера nginx он доступен только через хост, по docker-DNS
+    # имя savt-assist-frontend не резолвится. См. proxy_pass в блоке listen 8080.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "80:80"
       - "443:443"
