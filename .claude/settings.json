@@ -43,7 +43,8 @@
       "Bash(py -c ' *)",
       "Bash(python -m py_compile app/services/project_folder_service.py)",
       "PowerShell(docker compose ps 2>&1)",
-      "WebFetch(domain:apidocs.bitrix24.com)"
+      "WebFetch(domain:apidocs.bitrix24.com)",
+      "Bash(git fetch *)"
     ],
     "additionalDirectories": [
       "C:\\code\\uploads",

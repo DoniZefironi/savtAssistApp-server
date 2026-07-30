@@ -1,4 +1,7 @@
 import asyncio
+import logging
+
+_log = logging.getLogger(__name__)
 
 
 class EventBus:
@@ -18,6 +21,8 @@ class EventBus:
         queue: asyncio.Queue = asyncio.Queue(maxsize=100)
         async with self._lock:
             self._subscribers.setdefault(channel, set()).add(queue)
+            count = len(self._subscribers[channel])
+        _log.info("event_bus: подписка на канал %s, теперь подписчиков=%d", channel, count)
         return queue
 
     async def unsubscribe(self, channel: str, queue: asyncio.Queue) -> None:
@@ -27,17 +32,19 @@ class EventBus:
                 subs.discard(queue)
                 if not subs:
                     self._subscribers.pop(channel, None)
+        _log.info("event_bus: отписка от канала %s", channel)
 
     async def publish(self, channel: str, event: dict) -> None:
         async with self._lock:
             subs = list(self._subscribers.get(channel, ()))
+        _log.info("event_bus: публикация %s в канал %s, подписчиков=%d", event.get("type"), channel, len(subs))
         for queue in subs:
             try:
                 queue.put_nowait(event)
             except asyncio.QueueFull:
                 # Медленный подписчик — теряем одно событие, а не копим
                 # бэклог и не блокируем публикацию для остальных.
-                pass
+                _log.warning("event_bus: очередь канала %s переполнена, событие %s потеряно", channel, event.get("type"))
 
 
 event_bus = EventBus()
