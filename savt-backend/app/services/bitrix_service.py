@@ -10,7 +10,10 @@ _log = logging.getLogger(__name__)
 _client: httpx.AsyncClient | None = None
 
 _INCOMING_USER_LOGIN = "__bitrix__"
-_INCOMING_USER_NAME = "Bitrix"
+# Отображается в чате как имя отправителя пересланных из Bitrix сообщений —
+# "Ася", чтобы визуально выглядело как ответ бота (сам текст сообщения при
+# этом явно поясняет, что ответ на самом деле от оператора, см. handle_task_comment_webhook)
+_INCOMING_USER_NAME = "Ася"
 
 # Статусы задач Bitrix24 (поле STATUS в tasks.task.*): 1 Новая, 2 Ждёт выполнения,
 # 3 Выполняется, 4 Ждёт контроля, 5 Завершена, 6 Отложена, 7 Отклонена
@@ -271,6 +274,9 @@ async def ensure_bitrix_user(session: AsyncSession) -> int:
     result = await session.execute(select(User).where(User.login == _INCOMING_USER_LOGIN))
     user = result.scalar_one_or_none()
     if user:
+        if user.full_name != _INCOMING_USER_NAME:
+            user.full_name = _INCOMING_USER_NAME
+            await session.commit()
         return user.id
 
     user = User(

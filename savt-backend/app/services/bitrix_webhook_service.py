@@ -92,9 +92,13 @@ async def handle_task_comment_webhook(form: dict) -> None:
             _log.info("Bitrix webhook: чат заявки %s не найден", req.id)
             return
 
+        # Отправитель в чате отображается как "Ася" (см. bitrix_service._INCOMING_USER_NAME),
+        # чтобы визуально не выглядело как прямая переписка с Bitrix — сам текст ниже
+        # явно поясняет, что ответ на самом деле от оператора, а не от бота
         author_id = comment.get("author_id") or comment.get("AUTHOR_ID")
         author_name = await bitrix_service.get_user_name(author_id) if author_id else None
-        message_text = f"{author_name}: {forwarded_text}" if author_name else forwarded_text
+        prefix = f"Ответ от оператора {author_name}" if author_name else "Ответ от оператора"
+        message_text = f"{prefix}: {forwarded_text}"
 
         bitrix_user_id = await bitrix_service.ensure_bitrix_user(session)
         try:
