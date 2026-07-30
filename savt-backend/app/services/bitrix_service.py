@@ -84,7 +84,9 @@ async def get_task_chat_id(task_id: str) -> str | None:
         return None
     url = f"{settings.bitrix_webhook_url.rstrip('/')}/tasks.task.get.json"
     try:
-        resp = await _get_client().post(url, json={"taskId": task_id, "select": ["ID"]})
+        resp = await _get_client().post(
+            url, json={"taskId": task_id, "select": ["ID", "CHAT_ID", "chat.id"]},
+        )
     except httpx.RequestError:
         return None
     if not resp.is_success:
@@ -94,8 +96,13 @@ async def get_task_chat_id(task_id: str) -> str | None:
     if "error" in data:
         _log.warning("Bitrix tasks.task.get error: %s", data)
         return None
+    _log.info("Bitrix tasks.task.get сырой ответ: %s", data)
     task = (data.get("result") or {}).get("task") or {}
-    chat_id = task.get("chatId") or task.get("CHAT_ID")
+    chat = task.get("chat") if isinstance(task.get("chat"), dict) else {}
+    chat_id = (
+        task.get("chatId") or task.get("CHAT_ID")
+        or chat.get("id") or chat.get("ID")
+    )
     return f"chat{chat_id}" if chat_id else None
 
 
