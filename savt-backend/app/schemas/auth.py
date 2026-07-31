@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 import phonenumbers
 
@@ -198,30 +200,44 @@ class UpdateProfileIn(BaseModel):
         return v.lower()
 
 
-# Смена номера телефона
-class ChangePhoneStartIn(BaseModel):
+# Смена номера телефона — только через заявку с ручным одобрением админом.
+# Самостоятельной смены нет и быть не может: SMS отключены, а код уходит в
+# мессенджер самого заявителя и владение новым номером не подтверждает.
+class PhoneChangeRequestCreateIn(BaseModel):
     new_phone: str
-    channel: str = Field(...)  # "telegram" | "viber"
+    user_comment: str | None = Field(None, min_length=1, max_length=1000)
 
     @field_validator("new_phone")
     @classmethod
     def validate_phone(cls, v: str) -> str:
         return _normalize_phone(v)
 
-    @field_validator("channel")
-    @classmethod
-    def validate_channel(cls, v: str) -> str:
-        return _validate_channel(v)
 
-
-class ChangePhoneCompleteIn(BaseModel):
+class PhoneChangeRequestOut(BaseModel):
+    id: int
+    user_id: int
     new_phone: str
-    code: str = Field(..., min_length=6, max_length=6)
+    old_phone: str | None
+    user_comment: str | None
+    status: str
+    admin_response: str | None
+    resolved_by_admin_id: int | None
+    created_at: datetime
+    resolved_at: datetime | None
 
-    @field_validator("new_phone")
-    @classmethod
-    def validate_phone(cls, v: str) -> str:
-        return _normalize_phone(v)
+    model_config = {"from_attributes": True}
+
+
+# Админский список — с данными заявителя, как в остальных заявках
+class AdminPhoneChangeRequestOut(PhoneChangeRequestOut):
+    user_full_name: str | None
+    user_type: str | None
+    organization_name: str | None
+    user_is_verified: bool
+    user_registered_at: datetime
+    # Сколько ещё pending-заявок на этот же номер, включая текущую. >1 означает,
+    # что за номер борются несколько аккаунтов — одобрять надо осознанно
+    pending_rivals: int = 1
 
 
 # смена пароля

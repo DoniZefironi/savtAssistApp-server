@@ -17,9 +17,10 @@ class MessengerLinkRequest(Base):
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
-    # номер телефона, который верифицируется (при смене номера — new_phone, ещё не user.phone)
+    # номер телефона, который верифицируется
     phone: Mapped[str] = mapped_column(String(20), index=True)
-    # registration | password_reset | phone_change
+    # registration | password_reset ("phone_change" больше не выпускается:
+    # смена номера идёт через заявку с одобрением админа, см. PhoneChangeRequest)
     purpose: Mapped[str] = mapped_column(String(30))
     # telegram | viber
     channel: Mapped[str] = mapped_column(String(20))

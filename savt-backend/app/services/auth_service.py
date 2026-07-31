@@ -32,7 +32,8 @@ _DEFAULT_USER_ROLE_ID = 1
 
 PURPOSE_REGISTRATION = "registration"
 PURPOSE_PASSWORD_RESET = "password_reset"
-PURPOSE_PHONE_CHANGE = "phone_change"
+# "phone_change" здесь больше нет: смена номера идёт через заявку с одобрением
+# админа (app/services/phone_change_service.py), кодов для неё не выпускается
 
 
 class AuthService:
@@ -399,39 +400,11 @@ class AuthService:
         await self.session.commit()
         return user
 
-    # Смена номера — шаг 1: код на новый номер
-    async def change_phone_start(self, user: User, new_phone: str, channel: str) -> tuple[int, str | None]:
-        if user.phone == new_phone:
-            raise AlreadyExistsError("Это уже ваш текущий номер")
-        existing = await self.user_repo.find_by_phone(new_phone)
-        if existing is not None:
-            raise AlreadyExistsError("Этот номер уже занят другим пользователем")
-
-        remaining = await self._resend_cooldown_remaining(new_phone, PURPOSE_PHONE_CHANGE)
-        if remaining > 0:
-            raise RateLimitError(f"Повторная отправка возможна через {remaining} сек.")
-
-        # user.id — если Telegram/Viber уже подключён у этого аккаунта (например, во время
-        # регистрации), рукопожатие заново проходить не нужно, код улетит сразу
-        return await self._start_verification(new_phone, PURPOSE_PHONE_CHANGE, channel, user.id)
-
-    # Смена номера — шаг 2: подтвердить и сменить
-    async def change_phone_complete(self, user: User, new_phone: str, code: str) -> None:
-        existing = await self.user_repo.find_by_phone(new_phone)
-        if existing is not None:
-            raise AlreadyExistsError("Этот номер уже занят другим пользователем")
-        active_code = await self.code_repo.find_active(new_phone, PURPOSE_PHONE_CHANGE)
-        if active_code is None:
-            raise InvalidCodeError("Код не найден или истёк")
-        if active_code.attempts >= active_code.max_attempts:
-            raise InvalidCodeError("Превышено число попыток. Запросите новый код")
-        if hash_token(code) != active_code.code_hash:
-            await self.code_repo.increment_attempts(active_code)
-            await self.session.commit()
-            raise InvalidCodeError("Неверный код")
-        await self.code_repo.mark_used(active_code)
-        user.phone = new_phone
-        await self.session.commit()
+    # Смена номера телефона живёт в app/services/phone_change_service.py и идёт
+    # только через заявку с ручным одобрением админа. Здесь её быть не может:
+    # _start_verification доставляет код по user_id — в мессенджер самого
+    # заявителя, — поэтому подтвердить владение НОВЫМ номером этим механизмом
+    # нельзя в принципе, пока SMS отключены.
 
     # Сколько секунд осталось до следующей попытки — смотрим и на уже отправленные
     # коды, и на незавершённые заявки на рукопожатие с ботом (иначе можно обойти

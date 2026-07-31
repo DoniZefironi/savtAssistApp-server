@@ -6,14 +6,14 @@ from app.core.limiter import limiter
 from app.models.user import User
 from app.schemas.auth import (
     AdminLoginIn,
-    ChangePhoneCompleteIn,
-    ChangePhoneStartIn,
     LoginIn,
     LogoutIn,
     PasswordChange,
     PasswordResetCompleteIn,
     PasswordResetStartIn,
     PasswordResetStartOut,
+    PhoneChangeRequestCreateIn,
+    PhoneChangeRequestOut,
     RefreshIn,
     RegisterCompleteIn,
     RegisterStartIn,
@@ -24,6 +24,7 @@ from app.schemas.auth import (
     UserMeOut,
 )
 from app.services.auth_service import AuthService
+from app.services.phone_change_service import PhoneChangeService
 from app.models.role import Role
 
 # Все эндпоинты будут доступны по префиксу
@@ -244,27 +245,41 @@ async def delete_account(
 ):
     await AuthService(session).delete_account(current_user)
 
-# Смена номера телефона — запрос кода
-@router.post("/change-phone/start", response_model=RegisterStartOut)
+# Смена номера телефона — заявка администратору.
+#
+# Самостоятельной смены номера нет и не может быть: SMS отключены полностью,
+# а код доставляется в мессенджер по user_id, то есть в собственный Telegram/Viber
+# заявителя — владение новым номером он не подтверждает вообще. Прежние
+# /change-phone/start и /change-phone/complete позволяли любому пользователю
+# поставить своему аккаунту любой незанятый номер: занять чужой (владелец после
+# этого не мог зарегистрироваться) или показывать сотрудникам чужой телефон
+# в заявках и чатах. Владение проверяет администратор вне системы.
+@router.post("/change-phone/request", response_model=PhoneChangeRequestOut, status_code=status.HTTP_201_CREATED)
 @limiter.limit("5/minute")
-async def change_phone_start(
+async def create_phone_change_request(
     request: Request,
-    payload: ChangePhoneStartIn,
+    payload: PhoneChangeRequestCreateIn,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    service = AuthService(session)
-    cooldown, deep_link = await service.change_phone_start(current_user, payload.new_phone, payload.channel)
-    return RegisterStartOut(resend_after_seconds=cooldown, deep_link=deep_link)
+    return await PhoneChangeService(session).create_request(
+        user=current_user,
+        new_phone=payload.new_phone,
+        user_comment=payload.user_comment,
+    )
 
-# Смена номера телефона — подтверждение
-@router.post("/change-phone/complete", status_code=status.HTTP_204_NO_CONTENT)
-@limiter.limit("10/minute")
-async def change_phone_complete(
-    request: Request,
-    payload: ChangePhoneCompleteIn,
+# Своя активная заявка (null — активной нет)
+@router.get("/change-phone/request", response_model=PhoneChangeRequestOut | None)
+async def get_my_phone_change_request(
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    service = AuthService(session)
-    await service.change_phone_complete(current_user, payload.new_phone, payload.code)
+    return await PhoneChangeService(session).get_my_request(current_user.id)
+
+# Отозвать свою заявку (например, ошибся номером)
+@router.delete("/change-phone/request", status_code=status.HTTP_204_NO_CONTENT)
+async def cancel_my_phone_change_request(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    await PhoneChangeService(session).cancel_my_request(current_user.id)
