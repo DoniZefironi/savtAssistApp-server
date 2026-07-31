@@ -309,13 +309,24 @@ class ChatService:
         ]
 
     async def mark_read(self, chat_id: int, user_id: int) -> None:
-        await self._get_chat_or_403(chat_id, user_id)
+        chat = await self._get_chat_or_403(chat_id, user_id)
         message_ids = await self.msg_repo.mark_read(chat_id, user_id)
         await self.session.commit()
         # Раньше при "прочитано" ничего не публиковалось в SSE — собеседник узнавал
         # об этом только после ручного обновления страницы/рефетча
         if message_ids:
             await publish_messages_read(chat_id, message_ids, user_id)
+            # message.read идёт только в канал chat:{id} — списку чатов (operator_chats /
+            # user_chats:{id}) он не виден, поэтому счётчик непрочитанных там оставался
+            # старым до ручного рефетча. Дублируем сигнал в канал списка: chat.updated
+            # не несёт unread_count (он свой у каждого получателя) — это триггер
+            # инвалидации кэша списка, см. chat_summary_dict.
+            last_text = None
+            msgs = await self.msg_repo.get_messages(chat_id, limit=1)
+            if msgs:
+                last_msg, _ = msgs[0]
+                last_text = last_msg.text if not last_msg.deleted_at else "Сообщение удалено"
+            await publish_chat_updated(chat_id, chat_summary_dict(chat, last_text))
 
     async def edit_message(
         self, chat_id: int, msg_id: int, user_id: int, text: str
