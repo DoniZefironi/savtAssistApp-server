@@ -59,5 +59,13 @@ class PendingRegistrationRepository:
         )
         return result.scalar_one_or_none()
 
+    # Для эндпоинта статуса: сюда попадают и просроченные, и завершённые —
+    # иначе клиент не отличит "истекло" от "такого токена не было"
+    async def find_by_token_any(self, token: str) -> PendingRegistration | None:
+        result = await self.session.execute(
+            select(PendingRegistration).where(PendingRegistration.token == token)
+        )
+        return result.scalar_one_or_none()
+
     async def mark_consumed(self, obj: PendingRegistration) -> None:
         obj.consumed_at = datetime.now(timezone.utc)

@@ -1,3 +1,4 @@
+import re
 from datetime import datetime, timezone
 
 from pgvector.sqlalchemy import Vector
@@ -30,15 +31,44 @@ _SYSTEM_PROMPT = """Ты — помощник Ася, виртуальный а�
   > "цитата (1–2 предложения)"
   Если подходящей цитаты нет — не добавляй блок цитаты."""
 
-_NEGATIVE_KEYWORDS = {
-    "нет", "не помогло", "не работает", "не решило", "не то",
-    "всё равно", "по-прежнему", "проблема осталась", "не помог",
+# Разбор ответа пользователя идёт по СЛОВАМ, а не по вхождению подстроки.
+# Раньше было `keyword in text.lower()`, и это ломалось на каждом шагу: "не
+# помогло" содержит "помог", "не работает" содержит "работает" — то есть жалоба
+# опознавалась как благодарность, и бот закрывал проблему как решённую. "ок"
+# находилось внутри "блок", "около", "ток"; "нет" — внутри "интернет".
+_WORD_RE = re.compile(r"[a-zа-я0-9]+")
+
+# "не" перед положительным словом переворачивает смысл — так одно правило
+# закрывает и "не помогло", и "не работает", и "не заработало"
+_NEGATIONS = {"не", "ни"}
+
+_POSITIVE_WORDS = {
+    "спасибо", "благодарю", "спс", "решено", "решил", "решила", "решилось",
+    "работает", "заработал", "заработало", "помогло", "помог", "помогла",
+    "разобрался", "разобралась", "понял", "поняла", "получилось",
+    "ок", "окей", "ага", "отлично", "супер", "норм",
 }
-_POSITIVE_KEYWORDS = {
-    "спасибо", "благодарю", "решено", "решил", "решила", "работает",
-    "всё хорошо", "всё работает", "всё нормально", "помогло", "помог",
-    "разобрался", "разобралась", "понял", "поняла", "ок", "окей",
+_NEGATIVE_WORDS = {"нет", "неа", "непонятно"}
+_NEGATIVE_PHRASES = (
+    ("проблема", "осталась"), ("все", "равно"), ("по", "прежнему"),
+    ("не", "то"), ("так", "и"),
+)
+
+# Ответы на предложение позвать оператора
+_WANT_OPERATOR_WORDS = {
+    "да", "ага", "нужен", "нужно", "надо", "позови", "позовите", "зови",
+    "оператор", "оператора", "operator",
 }
+_REFUSE_OPERATOR_WORDS = {"нет", "неа", "сам", "сама", "самостоятельно"}
+
+
+def _tokens(text: str) -> list[str]:
+    return _WORD_RE.findall(text.lower().replace("ё", "е"))
+
+
+def _has_phrase(tokens: list[str], phrase: tuple[str, ...]) -> bool:
+    n = len(phrase)
+    return any(tuple(tokens[i:i + n]) == phrase for i in range(len(tokens) - n + 1))
 
 
 async def get_bot_user_id(session: AsyncSession) -> int | None:
@@ -137,14 +167,53 @@ async def _retrieve_context(
     return [_row_to_dict(r) for r in (await session.execute(general_stmt)).all()]
 
 
+def _classify(text: str) -> str | None:
+    """"positive" | "negative" | None. Негатив всегда перевешивает: во фразе
+    "спасибо, но не работает" человек недоволен, а не благодарит."""
+    tokens = _tokens(text)
+    if not tokens:
+        return None
+
+    if any(_has_phrase(tokens, p) for p in _NEGATIVE_PHRASES):
+        return "negative"
+
+    has_positive = False
+    for i, token in enumerate(tokens):
+        if token in _POSITIVE_WORDS:
+            if i > 0 and tokens[i - 1] in _NEGATIONS:
+                return "negative"
+            has_positive = True
+
+    if any(token in _NEGATIVE_WORDS for token in tokens):
+        return "negative"
+    return "positive" if has_positive else None
+
+
+def _operator_intent(text: str) -> str | None:
+    """"want" | "refuse" | None — ответ на предложение позвать оператора.
+
+    Отрицание учитывается так же, как в _classify, и так же перевешивает: во
+    фразе "оператор не нужен" слово "оператор" встречается раньше отрицания,
+    поэтому выходить на первом совпадении нельзя — надо дочитать до конца."""
+    tokens = _tokens(text)
+    wants = False
+    for i, token in enumerate(tokens):
+        negated = i > 0 and tokens[i - 1] in _NEGATIONS
+        if token in _WANT_OPERATOR_WORDS:
+            if negated:
+                return "refuse"
+            wants = True
+        elif token in _REFUSE_OPERATOR_WORDS:
+            return "refuse"
+    return "want" if wants else None
+
+
 def _is_negative(text: str) -> bool:
-    low = text.lower()
-    return any(kw in low for kw in _NEGATIVE_KEYWORDS)
+    return _classify(text) == "negative"
 
 
 def _is_positive(text: str) -> bool:
-    low = text.lower()
-    return any(kw in low for kw in _POSITIVE_KEYWORDS)
+    return _classify(text) == "positive"
 
 
 async def _send_bot_message(session: AsyncSession, chat: Chat, bot_user_id: int, text: str) -> None:
@@ -162,6 +231,7 @@ async def _send_bot_message(session: AsyncSession, chat: Chat, bot_user_id: int,
     await send_push(
         session, chat.user_id, _BOT_NAME, text[:100],
         {"chat_id": str(chat.id), "type": "chat_message"},
+        notification_type="chat_message",
     )
 
     message_payload = {
@@ -201,6 +271,8 @@ async def _notify_operators(
             title,
             body or f"Пользователь ожидает оператора в чате #{chat_id}",
             {"chat_id": str(chat_id), "type": "operator_requested"},
+            # служебный сигнал операторам — настройками пользователя не выключается
+            notification_type="operator_requested",
         )
 
 
@@ -231,8 +303,10 @@ async def handle_message(
     if bot_user_id is None:
         return
 
+    sentiment = _classify(user_text)
+
     # Проблема решена — пользователь доволен
-    if _is_positive(user_text) and chat.problem_status == "open":
+    if sentiment == "positive" and chat.problem_status == "open":
         chat.problem_status = "resolved"
         chat.follow_up_sent = True
         chat.bot_no_count = 0
@@ -243,10 +317,12 @@ async def handle_message(
         await session.commit()
         return
 
-    # Пользователь хочет оператора после предложения
-    low = user_text.lower().strip()
+    # Пользователь хочет оператора после предложения. Тоже по словам: "да"
+    # находилось внутри "правда"/"дайте", а "нет" — внутри "интернет", из-за
+    # чего "не работает интернет" читалось как отказ от оператора.
+    operator_answer = _operator_intent(user_text)
     if chat.bot_no_count >= settings.bot_max_attempts:
-        if any(w in low for w in ("да", "нужен", "позови", "хочу оператора", "operator")):
+        if operator_answer == "want":
             chat.operator_requested = True
             chat.bot_active = False
             await _send_bot_message(
@@ -256,7 +332,7 @@ async def handle_message(
             await session.commit()
             await _notify_operators(session, chat.id)
             return
-        elif any(w in low for w in ("нет", "не нужен", "не надо", "сам")):
+        elif operator_answer == "refuse":
             chat.bot_no_count = 0
             chat.follow_up_sent = False
             await _send_bot_message(
@@ -317,7 +393,7 @@ async def handle_message(
         return
 
     # Обновляем счётчик если пользователь недоволен
-    if _is_negative(user_text):
+    if sentiment == "negative":
         chat.bot_no_count += 1
         chat.follow_up_sent = False  # после негатива разрешаем ещё один follow-up
     else:

@@ -107,14 +107,23 @@ async def _handle_contact(external_chat_id: str, message: dict, contact: dict) -
         # Telegram, и совпадает с отправителем только для его собственной карточки.
         # Без этой проверки достаточно отправить боту контакт жертвы — и её номер
         # стал бы номером чужого аккаунта.
+        # Причина отказа сохраняется в заявке, чтобы приложение узнало о ней через
+        # GET /auth/register/status, а не ждало вечно код, которого не будет.
+        # Заявку при этом НЕ закрываем: по большинству причин кнопку можно нажать
+        # повторно и всё получится.
+        async def _fail(reason: str, text: str) -> None:
+            pending.failed_reason = reason
+            await session.commit()
+            await _reply(external_chat_id, text)
+
         sender_id = (message.get("from") or {}).get("id")
         if contact.get("user_id") is None or sender_id is None or contact["user_id"] != sender_id:
             _log.warning(
                 "Telegram webhook: прислан чужой контакт (from=%s, contact.user_id=%s)",
                 sender_id, contact.get("user_id"),
             )
-            await _reply(
-                external_chat_id,
+            await _fail(
+                "foreign_contact",
                 "Это чужой контакт. Нажмите кнопку «Отправить мой номер» — "
                 "переслать карточку другого человека нельзя.",
             )
@@ -123,19 +132,22 @@ async def _handle_contact(external_chat_id: str, message: dict, contact: dict) -
         phone = _normalize_phone(contact.get("phone_number"))
         if phone is None:
             _log.warning("Telegram webhook: не удалось разобрать номер %s", contact.get("phone_number"))
-            await _reply(external_chat_id, "Не удалось разобрать ваш номер. Обратитесь в поддержку.")
+            await _fail("bad_phone", "Не удалось разобрать ваш номер. Обратитесь в поддержку.")
             return
 
         user_repo = UserRepository(session)
         existing = await user_repo.find_by_phone(phone)
         if existing is not None and existing.is_phone_verified:
             _log.info("Telegram webhook: номер %s уже зарегистрирован", phone)
-            await _reply(
-                external_chat_id,
+            await _fail(
+                "phone_already_registered",
                 f"Номер {phone} уже зарегистрирован. Войдите в приложение по этому "
                 f"номеру, а если забыли пароль — воспользуйтесь восстановлением.",
             )
             return
+
+        # Предыдущая попытка могла закончиться отказом — снимаем отметку
+        pending.failed_reason = None
 
         if existing is not None:
             # Незавершённая регистрация на тот же номер — перезаписываем данными

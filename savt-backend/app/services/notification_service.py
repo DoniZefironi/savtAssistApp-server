@@ -52,7 +52,7 @@ class NotificationService:
         await self.session.commit()
 
         # Push
-        await send_push(self.session, user_id, title, body, data)
+        await send_push(self.session, user_id, title, body, data, notification_type=type_)
 
     async def list_notifications(
         self,
@@ -119,4 +119,8 @@ class NotificationService:
         await self.session.commit()
 
         for user_id in user_ids:
+            # notification_type намеренно не передаём: рассылка админа сейчас идёт
+            # всем, минуя переключатель promotional (он выключен по умолчанию, и
+            # фильтрация обрубила бы рассылки почти всем). Записи в списке
+            # уведомлений выше создаются по той же логике — без учёта настроек.
             await send_push(self.session, user_id, data.title, data.body)

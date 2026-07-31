@@ -270,6 +270,7 @@ class ChatService:
             await send_push(
                 self.session, chat.user_id, sender_name, notif_body,
                 {"chat_id": str(chat_id), "type": "chat_message"},
+                notification_type="chat_message",
             )
 
         # Бот отвечает только на сообщения владельца чата — не в личных заметках

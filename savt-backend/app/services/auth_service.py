@@ -78,6 +78,23 @@ class AuthService:
         deep_link = messenger_service.build_deep_link(messenger_service.CHANNEL_TELEGRAM, token)
         return token, deep_link, settings.sms_code_resend_cooldown_seconds
 
+    # Где сейчас регистрация. Подтверждение номера происходит в Telegram, и об
+    # отказе бот сообщает там же — без этого метода приложение не отличило бы
+    # «ещё не нажал кнопку» от «отказано» и ждало бы код бесконечно.
+    async def register_status(self, registration_token: str) -> tuple[str, str | None]:
+        pending = await self.pending_repo.find_by_token_any(registration_token)
+        if pending is None:
+            raise NotFoundError("Регистрация не найдена")
+        if pending.consumed_at is not None:
+            return "completed", None
+        if pending.expires_at <= datetime.now(timezone.utc):
+            return "expired", None
+        if pending.failed_reason:
+            return "failed", pending.failed_reason
+        if pending.user_id is not None:
+            return "code_sent", None
+        return "waiting_contact", None
+
     # Подтверждение регистрации кодом. Идентифицируем не по телефону (клиент его
     # не знает — номер пришёл из Telegram), а по токену незавершённой регистрации.
     async def register_complete(

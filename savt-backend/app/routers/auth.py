@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user, get_session
@@ -18,6 +18,7 @@ from app.schemas.auth import (
     RegisterCompleteIn,
     RegisterStartIn,
     RegisterStartOut,
+    RegisterStatusOut,
     ResendCodeIn,
     ResendCodeOut,
     TokenPairOut,
@@ -74,6 +75,18 @@ async def register_complete(
         ip_address=ip,
     )
     return TokenPairOut(access_token=access, refresh_token=refresh)
+
+# Где сейчас регистрация — приложению, пока пользователь в Telegram.
+# Без авторизации (её ещё нет), доступ по токену регистрации.
+@router.get("/register/status", response_model=RegisterStatusOut)
+@limiter.limit("60/minute")
+async def register_status(
+    request: Request,
+    registration_token: str = Query(..., min_length=1, max_length=64),
+    session: AsyncSession = Depends(get_session),
+):
+    status_, reason = await AuthService(session).register_status(registration_token)
+    return RegisterStatusOut(status=status_, reason=reason)
 
 # Переотправка кода
 @router.post("/register/resend", response_model=ResendCodeOut)

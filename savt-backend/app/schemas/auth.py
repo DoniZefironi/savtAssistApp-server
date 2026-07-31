@@ -91,6 +91,22 @@ class RegisterCompleteIn(BaseModel):
     code: str = Field(..., min_length=6, max_length=6)
 
 
+class RegisterStatusOut(BaseModel):
+    """Где сейчас находится незавершённая регистрация.
+
+    Нужен, потому что подтверждение номера происходит в Telegram, и об отказе
+    (чужой контакт, номер уже занят) бот сообщает там же — приложение об этом
+    иначе не узнает и будет ждать код, которого не будет."""
+    # waiting_contact — ждём нажатия «Отправить мой номер» в Telegram
+    # code_sent      — номер подтверждён, код отправлен, можно вводить
+    # failed         — бот отказал, см. reason; кода не будет
+    # expired        — истёк срок, начинать заново
+    # completed      — регистрация уже завершена по этому токену
+    status: str
+    # foreign_contact | bad_phone | phone_already_registered — только при failed
+    reason: str | None = None
+
+
 class ResendCodeOut(BaseModel):
     message: str = "Код отправлен повторно"
     resend_after_seconds: int
