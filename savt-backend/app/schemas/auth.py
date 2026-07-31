@@ -20,9 +20,12 @@ def _normalize_phone(phone: str) -> str:
         raise ValueError(f"Неверный формат телефона: {e}")
 
 
-# Канал доставки кода подтверждения — SMS отключено, только Telegram/Viber
+# Канал доставки кода подтверждения. SMS отключено, Viber удалён: подтвердить
+# владение номером через него нечем — аналога Telegram request_contact нет.
+# Поле оставлено в запросах ради совместимости с клиентами, но значение может
+# быть только "telegram".
 def _validate_channel(v: str) -> str:
-    allowed = ("telegram", "viber")
+    allowed = ("telegram",)
     if v not in allowed:
         raise ValueError(f"channel должен быть один из {', '.join(allowed)}")
     return v
@@ -37,7 +40,7 @@ class RegisterStartIn(BaseModel):
     full_name: str = Field(..., min_length=1, max_length=200)
     user_type: str = Field(...)
     organization_name: str | None = Field(None)
-    channel: str = Field(...)  # "telegram" | "viber" — куда доставить код
+    channel: str = Field(...)  # только "telegram"
 
     @field_validator("phone")
     @classmethod
@@ -71,7 +74,7 @@ class RegisterStartIn(BaseModel):
 
 class ResendCodeIn(BaseModel):
     phone: str
-    channel: str = Field(...)  # "telegram" | "viber"
+    channel: str = Field(...)  # только "telegram"
 
     @field_validator("phone")
     @classmethod
@@ -147,7 +150,7 @@ class UserMeOut(BaseModel):
 # Сброс пароля
 class PasswordResetStartIn(BaseModel):
     phone: str
-    channel: str = Field(...)  # "telegram" | "viber"
+    channel: str = Field(...)  # только "telegram"
 
     @field_validator("phone")
     @classmethod

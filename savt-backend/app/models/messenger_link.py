@@ -13,9 +13,9 @@ class MessengerLink(Base):
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
-    # telegram | viber
+    # только telegram (Viber удалён)
     channel: Mapped[str] = mapped_column(String(20))
-    # chat_id (Telegram) или user id (Viber) — куда бот шлёт сообщения
+    # chat_id Telegram — куда бот шлёт сообщения
     external_chat_id: Mapped[str] = mapped_column(String(64))
     # когда подтверждена связка (открыт deep-link, бот получил /start)
     linked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

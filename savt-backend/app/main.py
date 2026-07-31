@@ -152,7 +152,7 @@ async def invalid_code_handler(_: Request, exc: InvalidCodeError):
 async def rate_limit_handler(_: Request, exc: RateLimitError):
     return JSONResponse(status_code=429, content={"detail": str(exc)})
 
-# 503 - не удалось отправить код в Telegram/Viber
+# 503 - не удалось отправить код в Telegram
 @app.exception_handler(MessengerSendError)
 async def messenger_send_error_handler(_: Request, exc: MessengerSendError):
     return JSONResponse(

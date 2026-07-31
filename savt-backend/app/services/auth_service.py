@@ -42,11 +42,11 @@ class AuthService:
         self.user_repo = UserRepository(session) # работа с пользователем
         self.code_repo = PhoneCodeRepository(session) # работа с кодами
         self.token_repo = RefreshTokenRepository(session) # работа с токеном
-        self.messenger_link_repo = MessengerLinkRepository(session) # подключённые Telegram/Viber
+        self.messenger_link_repo = MessengerLinkRepository(session) # подключённый Telegram
         self.messenger_link_request_repo = MessengerLinkRequestRepository(session) # ожидающие рукопожатия
 
     # Начальная регистрация, вводим все поля после запрашиваем код.
-    # channel — "telegram" | "viber", куда доставить код (SMS отключено полностью)
+    # channel — только "telegram" (SMS отключено, Viber удалён)
     async def register_start(
         self,
         phone: str,
@@ -90,9 +90,12 @@ class AuthService:
             existing_user.organization_name = organization_name
             user = existing_user
 
-        # Отправляем код в Telegram/Viber — либо сразу (канал уже подключён),
-        # либо возвращаем deep-link на рукопожатие с ботом (см. _start_verification)
-        return await self._start_verification(phone, PURPOSE_REGISTRATION, channel, user.id)
+        # allow_new_link=True — регистрация единственное место, где связка с ботом
+        # заводится впервые. Владение номером при этом доказывается: бот попросит
+        # поделиться контактом и сверит его с этим phone (см. messenger_webhook_service)
+        return await self._start_verification(
+            phone, PURPOSE_REGISTRATION, channel, user.id, allow_new_link=True
+        )
 
     # Подтверждение телефона
     async def register_complete(
@@ -309,6 +312,11 @@ class AuthService:
         if remaining > 0:
             return cooldown, None
 
+        # allow_new_link НЕ передаём (остаётся False): эндпоинт открыт без
+        # авторизации, и заводить здесь новую связку с ботом нельзя — иначе
+        # deep-link с токеном привязки уходил бы в ответе атакующему, а следом
+        # к нему же и код сброса пароля. Если связки нет — код просто не уйдёт,
+        # ответ снаружи неотличим от «такого номера нет» (см. выше).
         return await self._start_verification(phone, PURPOSE_PASSWORD_RESET, channel, user.id)
 
     # Устанавливаем новый пароль
@@ -359,7 +367,9 @@ class AuthService:
         if remaining > 0:
             raise RateLimitError(f"Повторная отправка возможна через {remaining} сек.")
 
-        return await self._start_verification(phone, PURPOSE_REGISTRATION, channel, user.id)
+        return await self._start_verification(
+            phone, PURPOSE_REGISTRATION, channel, user.id, allow_new_link=True
+        )
     
     # смена пароля
     async def change_password(
@@ -429,7 +439,7 @@ class AuthService:
         return int(remaining) if remaining > 0 else 0
 
     # Общая точка отправки/переотправки кода для всех 4 сценариев (регистрация,
-    # переотправка, сброс пароля, смена телефона). Если канал (Telegram/Viber) уже
+    # переотправка, сброс пароля). Если канал (Telegram) уже
     # подключён у этого пользователя — код генерируется и шлётся сразу, как раньше
     # с SMS. Если нет — код вообще не создаётся (нечего было бы доставить), вместо
     # этого заводим заявку на рукопожатие и возвращаем deep-link на бота; сам код
@@ -437,12 +447,21 @@ class AuthService:
     # app/services/messenger_webhook_service.py).
     async def _start_verification(
         self, phone: str, purpose: str, channel: str, user_id: int,
+        allow_new_link: bool = False,
     ) -> tuple[int, str | None]:
         cooldown = settings.sms_code_resend_cooldown_seconds
 
         link = await self.messenger_link_repo.find_by_user_and_channel(user_id, channel)
         if link is not None:
             await self._deliver_code(user_id, phone, purpose, channel, link.external_chat_id)
+            return cooldown, None
+
+        # allow_new_link=False — вызывающий НЕ доказал, что он владелец аккаунта
+        # (сброс пароля открыт без авторизации). Заводить рукопожатие тут нельзя:
+        # токен ушёл бы прямо в HTTP-ответ, и кто угодно привязал бы свой мессенджер
+        # к чужому аккаунту, а следом получил бы код сброса пароля — то есть забрал
+        # бы аккаунт. Ведём себя как при несуществующем номере.
+        if not allow_new_link:
             return cooldown, None
 
         token = secrets.token_urlsafe(24)

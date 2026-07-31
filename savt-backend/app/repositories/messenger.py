@@ -73,6 +73,22 @@ class MessengerLinkRequestRepository:
         )
         return result.scalar_one_or_none()
 
+    # Второй шаг рукопожатия: в апдейте с контактом токена уже нет, заявку ищем
+    # по чату, который прислал /start (см. messenger_webhook_service)
+    async def find_pending_by_chat(self, external_chat_id: str) -> MessengerLinkRequest | None:
+        now = datetime.now(timezone.utc)
+        result = await self.session.execute(
+            select(MessengerLinkRequest)
+            .where(
+                MessengerLinkRequest.external_chat_id == external_chat_id,
+                MessengerLinkRequest.consumed_at.is_(None),
+                MessengerLinkRequest.expires_at > now,
+            )
+            .order_by(MessengerLinkRequest.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     # Кулдаун на переотправку — не важно, каким каналом пытались в прошлый раз,
     # чтобы нельзя было обойти лимит просто переключившись на другой мессенджер
     async def find_latest(self, phone: str, purpose: str) -> MessengerLinkRequest | None:

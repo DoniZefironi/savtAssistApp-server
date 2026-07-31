@@ -18,13 +18,12 @@ class Settings(BaseSettings):
     sms_code_max_attempts: int = 5
     sms_code_resend_cooldown_seconds: int = 60
 
-    # Доставка кода подтверждения телефона — Telegram/Viber бот (SMS отключено полностью)
+    # Доставка кода подтверждения телефона — Telegram-бот (SMS отключено полностью,
+    # Viber удалён: подтвердить владение номером через него нечем, аналога
+    # request_contact у Viber нет)
     telegram_bot_token: str = ""
     telegram_bot_username: str = ""  # без @, для t.me/<username>?start=...
     telegram_webhook_secret: str = ""  # X-Telegram-Bot-Api-Secret-Token
-
-    viber_bot_token: str = ""
-    viber_bot_uri: str = ""  # chatURI из настроек Viber Public Account, для viber://pa?chatURI=...
 
     # Сколько живёт токен "рукопожатия" (пока пользователь не откроет deep-link на бота)
     messenger_link_request_ttl_minutes: int = 15

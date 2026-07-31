@@ -1,4 +1,3 @@
-import hashlib
 import hmac
 import logging
 
@@ -9,6 +8,11 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 _client: httpx.AsyncClient | None = None
+
+# Единственный канал доставки. Viber удалён: подтвердить владение номером через
+# него нечем — аналога Telegram request_contact у Viber нет, а без него код
+# доказывает лишь то, что человек открыл ссылку, но не то, что номер его.
+CHANNEL_TELEGRAM = "telegram"
 
 
 def _get_client() -> httpx.AsyncClient:
@@ -23,33 +27,57 @@ class MessengerSendError(Exception):
 
 
 def build_deep_link(channel: str, token: str) -> str:
-    if channel == "telegram":
+    if channel == CHANNEL_TELEGRAM:
         return f"https://t.me/{settings.telegram_bot_username}?start={token}"
-    if channel == "viber":
-        return f"viber://pa?chatURI={settings.viber_bot_uri}&text={token}"
     raise ValueError(f"Неизвестный канал доставки: {channel}")
 
 
 async def send_verification_code(channel: str, external_chat_id: str, code: str) -> None:
-    text = f"Код подтверждения SAVT Assist: {code}"
-    if channel == "telegram":
-        await _send_telegram(external_chat_id, text)
-    elif channel == "viber":
-        await _send_viber(external_chat_id, text)
-    else:
+    if channel != CHANNEL_TELEGRAM:
         raise ValueError(f"Неизвестный канал доставки: {channel}")
+    await _send_telegram(external_chat_id, f"Код подтверждения SAVT Assist: {code}")
 
 
-async def _send_telegram(chat_id: str, text: str) -> None:
+# Просит пользователя поделиться своим номером. Telegram подставит в контакт номер,
+# который он сам проверил при регистрации аккаунта, — ввести произвольный нельзя.
+async def send_contact_request(channel: str, external_chat_id: str, phone: str) -> None:
+    if channel != CHANNEL_TELEGRAM:
+        raise ValueError(f"Неизвестный канал доставки: {channel}")
+    await _send_telegram(
+        external_chat_id,
+        f"Подтвердите, что номер {phone} принадлежит вам — нажмите кнопку ниже.\n\n"
+        "Кнопка отправит боту ваш номер из Telegram. Ввести его вручную нельзя: "
+        "так мы убеждаемся, что номер действительно ваш.",
+        reply_markup={
+            "keyboard": [[{"text": "Отправить мой номер", "request_contact": True}]],
+            "resize_keyboard": True,
+            "one_time_keyboard": True,
+        },
+    )
+
+
+async def send_plain(channel: str, external_chat_id: str, text: str) -> None:
+    if channel != CHANNEL_TELEGRAM:
+        raise ValueError(f"Неизвестный канал доставки: {channel}")
+    # remove_keyboard убирает кнопку "Отправить мой номер" после того, как она
+    # отработала или больше не нужна — иначе она висит у пользователя навсегда
+    await _send_telegram(external_chat_id, text, reply_markup={"remove_keyboard": True})
+
+
+async def _send_telegram(chat_id: str, text: str, reply_markup: dict | None = None) -> None:
     # Токен бота не задан — dev-режим, просто логируем (аналог MockSmsProvider)
     if not settings.telegram_bot_token:
         logger.info(f"[MOCK TELEGRAM] chat_id={chat_id}: {text}")
         print(f"\n>>> Telegram {chat_id}: {text} <<<\n", flush=True)
         return
 
+    payload: dict = {"chat_id": chat_id, "text": text}
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
+
     url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
     try:
-        resp = await _get_client().post(url, json={"chat_id": chat_id, "text": text})
+        resp = await _get_client().post(url, json=payload)
     except httpx.RequestError as e:
         raise MessengerSendError(f"Telegram сетевая ошибка: {e}") from e
 
@@ -58,43 +86,7 @@ async def _send_telegram(chat_id: str, text: str) -> None:
         raise MessengerSendError(f"Telegram sendMessage {resp.status_code}: {resp.text}")
 
 
-async def _send_viber(receiver_id: str, text: str) -> None:
-    if not settings.viber_bot_token:
-        logger.info(f"[MOCK VIBER] receiver={receiver_id}: {text}")
-        print(f"\n>>> Viber {receiver_id}: {text} <<<\n", flush=True)
-        return
-
-    url = "https://chatapi.viber.com/pa/send_message"
-    try:
-        resp = await _get_client().post(
-            url,
-            headers={"X-Viber-Auth-Token": settings.viber_bot_token},
-            json={
-                "receiver": receiver_id,
-                "min_api_version": 1,
-                "sender": {"name": "SAVT Assist"},
-                "type": "text",
-                "text": text,
-            },
-        )
-    except httpx.RequestError as e:
-        raise MessengerSendError(f"Viber сетевая ошибка: {e}") from e
-
-    data = resp.json() if resp.is_success else {}
-    # status == 0 — успех; ненулевые коды означают, что пользователь не подписан/заблокировал бота
-    # (точные значения кодов требуют проверки на реальном аккаунте Viber)
-    if not resp.is_success or data.get("status", -1) != 0:
-        raise MessengerSendError(f"Viber send_message {resp.status_code}: {resp.text}")
-
-
 def verify_telegram_secret(header_value: str | None) -> bool:
     return bool(settings.telegram_webhook_secret) and hmac.compare_digest(
         header_value or "", settings.telegram_webhook_secret
     )
-
-
-def verify_viber_signature(raw_body: bytes, signature_header: str | None) -> bool:
-    if not settings.viber_bot_token or not signature_header:
-        return False
-    expected = hmac.new(settings.viber_bot_token.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, signature_header)
