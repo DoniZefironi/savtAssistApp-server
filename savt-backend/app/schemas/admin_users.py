@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field, field_validator
 class AdminUserListOut(BaseModel):
     id: int
     phone: str | None
+    contact_phone: str | None = None
     login: str | None
     full_name: str | None
     user_type: str | None
@@ -30,6 +31,7 @@ class AdminUserCabinetItem(BaseModel):
 class AdminUserDetailOut(BaseModel):
     id: int
     phone: str | None
+    contact_phone: str | None = None
     login: str | None
     full_name: str | None
     email: str | None

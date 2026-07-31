@@ -22,7 +22,8 @@ from app.core.security import (
 )
 from app.models.user import User
 from app.repositories.auth import PhoneCodeRepository, RefreshTokenRepository
-from app.repositories.messenger import MessengerLinkRepository, MessengerLinkRequestRepository
+from app.repositories.messenger import MessengerLinkRepository
+from app.repositories.pending_registration import PendingRegistrationRepository
 from app.repositories.user import UserRepository
 from app.services import messenger_service
 from app.models.role import Role
@@ -43,72 +44,63 @@ class AuthService:
         self.code_repo = PhoneCodeRepository(session) # работа с кодами
         self.token_repo = RefreshTokenRepository(session) # работа с токеном
         self.messenger_link_repo = MessengerLinkRepository(session) # подключённый Telegram
-        self.messenger_link_request_repo = MessengerLinkRequestRepository(session) # ожидающие рукопожатия
+        self.pending_repo = PendingRegistrationRepository(session) # незавершённые регистрации
 
-    # Начальная регистрация, вводим все поля после запрашиваем код.
-    # channel — только "telegram" (SMS отключено, Viber удалён)
+    # Начало регистрации. Номер телефона здесь НЕ запрашивается: он придёт из
+    # контакта Telegram и потому будет подтверждён по построению. Данные формы
+    # паркуются в pending_registrations — создать User без телефона не даёт
+    # constraint ck_users_phone_or_login, да и незачем: пока номер неизвестен,
+    # регистрировать нечего.
     async def register_start(
         self,
-        phone: str,
         password: str,
         full_name: str | None,
         user_type: str,
         organization_name: str | None,
-        channel: str,
-    ) -> tuple[int, str | None]:
-
-        # Проверяем, может уже есть такой телефончек
-        existing_user = await self.user_repo.find_by_phone(phone)
-
-        if existing_user is not None and existing_user.is_phone_verified:
-            raise AlreadyExistsError(
-                "Пользователь с таким телефоном уже зарегистрирован"
-            )
-
-        # Проверяем кулдаун, чтоб не спамили школьники
-        remaining = await self._resend_cooldown_remaining(phone, PURPOSE_REGISTRATION)
-        if remaining > 0:
-            raise RateLimitError(f"Повторная отправка возможна через {remaining} сек.")
-
-        # Если пользователя нет - создаем(телефон не подтвержден)
-        if existing_user is None:
-            user = await self.user_repo.create(
-                phone=phone,
-                full_name=full_name,
-                hashed_password=hash_password(password),
-                role_id=_DEFAULT_USER_ROLE_ID,
-                is_phone_verified=False,
-                is_active=True,
-                user_type=user_type,
-                organization_name=organization_name
-            )
-        else:
-            # Если есть такой пользователь, но телефон не подтвержден - задаем новые значения полей
-            existing_user.hashed_password = hash_password(password)
-            existing_user.full_name = full_name
-            existing_user.user_type = user_type
-            existing_user.organization_name = organization_name
-            user = existing_user
-
-        # allow_new_link=True — регистрация единственное место, где связка с ботом
-        # заводится впервые. Владение номером при этом доказывается: бот попросит
-        # поделиться контактом и сверит его с этим phone (см. messenger_webhook_service)
-        return await self._start_verification(
-            phone, PURPOSE_REGISTRATION, channel, user.id, allow_new_link=True
+        contact_phone: str | None,
+    ) -> tuple[str, str, int]:
+        token = secrets.token_urlsafe(24)
+        # Живёт дольше рукопожатия: после подтверждения номера человеку нужно
+        # ещё успеть ввести код, а он тоже со своим сроком
+        expires_at = datetime.now(timezone.utc) + timedelta(
+            minutes=settings.messenger_link_request_ttl_minutes + settings.sms_code_ttl_minutes
         )
+        await self.pending_repo.create(
+            token=token,
+            hashed_password=hash_password(password),
+            full_name=full_name,
+            user_type=user_type,
+            organization_name=organization_name,
+            contact_phone=contact_phone,
+            expires_at=expires_at,
+        )
+        await self.session.commit()
+        deep_link = messenger_service.build_deep_link(messenger_service.CHANNEL_TELEGRAM, token)
+        return token, deep_link, settings.sms_code_resend_cooldown_seconds
 
-    # Подтверждение телефона
+    # Подтверждение регистрации кодом. Идентифицируем не по телефону (клиент его
+    # не знает — номер пришёл из Telegram), а по токену незавершённой регистрации.
     async def register_complete(
         self,
-        phone: str,
+        registration_token: str,
         code: str,
         user_agent: str | None,
         ip_address: str | None,
     ) -> tuple[str, str]:
-        
-        user = await self.user_repo.find_by_phone(phone)
+
+        pending = await self.pending_repo.find_by_token(registration_token)
+        if pending is None:
+            raise NotFoundError("Регистрация не найдена или истекла — начните заново")
+        if pending.user_id is None:
+            raise InvalidCodeError(
+                "Номер ещё не подтверждён. Откройте бота в Telegram и нажмите "
+                "«Отправить мой номер»"
+            )
+
+        user = await self.user_repo.get_by_id(pending.user_id)
         if user is None:
-            raise NotFoundError("Сначала запросите код регистрации")
+            raise NotFoundError("Регистрация не найдена или истекла — начните заново")
+        phone = user.phone
 
         # Проверяем пользователя
         if user.is_phone_verified:
@@ -132,6 +124,7 @@ class AuthService:
 
         # Успешно - код использован, телефон подтвержден
         await self.code_repo.mark_used(active_code)
+        await self.pending_repo.mark_consumed(pending)
         user.is_phone_verified = True
 
         # Создаём базовые чаты
@@ -312,11 +305,11 @@ class AuthService:
         if remaining > 0:
             return cooldown, None
 
-        # allow_new_link НЕ передаём (остаётся False): эндпоинт открыт без
-        # авторизации, и заводить здесь новую связку с ботом нельзя — иначе
-        # deep-link с токеном привязки уходил бы в ответе атакующему, а следом
-        # к нему же и код сброса пароля. Если связки нет — код просто не уйдёт,
-        # ответ снаружи неотличим от «такого номера нет» (см. выше).
+        # Код уйдёт, только если у пользователя есть подтверждённая связка с ботом.
+        # Заводить её здесь нельзя: эндпоинт открыт без авторизации, и раньше при
+        # её отсутствии deep-link с токеном привязки уходил прямо в ответе — то
+        # есть атакующему, а следом к нему же и код сброса пароля. Если связки
+        # нет, ответ снаружи неотличим от «такого номера нет» (см. выше).
         return await self._start_verification(phone, PURPOSE_PASSWORD_RESET, channel, user.id)
 
     # Устанавливаем новый пароль
@@ -353,23 +346,43 @@ class AuthService:
 
         await self.session.commit()
 
-    # Повторно код запросить
-    async def register_resend_code(self, phone: str, channel: str) -> tuple[int, str | None]:
+    # Повторно код запросить. Идентификация по токену регистрации: телефон клиенту
+    # неизвестен, пока пользователь не поделился контактом в Telegram.
+    async def register_resend_code(self, registration_token: str) -> tuple[str | None, int]:
+        pending = await self.pending_repo.find_by_token(registration_token)
+        if pending is None:
+            raise NotFoundError("Регистрация не найдена или истекла — начните заново")
 
-        user = await self.user_repo.find_by_phone(phone)
+        cooldown = settings.sms_code_resend_cooldown_seconds
+
+        # Номер ещё не подтверждён — переотправлять нечего, отдаём тот же deep-link:
+        # человеку надо вернуться в Telegram и нажать «Отправить мой номер»
+        if pending.user_id is None:
+            return messenger_service.build_deep_link(
+                messenger_service.CHANNEL_TELEGRAM, pending.token
+            ), cooldown
+
+        user = await self.user_repo.get_by_id(pending.user_id)
         if user is None:
-            raise NotFoundError("Сначала запустите регистрацию")
-
+            raise NotFoundError("Регистрация не найдена или истекла — начните заново")
         if user.is_phone_verified:
             raise AlreadyExistsError("Пользователь уже подтверждён")
 
-        remaining = await self._resend_cooldown_remaining(phone, PURPOSE_REGISTRATION)
+        remaining = await self._resend_cooldown_remaining(user.phone, PURPOSE_REGISTRATION)
         if remaining > 0:
             raise RateLimitError(f"Повторная отправка возможна через {remaining} сек.")
 
-        return await self._start_verification(
-            phone, PURPOSE_REGISTRATION, channel, user.id, allow_new_link=True
+        link = await self.messenger_link_repo.find_by_user_and_channel(
+            user.id, messenger_service.CHANNEL_TELEGRAM
         )
+        if link is None:
+            raise NotFoundError("Telegram не подключён — начните регистрацию заново")
+
+        await self._deliver_code(
+            user.id, user.phone, PURPOSE_REGISTRATION,
+            messenger_service.CHANNEL_TELEGRAM, link.external_chat_id,
+        )
+        return None, cooldown
     
     # смена пароля
     async def change_password(
@@ -400,6 +413,7 @@ class AuthService:
         full_name: str | None,
         email: str | None,
         organization_name: str | None,
+        contact_phone: str | None = None,
     ) -> User:
         if full_name is not None:
             user.full_name = full_name
@@ -407,6 +421,8 @@ class AuthService:
             user.email = email
         if organization_name is not None:
             user.organization_name = organization_name
+        if contact_phone is not None:
+            user.contact_phone = contact_phone
         await self.session.commit()
         return user
 
@@ -416,67 +432,36 @@ class AuthService:
     # заявителя, — поэтому подтвердить владение НОВЫМ номером этим механизмом
     # нельзя в принципе, пока SMS отключены.
 
-    # Сколько секунд осталось до следующей попытки — смотрим и на уже отправленные
-    # коды, и на незавершённые заявки на рукопожатие с ботом (иначе можно обойти
-    # кулдаун, просто переключившись на другой мессенджер посреди ожидания)
+    # Сколько секунд осталось до следующей попытки
     async def _resend_cooldown_remaining(self, phone: str, purpose: str) -> int:
         cooldown = settings.sms_code_resend_cooldown_seconds
-        candidates: list[datetime] = []
 
         latest_code = await self.code_repo.find_latest(phone, purpose)
-        if latest_code is not None:
-            candidates.append(latest_code.created_at)
-
-        latest_request = await self.messenger_link_request_repo.find_latest(phone, purpose)
-        if latest_request is not None:
-            candidates.append(latest_request.created_at)
-
-        if not candidates:
+        if latest_code is None:
             return 0
 
-        elapsed = (datetime.now(timezone.utc) - max(candidates)).total_seconds()
+        elapsed = (datetime.now(timezone.utc) - latest_code.created_at).total_seconds()
         remaining = cooldown - elapsed
         return int(remaining) if remaining > 0 else 0
 
-    # Общая точка отправки/переотправки кода для всех 4 сценариев (регистрация,
-    # переотправка, сброс пароля). Если канал (Telegram) уже
-    # подключён у этого пользователя — код генерируется и шлётся сразу, как раньше
-    # с SMS. Если нет — код вообще не создаётся (нечего было бы доставить), вместо
-    # этого заводим заявку на рукопожатие и возвращаем deep-link на бота; сам код
-    # будет сгенерирован и отправлен только когда бот получит /start (см.
-    # app/services/messenger_webhook_service.py).
+    # Отправка кода в уже подтверждённую связку. Связки заводятся только при
+    # регистрации, где номер доказан контактом из Telegram, — поэтому «нет связки»
+    # означает «доставить некуда», а не «давайте заведём новую». Заводить её здесь
+    # было бы дырой: сброс пароля открыт без авторизации, и токен привязки уходил
+    # бы в ответе атакующему вместе с последующим кодом сброса.
     async def _start_verification(
         self, phone: str, purpose: str, channel: str, user_id: int,
-        allow_new_link: bool = False,
     ) -> tuple[int, str | None]:
         cooldown = settings.sms_code_resend_cooldown_seconds
 
         link = await self.messenger_link_repo.find_by_user_and_channel(user_id, channel)
         if link is not None:
             await self._deliver_code(user_id, phone, purpose, channel, link.external_chat_id)
-            return cooldown, None
 
-        # allow_new_link=False — вызывающий НЕ доказал, что он владелец аккаунта
-        # (сброс пароля открыт без авторизации). Заводить рукопожатие тут нельзя:
-        # токен ушёл бы прямо в HTTP-ответ, и кто угодно привязал бы свой мессенджер
-        # к чужому аккаунту, а следом получил бы код сброса пароля — то есть забрал
-        # бы аккаунт. Ведём себя как при несуществующем номере.
-        if not allow_new_link:
-            return cooldown, None
-
-        token = secrets.token_urlsafe(24)
-        expires_at = datetime.now(timezone.utc) + timedelta(
-            minutes=settings.messenger_link_request_ttl_minutes
-        )
-        await self.messenger_link_request_repo.create(
-            token=token, user_id=user_id, phone=phone, purpose=purpose,
-            channel=channel, expires_at=expires_at,
-        )
-        await self.session.commit()
-        return cooldown, messenger_service.build_deep_link(channel, token)
+        return cooldown, None
 
     # Публичная обёртка над _deliver_code — вызывается из messenger_webhook_service.py
-    # сразу после того, как бот подтвердил рукопожатие (получил /start с токеном)
+    # сразу после того, как номер подтверждён контактом из Telegram
     async def deliver_code_after_link(
         self, user_id: int, phone: str, purpose: str, channel: str, external_chat_id: str,
     ) -> None:

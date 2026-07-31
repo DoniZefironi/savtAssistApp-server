@@ -9,8 +9,15 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    # номер телефона (только для пользователей)
+    # Номер телефона — он же логин пользователя. Берётся из контакта Telegram при
+    # регистрации, поэтому подтверждён по построению. Руками не меняется: только
+    # через заявку с одобрением админа (см. PhoneChangeRequest).
     phone: Mapped[str | None] = mapped_column(String(20), unique=True, index=True)
+    # Рабочий/контактный номер — необязательный, НЕ подтверждается и на вход не
+    # влияет. Пользователь меняет его свободно, операторы видят в карточке.
+    # Нужен, потому что Telegram у человека часто зарегистрирован на личный номер,
+    # а в заявках он хочет значиться рабочим.
+    contact_phone: Mapped[str | None] = mapped_column(String(20))
     # логин (только для операторов/администраторов)
     login: Mapped[str | None] = mapped_column(String(100), unique=True, index=True)
     # емаил

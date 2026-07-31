@@ -55,51 +55,58 @@ async def handle_telegram_update(payload: dict) -> None:
 
 
 async def _begin_link(token: str, external_chat_id: str) -> None:
-    """Шаг 1: приняли токен. Связку НЕ создаём и код НЕ шлём — сначала номер."""
+    """Шаг 1: приняли токен. Пользователя ещё нет — номер неизвестен, просим контакт."""
     from app.database import AsyncSessionLocal
-    from app.repositories.messenger import MessengerLinkRequestRepository
+    from app.repositories.pending_registration import PendingRegistrationRepository
     from app.services import messenger_service
 
     async with AsyncSessionLocal() as session:
-        request_repo = MessengerLinkRequestRepository(session)
-        request = await request_repo.find_by_token(token)
-        if request is None or request.channel != messenger_service.CHANNEL_TELEGRAM:
-            _log.info("Telegram webhook: токен не найден/просрочен/не тот канал")
+        pending = await PendingRegistrationRepository(session).find_by_token(token)
+        if pending is None:
+            _log.info("Telegram webhook: регистрация не найдена или истекла")
+            await _reply(external_chat_id, "Регистрация не найдена или истекла. Начните заново в приложении.")
             return
 
-        request.external_chat_id = external_chat_id
+        pending.external_chat_id = external_chat_id
         await session.commit()
 
         try:
             await messenger_service.send_contact_request(
-                request.channel, external_chat_id, request.phone
+                messenger_service.CHANNEL_TELEGRAM, external_chat_id
             )
         except messenger_service.MessengerSendError:
             _log.exception("Telegram webhook: не удалось запросить контакт")
 
 
 async def _handle_contact(external_chat_id: str, message: dict, contact: dict) -> None:
-    """Шаг 2: пришёл контакт. Три проверки, и все три обязательны."""
+    """Шаг 2: пришёл контакт. Номер отсюда и становится номером аккаунта.
+
+    Сверять его не с чем и не нужно: источник доверенный (Telegram проверил номер
+    при регистрации аккаунта), а в форме приложения номер больше не спрашивается.
+    Проверяем только, что контакт действительно принадлежит отправителю."""
     from app.database import AsyncSessionLocal
-    from app.repositories.messenger import MessengerLinkRepository, MessengerLinkRequestRepository
+    from app.repositories.messenger import MessengerLinkRepository
+    from app.repositories.pending_registration import PendingRegistrationRepository
+    from app.repositories.user import UserRepository
     from app.services import messenger_service
-    from app.services.auth_service import AuthService
+    from app.services.auth_service import PURPOSE_REGISTRATION, AuthService
 
     async with AsyncSessionLocal() as session:
-        request_repo = MessengerLinkRequestRepository(session)
-        request = await request_repo.find_pending_by_chat(external_chat_id)
-        if request is None:
-            _log.info("Telegram webhook: контакт без активной заявки, чат %s", external_chat_id)
+        pending_repo = PendingRegistrationRepository(session)
+        pending = await pending_repo.find_by_chat(external_chat_id)
+        if pending is None:
+            _log.info("Telegram webhook: контакт без активной регистрации, чат %s", external_chat_id)
             await _reply(
                 external_chat_id,
-                "Заявка не найдена или истекла. Запросите код в приложении заново.",
+                "Регистрация не найдена или истекла. Начните заново в приложении.",
             )
             return
 
-        # (1) Telegram позволяет отправить боту ЛЮБОЙ контакт из адресной книги.
+        # Telegram позволяет отправить боту ЛЮБОЙ контакт из адресной книги.
         # user_id есть только у контактов, которые сами являются пользователями
         # Telegram, и совпадает с отправителем только для его собственной карточки.
-        # Без этой проверки достаточно отправить боту контакт жертвы.
+        # Без этой проверки достаточно отправить боту контакт жертвы — и её номер
+        # стал бы номером чужого аккаунта.
         sender_id = (message.get("from") or {}).get("id")
         if contact.get("user_id") is None or sender_id is None or contact["user_id"] != sender_id:
             _log.warning(
@@ -113,32 +120,56 @@ async def _handle_contact(external_chat_id: str, message: dict, contact: dict) -
             )
             return
 
-        # (2) Номер должен совпасть с заявленным при регистрации
-        shared_phone = _normalize_phone(contact.get("phone_number"))
-        if shared_phone is None or shared_phone != request.phone:
-            _log.warning(
-                "Telegram webhook: номер не совпал (ожидали %s, прислали %s)",
-                request.phone, shared_phone,
-            )
+        phone = _normalize_phone(contact.get("phone_number"))
+        if phone is None:
+            _log.warning("Telegram webhook: не удалось разобрать номер %s", contact.get("phone_number"))
+            await _reply(external_chat_id, "Не удалось разобрать ваш номер. Обратитесь в поддержку.")
+            return
+
+        user_repo = UserRepository(session)
+        existing = await user_repo.find_by_phone(phone)
+        if existing is not None and existing.is_phone_verified:
+            _log.info("Telegram webhook: номер %s уже зарегистрирован", phone)
             await _reply(
                 external_chat_id,
-                f"Номер вашего Telegram не совпадает с указанным при регистрации "
-                f"({request.phone}). Начните заново в приложении, указав номер "
-                f"этого Telegram-аккаунта.",
+                f"Номер {phone} уже зарегистрирован. Войдите в приложение по этому "
+                f"номеру, а если забыли пароль — воспользуйтесь восстановлением.",
             )
             return
 
-        # (3) Заявка жива и не использована — это уже проверено find_pending_by_chat
+        if existing is not None:
+            # Незавершённая регистрация на тот же номер — перезаписываем данными
+            # текущей заявки (так же вёл себя register_start до этой переделки)
+            existing.hashed_password = pending.hashed_password
+            existing.full_name = pending.full_name
+            existing.user_type = pending.user_type
+            existing.organization_name = pending.organization_name
+            existing.contact_phone = pending.contact_phone
+            user = existing
+        else:
+            user = await user_repo.create(
+                phone=phone,
+                full_name=pending.full_name,
+                hashed_password=pending.hashed_password,
+                role_id=1,
+                is_phone_verified=False,
+                is_active=True,
+                user_type=pending.user_type,
+                organization_name=pending.organization_name,
+                contact_phone=pending.contact_phone,
+            )
+            await session.flush()
 
-        link_repo = MessengerLinkRepository(session)
-        await link_repo.upsert(request.user_id, request.channel, external_chat_id)
-        await request_repo.mark_consumed(request)
+        pending.user_id = user.id
+        await MessengerLinkRepository(session).upsert(
+            user.id, messenger_service.CHANNEL_TELEGRAM, external_chat_id
+        )
         await session.commit()
 
         try:
             await AuthService(session).deliver_code_after_link(
-                user_id=request.user_id, phone=request.phone, purpose=request.purpose,
-                channel=request.channel, external_chat_id=external_chat_id,
+                user_id=user.id, phone=phone, purpose=PURPOSE_REGISTRATION,
+                channel=messenger_service.CHANNEL_TELEGRAM, external_chat_id=external_chat_id,
             )
         except Exception:
             _log.exception("Telegram webhook: номер подтверждён, но код отправить не удалось")

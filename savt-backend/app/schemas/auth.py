@@ -34,23 +34,20 @@ def _validate_channel(v: str) -> str:
 # Валидация
 # Регистрация
 class RegisterStartIn(BaseModel):
-    phone: str = Field(...)
+    # Номер телефона здесь НЕ запрашивается: он придёт из контакта Telegram и
+    # потому будет подтверждён по построению. contact_phone — необязательный
+    # рабочий номер, он не подтверждается и на вход не влияет.
     password: str = Field(..., min_length=8, max_length=100)
     password_confirm: str = Field(..., min_length=8, max_length=100)
     full_name: str = Field(..., min_length=1, max_length=200)
     user_type: str = Field(...)
     organization_name: str | None = Field(None)
-    channel: str = Field(...)  # только "telegram"
+    contact_phone: str | None = Field(None)
 
-    @field_validator("phone")
+    @field_validator("contact_phone")
     @classmethod
-    def validate_phone(cls, v: str) -> str:
-        return _normalize_phone(v)
-
-    @field_validator("channel")
-    @classmethod
-    def validate_channel(cls, v: str) -> str:
-        return _validate_channel(v)
+    def validate_contact_phone(cls, v: str | None) -> str | None:
+        return _normalize_phone(v) if v else None
 
     @field_validator("user_type")
     @classmethod
@@ -73,36 +70,33 @@ class RegisterStartIn(BaseModel):
         return self
 
 class ResendCodeIn(BaseModel):
-    phone: str
-    channel: str = Field(...)  # только "telegram"
-
-    @field_validator("phone")
-    @classmethod
-    def validate_phone(cls, v: str) -> str:
-        return _normalize_phone(v)
-
-    @field_validator("channel")
-    @classmethod
-    def validate_channel(cls, v: str) -> str:
-        return _validate_channel(v)
+    # Телефон клиенту неизвестен, пока пользователь не поделился контактом
+    # в Telegram, поэтому регистрация опознаётся по своему токену
+    registration_token: str = Field(..., min_length=1, max_length=64)
 
 
 class RegisterStartOut(BaseModel):
-    message: str = "Код подтверждения отправлен"
+    message: str = "Откройте Telegram и подтвердите номер"
+    # Хранить у себя до конца регистрации: им же идентифицируются
+    # /register/complete и /register/resend
+    registration_token: str
+    # Ссылка на бота. Всегда непустая на старте регистрации: номер ещё
+    # неизвестен, подтвердить его можно только в Telegram
+    deep_link: str
     resend_after_seconds: int
-    # не None, если канал ещё не подключён — нужно открыть ссылку на бота,
-    # код будет отправлен только после того, как бот получит /start
-    deep_link: str | None = None
 
 
 class RegisterCompleteIn(BaseModel):
-    phone: str
+    registration_token: str = Field(..., min_length=1, max_length=64)
     code: str = Field(..., min_length=6, max_length=6)
 
-    @field_validator("phone")
-    @classmethod
-    def validate_phone(cls, v: str) -> str:
-        return _normalize_phone(v)
+
+class ResendCodeOut(BaseModel):
+    message: str = "Код отправлен повторно"
+    resend_after_seconds: int
+    # Не None, если номер ещё не подтверждён: надо вернуться в Telegram
+    # и нажать «Отправить мой номер» — кода до этого не существует
+    deep_link: str | None = None
 
 # Аутентификация
 class LoginIn(BaseModel):
@@ -136,7 +130,10 @@ class TokenPairOut(BaseModel):
 # Профиль пользователя
 class UserMeOut(BaseModel):
     id: int
+    # подтверждённый номер из Telegram, он же логин — меняется только через заявку
     phone: str | None
+    # необязательный рабочий номер, меняется свободно через PATCH /auth/me
+    contact_phone: str | None
     email: str | None
     user_type: str | None
     organization_name: str | None
@@ -191,6 +188,14 @@ class UpdateProfileIn(BaseModel):
     full_name: str | None = Field(None, min_length=1, max_length=200)
     email: str | None = Field(None, max_length=100)
     organization_name: str | None = Field(None, min_length=1, max_length=255)
+    # Рабочий номер. Не подтверждается и на вход не влияет — в отличие от phone,
+    # который берётся из Telegram и меняется только через заявку админу.
+    contact_phone: str | None = Field(None, max_length=20)
+
+    @field_validator("contact_phone")
+    @classmethod
+    def validate_contact_phone(cls, v: str | None) -> str | None:
+        return _normalize_phone(v) if v else None
 
     @field_validator("email")
     @classmethod

@@ -38,16 +38,17 @@ async def send_verification_code(channel: str, external_chat_id: str, code: str)
     await _send_telegram(external_chat_id, f"Код подтверждения SAVT Assist: {code}")
 
 
-# Просит пользователя поделиться своим номером. Telegram подставит в контакт номер,
-# который он сам проверил при регистрации аккаунта, — ввести произвольный нельзя.
-async def send_contact_request(channel: str, external_chat_id: str, phone: str) -> None:
+# Просит поделиться номером. Telegram подставит в контакт номер, который сам
+# проверил при регистрации аккаунта, — ввести произвольный нельзя. Этот номер и
+# станет номером аккаунта, поэтому в форме приложения его не спрашивают.
+async def send_contact_request(channel: str, external_chat_id: str) -> None:
     if channel != CHANNEL_TELEGRAM:
         raise ValueError(f"Неизвестный канал доставки: {channel}")
     await _send_telegram(
         external_chat_id,
-        f"Подтвердите, что номер {phone} принадлежит вам — нажмите кнопку ниже.\n\n"
-        "Кнопка отправит боту ваш номер из Telegram. Ввести его вручную нельзя: "
-        "так мы убеждаемся, что номер действительно ваш.",
+        "Остался один шаг — нажмите кнопку ниже, чтобы подтвердить номер телефона.\n\n"
+        "Этот номер станет вашим логином в SAVT Assist. Telegram отправит его сам, "
+        "вводить вручную не нужно.",
         reply_markup={
             "keyboard": [[{"text": "Отправить мой номер", "request_contact": True}]],
             "resize_keyboard": True,

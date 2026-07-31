@@ -48,6 +48,7 @@ class AdminUserService:
             AdminUserListOut(
                 id=user.id,
                 phone=user.phone,
+                contact_phone=user.contact_phone,
                 login=user.login,
                 full_name=user.full_name,
                 user_type=user.user_type,
@@ -91,6 +92,7 @@ class AdminUserService:
         return AdminUserDetailOut(
             id=user.id,
             phone=user.phone,
+            contact_phone=user.contact_phone,
             login=user.login,
             full_name=user.full_name,
             email=user.email,
@@ -137,6 +139,7 @@ class AdminUserService:
         return AdminUserListOut(
             id=user.id,
             phone=user.phone,
+            contact_phone=user.contact_phone,
             login=user.login,
             full_name=user.full_name,
             user_type=user.user_type,
@@ -181,6 +184,7 @@ class AdminUserService:
         return AdminUserListOut(
             id=user.id,
             phone=user.phone,
+            contact_phone=user.contact_phone,
             login=user.login,
             full_name=user.full_name,
             user_type=user.user_type,

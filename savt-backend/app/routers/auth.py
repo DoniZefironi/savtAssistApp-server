@@ -19,6 +19,7 @@ from app.schemas.auth import (
     RegisterStartIn,
     RegisterStartOut,
     ResendCodeIn,
+    ResendCodeOut,
     TokenPairOut,
     UpdateProfileIn,
     UserMeOut,
@@ -45,15 +46,16 @@ async def register_start(
     session: AsyncSession = Depends(get_session),
 ):
     service = AuthService(session) # создание сервиса
-    cooldown, deep_link = await service.register_start(
-        phone=payload.phone,
+    token, deep_link, cooldown = await service.register_start(
         password=payload.password,
         full_name=payload.full_name,
         user_type=payload.user_type,
         organization_name=payload.organization_name,
-        channel=payload.channel,
+        contact_phone=payload.contact_phone,
     )
-    return RegisterStartOut(resend_after_seconds=cooldown, deep_link=deep_link)
+    return RegisterStartOut(
+        registration_token=token, deep_link=deep_link, resend_after_seconds=cooldown
+    )
 
 # Подтверждение кода
 @router.post("/register/complete", response_model=TokenPairOut, status_code=status.HTTP_201_CREATED)
@@ -66,7 +68,7 @@ async def register_complete(
     user_agent, ip = _client_info(request)
     service = AuthService(session)
     access, refresh = await service.register_complete(
-        phone=payload.phone,
+        registration_token=payload.registration_token,
         code=payload.code,
         user_agent=user_agent,
         ip_address=ip,
@@ -74,7 +76,7 @@ async def register_complete(
     return TokenPairOut(access_token=access, refresh_token=refresh)
 
 # Переотправка кода
-@router.post("/register/resend", response_model=RegisterStartOut)
+@router.post("/register/resend", response_model=ResendCodeOut)
 @limiter.limit("3/minute")
 async def register_resend(
     request: Request,
@@ -82,8 +84,8 @@ async def register_resend(
     session: AsyncSession = Depends(get_session),
 ):
     service = AuthService(session)
-    cooldown, deep_link = await service.register_resend_code(payload.phone, payload.channel)
-    return RegisterStartOut(resend_after_seconds=cooldown, deep_link=deep_link)
+    deep_link, cooldown = await service.register_resend_code(payload.registration_token)
+    return ResendCodeOut(resend_after_seconds=cooldown, deep_link=deep_link)
 
 # Вход для администратора / оператора
 @router.post("/admin-login", response_model=TokenPairOut)
@@ -157,6 +159,7 @@ async def me(
     return UserMeOut(
         id=user.id,
         phone=user.phone,
+        contact_phone=user.contact_phone,
         full_name=user.full_name,
         role=role.name if role else "user",
         is_phone_verified=user.is_phone_verified,
@@ -223,11 +226,13 @@ async def update_profile(
         full_name=payload.full_name,
         email=payload.email,
         organization_name=payload.organization_name,
+        contact_phone=payload.contact_phone,
     )
     role = await session.get(Role, user.role_id)
     return UserMeOut(
         id=user.id,
         phone=user.phone,
+        contact_phone=user.contact_phone,
         full_name=user.full_name,
         role=role.name if role else "user",
         is_phone_verified=user.is_phone_verified,
