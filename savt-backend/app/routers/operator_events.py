@@ -8,9 +8,15 @@ from pydantic import BaseModel
 from app.core.constants import RoleName
 from app.core.dependencies import require_role
 from app.core.event_bus import event_bus
-from app.core.exceptions import AuthenticationError
-from app.core.stream_tickets import TICKET_TTL_SECONDS, consume_ticket, issue_ticket
+from app.core.exceptions import AuthenticationError, PermissionDeniedError
+from app.core.stream_tickets import (
+    SCOPE_OPERATOR,
+    TICKET_TTL_SECONDS,
+    consume_ticket,
+    issue_ticket,
+)
 from app.models.user import User
+from app.services.chat_service import check_chat_access
 
 router = APIRouter(prefix="/operator/events", tags=["operator: realtime"])
 
@@ -39,12 +45,12 @@ class StreamTicketOut(BaseModel):
 async def create_stream_ticket(
     operator: User = Depends(require_role(RoleName.OPERATOR, RoleName.ADMIN)),
 ):
-    ticket = issue_ticket(operator.id)
+    ticket = issue_ticket(operator.id, SCOPE_OPERATOR)
     return StreamTicketOut(ticket=ticket, expires_in=TICKET_TTL_SECONDS)
 
 
 def _authenticate(ticket: str) -> int:
-    user_id = consume_ticket(ticket)
+    user_id = consume_ticket(ticket, SCOPE_OPERATOR)
     if user_id is None:
         raise AuthenticationError("Тикет недействителен или истёк")
     return user_id
@@ -84,7 +90,13 @@ async def stream_operator_chats(request: Request, ticket: str = Query(...)):
 # Открытый чат — замена поллинга GET /operator/chats/{chat_id}/messages
 @router.get("/chats/{chat_id}")
 async def stream_chat(request: Request, chat_id: int, ticket: str = Query(...)):
-    _authenticate(ticket)
+    user_id = _authenticate(ticket)
+    # Тикет говорит только "кто", но не "к какому чату" — доступ проверяем на
+    # каждое подключение. Роль перечитывается из БД, поэтому разжалованный
+    # оператор не досидит на старом тикете до конца его TTL. Личные заметки
+    # ("notes") закрыты и от операторов — см. ChatService._get_chat_or_403.
+    if not await check_chat_access(chat_id, user_id):
+        raise PermissionDeniedError("Нет доступа к этому чату")
     return StreamingResponse(
         _sse_stream(request, f"chat:{chat_id}"),
         media_type="text/event-stream",

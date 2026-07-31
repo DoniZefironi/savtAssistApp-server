@@ -1,6 +1,8 @@
 from datetime import datetime
 from pydantic import BaseModel, Field
 
+from app.core.signed_urls import SignedUrl
+
 
 class AdditionRequestOut(BaseModel):
     id: int
@@ -11,7 +13,7 @@ class AdditionRequestOut(BaseModel):
     organization_name: str | None
     user_is_verified: bool
     user_registered_at: datetime
-    photo_url: str
+    photo_url: SignedUrl
     user_comment: str | None
     status: str
     cabinet_id: int | None

@@ -70,10 +70,10 @@ async def list_operator_chats(
 @router.get("/chats/{chat_id}/pinned", response_model=list[MessageOut])
 async def get_pinned_messages(
     chat_id: int,
-    _: User = Depends(require_role(RoleName.OPERATOR, RoleName.ADMIN)),
+    operator: User = Depends(require_role(RoleName.OPERATOR, RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
-    return await ChatService(session).get_pinned_messages(chat_id)
+    return await ChatService(session).get_pinned_messages(chat_id, operator.id)
 
 
 # Получить сообщения

@@ -2,13 +2,15 @@ import re
 from datetime import datetime
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.core.signed_urls import SignedUrlOpt, strip_signature
+
 _HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
 
 class AttachmentOut(BaseModel):
     id: int
     attachment_type: str
-    file_url: str | None
+    file_url: SignedUrlOpt
     file_name: str | None
     file_size_bytes: int | None
     mime_type: str | None
@@ -46,7 +48,7 @@ class ChatAttachmentOut(BaseModel):
     id: int
     message_id: int
     attachment_type: str
-    file_url: str | None
+    file_url: SignedUrlOpt
     file_name: str | None
     file_size_bytes: int | None
     mime_type: str | None
@@ -79,6 +81,13 @@ class AttachmentIn(BaseModel):
     # Геолокация — вместо файла, latitude/longitude обязательны вместе
     latitude: float | None = Field(None, ge=-90, le=90)
     longitude: float | None = Field(None, ge=-180, le=180)
+
+    # Клиент присылает обратно тот URL, который получил от нас, то есть уже
+    # подписанный. В БД подпись попасть не должна — она протухнет вместе с записью.
+    @field_validator("file_url")
+    @classmethod
+    def strip_url_signature(cls, v: str | None) -> str | None:
+        return strip_signature(v)
 
     @model_validator(mode="after")
     def validate_file_xor_location(self) -> "AttachmentIn":
@@ -132,6 +141,11 @@ class ChatListOut(BaseModel):
 class WallpaperIn(BaseModel):
     wallpaper_url: str | None = Field(None, max_length=500)
 
+    @field_validator("wallpaper_url")
+    @classmethod
+    def strip_url_signature(cls, v: str | None) -> str | None:
+        return strip_signature(v)
+
 
 class ChatOut(BaseModel):
     id: int
@@ -174,6 +188,11 @@ class ChatSettingsIn(BaseModel):
             raise ValueError("Цвет должен быть в формате #RRGGBB")
         return v
 
+    @field_validator("wallpaper_url")
+    @classmethod
+    def strip_url_signature(cls, v: str | None) -> str | None:
+        return strip_signature(v)
+
 
 class ChatSettingsOut(BaseModel):
     user_id: int
@@ -186,7 +205,7 @@ class ChatSettingsOut(BaseModel):
     bot_text_color: str | None
     nick_color: str | None
     font_size: int | None
-    wallpaper_url: str | None
+    wallpaper_url: SignedUrlOpt
     wallpaper_id: str | None
 
     model_config = {"from_attributes": True}

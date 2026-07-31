@@ -156,7 +156,7 @@ async def get_pinned_messages(
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    return await ChatService(session).get_pinned_messages(chat_id)
+    return await ChatService(session).get_pinned_messages(chat_id, current_user.id)
 
 
 # Закрепить сообщение (идемпотентно, лимит 10 на чат)

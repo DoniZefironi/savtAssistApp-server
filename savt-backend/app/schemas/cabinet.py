@@ -1,6 +1,7 @@
 from datetime import datetime
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.core.signed_urls import strip_signature
 from app.schemas.tags import TagOut
 
 
@@ -149,6 +150,13 @@ class AddByQrOut(BaseModel):
 class AddByPhotoIn(BaseModel):
     photo_url: str = Field(..., min_length=1, max_length=500)
     user_comment: str | None = Field(None, min_length=1, max_length=1000)
+
+    # Клиент возвращает подписанный URL, полученный от POST /upload/attachment —
+    # в БД подпись попасть не должна, см. app/core/signed_urls.py
+    @field_validator("photo_url")
+    @classmethod
+    def strip_url_signature(cls, v: str) -> str:
+        return strip_signature(v) or v
 
 
 class AddByPhotoOut(BaseModel):

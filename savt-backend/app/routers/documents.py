@@ -75,11 +75,11 @@ async def list_cabinet_photos(
     cabinet_id: int,
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
     return await UserDocumentService(session).list_photos(
-        cabinet_id=cabinet_id, page=page, size=size
+        user_id=current_user.id, cabinet_id=cabinet_id, page=page, size=size
     )
 
 

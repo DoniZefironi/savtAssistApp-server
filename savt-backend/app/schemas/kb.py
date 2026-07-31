@@ -1,6 +1,7 @@
 from datetime import datetime
 from pydantic import BaseModel, Field
 
+from app.core.signed_urls import SignedUrl
 from app.schemas.tags import TagOut
 
 
@@ -32,7 +33,7 @@ class KbCategoryOut(BaseModel):
 class KbAttachmentOut(BaseModel):
     id: int
     article_id: int
-    file_url: str
+    file_url: SignedUrl
     file_size_bytes: int
     doc_type: str
     mime_type: str

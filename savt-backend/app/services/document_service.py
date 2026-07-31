@@ -6,6 +6,7 @@ from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AlreadyExistsError, NotFoundError, PermissionDeniedError
+from app.repositories.cabinet import UserCabinetRepository
 from app.repositories.document import DocumentRepository, DocumentRequestRepository, PhotoRepository
 from app.repositories.tag import TagRepository
 from app.services import project_folder_service
@@ -236,6 +237,7 @@ class UserDocumentService:
         self.photo_repo = PhotoRepository(session)
         self.request_repo = DocumentRequestRepository(session)
         self.tag_repo = TagRepository(session)
+        self.user_cabinet_repo = UserCabinetRepository(session)
 
     async def list_documents(
         self,
@@ -265,7 +267,11 @@ class UserDocumentService:
                 project_id=doc.project_id,
                 title=doc.title,
                 doc_type=doc.doc_type,
-                file_url=doc.file_url if has_access else None,
+                # Ограниченные документы не отдают прямую ссылку никому, даже тем,
+                # кому доступ одобрен: подписанный /static/-URL можно переслать
+                # третьему лицу, а GET /documents/{id}/download проверяет права
+                # на каждое скачивание. Свободные документы отдаются ссылкой.
+                file_url=doc.file_url if not doc.requires_approval else None,
                 file_size_bytes=doc.file_size_bytes,
                 mime_type=doc.mime_type,
                 has_access=has_access,
@@ -303,7 +309,11 @@ class UserDocumentService:
                 project_id=doc.project_id,
                 title=doc.title,
                 doc_type=doc.doc_type,
-                file_url=doc.file_url if has_access else None,
+                # Ограниченные документы не отдают прямую ссылку никому, даже тем,
+                # кому доступ одобрен: подписанный /static/-URL можно переслать
+                # третьему лицу, а GET /documents/{id}/download проверяет права
+                # на каждое скачивание. Свободные документы отдаются ссылкой.
+                file_url=doc.file_url if not doc.requires_approval else None,
                 file_size_bytes=doc.file_size_bytes,
                 mime_type=doc.mime_type,
                 has_access=has_access,
@@ -320,9 +330,14 @@ class UserDocumentService:
         file_path = UPLOAD_ROOT / doc.file_url.removeprefix("/static/")
         return file_path, doc.mime_type, doc.title
 
+    # user_id обязателен: фото ШУ видны только тем, к чьему аккаунту он привязан.
+    # Проверка та же, что в ChatService.get_cabinet_chat — привязка в user_cabinets.
+    # Одноимённый метод AdminDocumentService доступен админам без этого ограничения.
     async def list_photos(
-        self, cabinet_id: int, page: int = 1, size: int = 50
+        self, user_id: int, cabinet_id: int, page: int = 1, size: int = 50
     ) -> PageOut[PhotoOut]:
+        if not await self.user_cabinet_repo.find(user_id, cabinet_id):
+            raise PermissionDeniedError("У вас нет доступа к этому ШУ")
         items, total = await self.photo_repo.list_all(
             cabinet_id=cabinet_id, offset=(page - 1) * size, limit=size
         )

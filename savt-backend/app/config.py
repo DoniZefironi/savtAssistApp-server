@@ -32,6 +32,19 @@ class Settings(BaseSettings):
     # Firebase
     firebase_credentials_path: str = ""
 
+    # Подпись ссылок на /static/ (nginx secure_link, см. app/core/signed_urls.py).
+    # Секрет ОБЯЗАН совпадать со значением в secure_link_md5 в nginx*.conf.
+    # Пусто = ссылки отдаются без подписи (локальный запуск без nginx); на стенде,
+    # где nginx подпись проверяет, пустой секрет означает 403 на все файлы.
+    # Генерировать: python -c "import secrets; print(secrets.token_urlsafe(32))"
+    static_link_secret: str = ""
+    # Сколько живёт ссылка, отданная в API. Сутки — чтобы открытый экран чата
+    # не терял картинки, пока клиент не перезапросит сообщения.
+    static_link_ttl_seconds: int = 86400
+    # Для ссылок, уходящих во внешние системы (комментарии Bitrix-задач):
+    # их открывают спустя дни, поэтому срок заметно длиннее. 90 дней.
+    static_link_external_ttl_seconds: int = 7776000
+
     # CORS — через запятую: https://admin.example.com,http://localhost:3000
     # Поставь * чтобы разрешить всем (только для разработки)
     cors_origins: str = "*"

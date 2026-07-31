@@ -251,9 +251,15 @@ class ChatService:
             and chat.chat_type == "service_request"
             and chat.service_request_id is not None
         ):
+            from app.core.signed_urls import sign_url_long
             from app.services.service_request_service import sync_message_to_bitrix
             sender_name = sender.full_name if sender else str(sender_id)
-            attachment_urls = [att.file_url for att in data.attachments]
+            # Ссылку открывают из комментария Bitrix, часто спустя дни, и человек
+            # там не авторизован в нашем API — нужна подпись с длинным сроком
+            attachment_urls = [
+                signed for att in data.attachments
+                if (signed := sign_url_long(att.file_url)) is not None
+            ]
             sync_message_to_bitrix(chat.service_request_id, sender_name, data.text, attachment_urls)
 
         # Push пользователю от оператора
@@ -422,14 +428,14 @@ class ChatService:
         await self.session.commit()
         if is_new_pin:
             await publish_message_pinned(chat_id, msg_id)
-        return await self.get_pinned_messages(chat_id)
+        return await self.get_pinned_messages(chat_id, user_id)
 
     async def unpin_message(self, chat_id: int, msg_id: int, user_id: int) -> list[MessageOut]:
         await self._get_chat_or_403(chat_id, user_id)
         await self.pin_repo.remove(chat_id, msg_id)
         await self.session.commit()
         await publish_message_unpinned(chat_id, msg_id)
-        return await self.get_pinned_messages(chat_id)
+        return await self.get_pinned_messages(chat_id, user_id)
 
     async def unpin_all(self, chat_id: int, user_id: int) -> list[MessageOut]:
         await self._get_chat_or_403(chat_id, user_id)
@@ -591,7 +597,11 @@ class ChatService:
             raise PermissionDeniedError("Нет доступа к этому чату")
         return chat
 
-    async def get_pinned_messages(self, chat_id: int) -> list[MessageOut]:
+    # user_id обязателен: метод отдаёт тексты сообщений, поэтому проверяется
+    # так же, как get_messages. Внутренние вызывающие (pin/unpin) проверку уже
+    # сделали, повтор почти бесплатен — Chat/User/Role лежат в identity map сессии.
+    async def get_pinned_messages(self, chat_id: int, user_id: int) -> list[MessageOut]:
+        await self._get_chat_or_403(chat_id, user_id)
         rows = await self.pin_repo.list_pins(chat_id)
         if not rows:
             return []
@@ -607,6 +617,16 @@ class ChatService:
         atts = (await self.msg_repo.get_attachments([msg.id])).get(msg.id, [])
         rxns = (await self.msg_repo.get_reactions([msg.id])).get(msg.id, [])
         return _build_message(msg, user, atts, rxns)
+
+
+# Проверка доступа к чату для SSE/WS-стримов (см. operator_events.py, user_events.py).
+# Со своей короткоживущей сессией, а не через Depends(get_session): сессия из
+# зависимости живёт до конца ответа, а стрим держится часами — каждое подключение
+# занимало бы соединение с БД на всё это время.
+async def check_chat_access(chat_id: int, user_id: int) -> bool:
+    from app.database import AsyncSessionLocal
+    async with AsyncSessionLocal() as session:
+        return await ChatService(session).has_access(chat_id, user_id)
 
 
 def chat_summary_dict(chat: Chat, last_text: str | None = None, user_name: str | None = None) -> dict:

@@ -2,6 +2,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 
+from app.core.signed_urls import SignedUrl, SignedUrlOpt
 from app.schemas.tags import TagOut
 
 
@@ -11,7 +12,7 @@ class DocumentOut(BaseModel):
     project_id: int | None
     title: str
     doc_type: str
-    file_url: str
+    file_url: SignedUrl
     file_size_bytes: int
     mime_type: str
     requires_approval: bool
@@ -29,7 +30,10 @@ class UserDocumentOut(BaseModel):
     project_id: int | None
     title: str
     doc_type: str
-    file_url: str | None  # null если requires_approval=true и нет доступа
+    # null, если документ ограниченный (requires_approval): такие качаются
+    # только через GET /documents/{id}/download с проверкой доступа, прямой
+    # ссылки на /static/ у них нет вовсе — см. UserDocumentService.list_documents
+    file_url: SignedUrlOpt
     file_size_bytes: int
     mime_type: str
     has_access: bool
@@ -39,7 +43,7 @@ class UserDocumentOut(BaseModel):
 class PhotoOut(BaseModel):
     id: int
     cabinet_id: int
-    url: str
+    url: SignedUrl
     caption: str | None
     sort_order: int
     created_at: datetime

@@ -49,10 +49,21 @@ services:
       - "80:80"
       - "443:443"
       - "8080:8080"
+    environment:
+      # Секрет подписи /static/-ссылок (nginx secure_link). Тот же самый, что
+      # у api — они ОБЯЗАНЫ совпадать, иначе nginx отдаст 403 на все файлы.
+      # Берётся из .env, поэтому источник значения один на оба сервиса.
+      STATIC_LINK_SECRET: ${STATIC_LINK_SECRET}
+      # Штатный шаблонизатор nginx-образа подставляет переменные окружения в
+      # *.template и кладёт результат сюда. Подставляется только то, что реально
+      # есть в окружении контейнера, — $host/$uri/$secure_link не трогаются.
+      NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx
     volumes:
       # NGINX_CONF задаётся в .env: по умолчанию боевой nginx.conf (HTTPS + редирект),
-      # nginx.http-fallback.conf — пока порт 443 снаружи не проброшен
-      - ./${NGINX_CONF:-nginx.conf}:/etc/nginx/nginx.conf:ro
+      # nginx.http-fallback.conf — пока порт 443 снаружи не проброшен.
+      # Монтируется как шаблон (см. NGINX_ENVSUBST_OUTPUT_DIR выше) — из него
+      # получается /etc/nginx/nginx.conf уже с подставленным секретом.
+      - ./${NGINX_CONF:-nginx.conf}:/etc/nginx/templates/nginx.conf.template:ro
       - ./uploads:/uploads:ro
       - /etc/letsencrypt:/etc/letsencrypt:ro
       - ./certbot-www:/var/www/certbot:ro

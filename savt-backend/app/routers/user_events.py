@@ -3,12 +3,17 @@ import json
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_current_user, get_session
+from app.core.dependencies import get_current_user
 from app.core.event_bus import event_bus
-from app.core.stream_tickets import TICKET_TTL_SECONDS, consume_ticket, issue_ticket
+from app.core.stream_tickets import (
+    SCOPE_USER,
+    TICKET_TTL_SECONDS,
+    consume_ticket,
+    issue_ticket,
+)
 from app.models.user import User
+from app.services.chat_service import check_chat_access
 
 router = APIRouter(prefix="/user-events", tags=["realtime"])
 
@@ -27,7 +32,7 @@ class StreamTicketOut(BaseModel):
 # в пределах TTL - переподключение мобильного клиента тем же тикетом не должно ловить 401.
 @router.post("/ticket", response_model=StreamTicketOut)
 async def create_stream_ticket(current_user: User = Depends(get_current_user)):
-    ticket = issue_ticket(current_user.id)
+    ticket = issue_ticket(current_user.id, SCOPE_USER)
     return StreamTicketOut(ticket=ticket, expires_in=TICKET_TTL_SECONDS)
 
 
@@ -59,7 +64,7 @@ async def _ws_stream(websocket: WebSocket, channel: str) -> None:
 # Список чатов пользователя - замена поллинга GET /chats
 @router.websocket("/chats")
 async def ws_chats(websocket: WebSocket, ticket: str):
-    user_id = consume_ticket(ticket)
+    user_id = consume_ticket(ticket, SCOPE_USER)
     if user_id is None:
         await websocket.close(code=4401)
         return
@@ -68,19 +73,13 @@ async def ws_chats(websocket: WebSocket, ticket: str):
 
 # Открытый чат - замена поллинга GET /chats/{chat_id}/messages
 @router.websocket("/chats/{chat_id}")
-async def ws_chat(
-    websocket: WebSocket,
-    chat_id: int,
-    ticket: str,
-    session: AsyncSession = Depends(get_session),
-):
-    user_id = consume_ticket(ticket)
+async def ws_chat(websocket: WebSocket, chat_id: int, ticket: str):
+    user_id = consume_ticket(ticket, SCOPE_USER)
     if user_id is None:
         await websocket.close(code=4401)
         return
 
-    from app.services.chat_service import ChatService
-    if not await ChatService(session).has_access(chat_id, user_id):
+    if not await check_chat_access(chat_id, user_id):
         await websocket.close(code=4403)
         return
 
