@@ -5,11 +5,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AlreadyExistsError, NotFoundError
 from app.repositories.cabinet import CabinetRepository
-from app.repositories.project import ProjectRepository, UserProjectRepository
+from app.repositories.project import ProjectContactRepository, ProjectRepository, UserProjectRepository
 from app.schemas.pagination import PageOut, make_page
+from app.utils.warranty import warranty_status as _warranty_status
 from app.schemas.project import (
     CabinetProjectPatchIn,
     ProjectCabinetItem,
+    ProjectContactOut,
     ProjectCreateIn,
     ProjectListOut,
     ProjectOut,
@@ -81,6 +83,17 @@ class ProjectService:
                 )
                 for c in cabinets
             ],
+            production_number=project.production_number,
+            shipment_planned_at=project.shipment_planned_at,
+            shipment_actual_at=project.shipment_actual_at,
+            company_name=project.company_name,
+            contacts=[
+                ProjectContactOut.model_validate(c)
+                for c in await ProjectContactRepository(self.session).list_for_project(project.id)
+            ],
+            warranty_starts_at=project.warranty_starts_at,
+            warranty_ends_at=project.warranty_ends_at,
+            warranty_status=_warranty_status(project.warranty_ends_at),
             created_at=project.created_at,
             updated_at=project.updated_at,
         )
@@ -168,6 +181,10 @@ class ProjectService:
             items.append(ProjectListOut(
                 id=p.id, name=p.name, unique_code=p.unique_code,
                 cabinet_count=len(cabinets), created_at=p.created_at,
+                company_name=p.company_name,
+                shipment_actual_at=p.shipment_actual_at,
+                warranty_ends_at=p.warranty_ends_at,
+                warranty_status=_warranty_status(p.warranty_ends_at),
             ))
         return make_page(items, total, page, size)
 

@@ -1,5 +1,6 @@
 import logging
 import re
+from datetime import datetime, timezone
 
 from app.config import settings
 from app.database import AsyncSessionLocal
@@ -11,13 +12,46 @@ _log = logging.getLogger(__name__)
 # заявки в приложении — остальная переписка в задаче остаётся внутри Bitrix
 _FORWARD_PREFIX = "/sa"
 
-# Номер объекта — самое первое "слово" в названии сделки, до пробела, например
-# "26_138" из "26_138 МГКУП Горсвет_конверт (1-20)". Обязательный префикс (год
-# производства, settings.bitrix_production_number_prefix) отсекает сделки с
-# номерами других лет/форматов — например "24_004" не попадёт при префиксе "26".
-_PRODUCTION_NUMBER_RE = re.compile(
-    rf"^({re.escape(settings.bitrix_production_number_prefix)}_\S+)"
-)
+# Номер проекта — две цифры года, подчёркивание и дальше номер: "26_138".
+# Год не фиксирован: в работе одновременно бывают 25-е, 26-е и 27-е номера,
+# поэтому раньше стоявший здесь единственный префикс отсекал живые сделки.
+# Ограничить список годов можно настройкой bitrix_production_years.
+_PRODUCTION_NUMBER_RE = re.compile(r"^(\d{2}_\S+)")
+
+
+def _allowed_years() -> set[str]:
+    return {y.strip() for y in settings.bitrix_production_years.split(",") if y.strip()}
+
+
+def _first_filled(deal: dict, codes: str):
+    """Первое непустое значение среди перечисленных через запятую полей.
+
+    Нужно для фактической даты отгрузки: в портале живут два поля сразу (старое и
+    новое), и пока идёт переезд часть сделок заполнена по-старому, часть по-новому."""
+    for code in (c.strip() for c in (codes or "").split(",")):
+        if code:
+            value = deal.get(code)
+            if value not in (None, "", [], False):
+                return value
+    return None
+
+
+def _parse_bitrix_datetime(raw) -> datetime | None:
+    """Bitrix отдаёт даты в ISO с часовым поясом ("2026-08-15T03:00:00+03:00"),
+    но у полей типа date встречается и "15.08.2026" — разбираем оба варианта."""
+    if not raw or not isinstance(raw, str):
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        pass
+    for fmt in ("%d.%m.%Y %H:%M:%S", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(raw, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    _log.warning("Bitrix: не удалось разобрать дату %r", raw)
+    return None
 
 
 def _extract(form: dict, *suffixes: str) -> str | None:
@@ -127,34 +161,111 @@ async def handle_task_update_webhook(form: dict) -> None:
     await sync_single_task_status(task_id)
 
 
-def extract_production_number(title: str) -> str | None:
-    match = _PRODUCTION_NUMBER_RE.match(title)
-    return match.group(1) if match else None
+def extract_production_number(deal: dict) -> str | None:
+    """Номер проекта из сделки: сначала из выделенного поля, при пустом — из
+    названия, как было раньше.
+
+    Поле надёжнее: название сделки правят руками, и любая опечатка в начале
+    раньше означала, что проект не создастся или не найдётся. Откат на название
+    оставлен, чтобы ничего не потерялось, пока поле заполнено не у всех сделок."""
+    raw = None
+    if settings.bitrix_field_production_number:
+        raw = str(deal.get(settings.bitrix_field_production_number) or "").strip()
+    if not raw:
+        raw = str(deal.get("TITLE") or "").strip()
+
+    match = _PRODUCTION_NUMBER_RE.match(raw)
+    if not match:
+        return None
+    number = match.group(1)
+
+    years = _allowed_years()
+    if years and number[:2] not in years:
+        return None
+    return number
 
 
-async def upsert_project_from_deal(session, title: str):
-    """Создаёт/обновляет Project по номеру, извлечённому из названия сделки Bitrix.
-    Возвращает (project, created): project=None, если номер не найден в названии —
+async def _apply_deal_fields(project, deal: dict) -> None:
+    """Переносит в проект поля, которыми владеет Bitrix. Гарантию не трогает —
+    она наша и в CRM её нет."""
+    from app.services import bitrix_service
+
+    project.shipment_planned_at = _parse_bitrix_datetime(
+        _first_filled(deal, settings.bitrix_field_shipment_planned)
+    )
+    project.shipment_actual_at = _parse_bitrix_datetime(
+        _first_filled(deal, settings.bitrix_field_shipment_actual)
+    )
+
+    company_id = str(deal.get("COMPANY_ID") or "").strip()
+    if company_id and company_id != "0":
+        project.bitrix_company_id = company_id
+        name = await bitrix_service.get_company_name(company_id)
+        # При сбое запроса имя не затираем — лучше показать устаревшее, чем пустое
+        if name:
+            project.company_name = name
+    else:
+        project.bitrix_company_id = None
+        project.company_name = None
+
+
+async def _sync_contacts(session, project, deal_id: str) -> None:
+    """Синхронизирует контактных лиц с заменой набора: убранный из сделки контакт
+    удаляется и у нас, иначе в карточке со временем повиснут уволившиеся.
+
+    Если Bitrix недоступен, набор не трогаем вовсе — иначе разовый сетевой сбой
+    стирал бы все контакты проекта."""
+    from app.services import bitrix_service
+    from app.repositories.project import ProjectContactRepository
+
+    contact_ids = await bitrix_service.get_deal_contact_ids(deal_id)
+    if contact_ids is None:
+        _log.warning("Bitrix: не удалось получить контакты сделки %s — набор оставлен как был", deal_id)
+        return
+
+    contacts = []
+    for order, contact_id in enumerate(contact_ids):
+        data = await bitrix_service.get_contact(contact_id)
+        if data is None:
+            _log.warning("Bitrix: контакт %s не прочитался, пропускаю", contact_id)
+            continue
+        data["sort_order"] = order
+        contacts.append(data)
+
+    await ProjectContactRepository(session).replace_for_project(project.id, contacts)
+
+
+async def upsert_project_from_deal(session, deal: dict):
+    """Создаёт/обновляет Project по сделке Bitrix.
+    Возвращает (project, created): project=None, если номер проекта не определился —
     вызывающий код просто пропускает такую сделку, ничего не логируя как ошибку.
     Идемпотентно: повторный вызов с тем же номером не создаёт дубликат
     (см. Project.production_number / ProjectRepository.find_by_production_number).
     Используется и вебхуком (handle_deal_event), и разовым скриптом импорта
     (app/cli.py import-bitrix-deals)."""
-    production_number = extract_production_number(title)
+    production_number = extract_production_number(deal)
     if not production_number:
         return None, False
 
     from app.repositories.project import ProjectRepository
     from app.services import project_code_service, project_folder_service
 
+    title = str(deal.get("TITLE") or "").strip() or production_number
+    deal_id = str(deal.get("ID") or "").strip()
+
     project_repo = ProjectRepository(session)
     existing = await project_repo.find_by_production_number(production_number)
 
     if existing is not None:
-        if existing.name != title:
+        renamed = existing.name != title
+        if renamed:
             existing.name = title
-            await session.commit()
+        await _apply_deal_fields(existing, deal)
+        await session.commit()
+        if renamed:
             project_folder_service.schedule_folder_sync(existing.id)
+        if deal_id:
+            await _sync_contacts(session, existing, deal_id)
         return existing, False
 
     try:
@@ -168,14 +279,17 @@ async def upsert_project_from_deal(session, title: str):
     )
     await session.flush()
     project.folder_name = project_folder_service.sanitize_folder_name(title)
+    await _apply_deal_fields(project, deal)
     await session.commit()
     project_folder_service.schedule_folder_creation(project.id)
+    if deal_id:
+        await _sync_contacts(session, project, deal_id)
     return project, True
 
 
 async def handle_deal_event(form: dict) -> None:
-    """Обрабатывает ONCRMDEALUPDATE — событие несёт только ID сделки, название
-    дотягивается отдельным запросом (get_deal_title), дальше см. upsert_project_from_deal."""
+    """Обрабатывает ONCRMDEALADD/ONCRMDEALUPDATE — событие несёт только ID сделки,
+    сама сделка дотягивается запросом (get_deal), дальше см. upsert_project_from_deal."""
     deal_id = _extract(form, "[id]")
     if not deal_id:
         _log.info("Bitrix deal webhook: не удалось извлечь ID сделки из payload: %s", form)
@@ -183,15 +297,16 @@ async def handle_deal_event(form: dict) -> None:
 
     from app.services import bitrix_service
 
-    title = await bitrix_service.get_deal_title(deal_id)
-    if not title:
-        _log.info("Bitrix deal webhook: не удалось получить название сделки %s", deal_id)
+    deal = await bitrix_service.get_deal(deal_id)
+    if not deal:
+        _log.info("Bitrix deal webhook: не удалось получить сделку %s", deal_id)
         return
 
     async with AsyncSessionLocal() as session:
-        project, created = await upsert_project_from_deal(session, title)
+        project, created = await upsert_project_from_deal(session, deal)
 
+    title = deal.get("TITLE")
     if project is None:
-        _log.info("Bitrix deal webhook: номер проекта не найден в названии сделки '%s'", title)
+        _log.info("Bitrix deal webhook: номер проекта не определился для сделки '%s'", title)
     elif created:
         _log.info("Bitrix deal webhook: создан проект id=%s ('%s')", project.id, title)

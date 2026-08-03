@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.cabinets import Cabinet
 from app.models.project import Project
+from app.models.project_contact import ProjectContact
 from app.models.project_share_request import ProjectShareRequest
 from app.models.user import User
 from app.models.user_project import UserProject
@@ -135,6 +136,60 @@ class ProjectRepository(BaseRepository[Project]):
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all()), total
+
+
+class ProjectContactRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def list_for_project(self, project_id: int) -> list[ProjectContact]:
+        result = await self.session.execute(
+            select(ProjectContact)
+            .where(ProjectContact.project_id == project_id)
+            .order_by(ProjectContact.sort_order, ProjectContact.id)
+        )
+        return list(result.scalars().all())
+
+    async def list_for_projects(self, project_ids: list[int]) -> dict[int, list[ProjectContact]]:
+        if not project_ids:
+            return {}
+        result = await self.session.execute(
+            select(ProjectContact)
+            .where(ProjectContact.project_id.in_(project_ids))
+            .order_by(ProjectContact.sort_order, ProjectContact.id)
+        )
+        mapping: dict[int, list[ProjectContact]] = {pid: [] for pid in project_ids}
+        for contact in result.scalars().all():
+            mapping[contact.project_id].append(contact)
+        return mapping
+
+    async def replace_for_project(self, project_id: int, contacts: list[dict]) -> None:
+        """Приводит набор контактов проекта к присланному из Bitrix.
+
+        Существующие обновляются на месте (по bitrix_contact_id), новые
+        добавляются, пропавшие из сделки удаляются. Не пересоздаём набор целиком,
+        чтобы не менять id записей на каждом обновлении сделки."""
+        existing = {c.bitrix_contact_id: c for c in await self.list_for_project(project_id)}
+        seen: set[str] = set()
+
+        for data in contacts:
+            contact_id = str(data["bitrix_contact_id"])
+            seen.add(contact_id)
+            obj = existing.get(contact_id)
+            if obj is None:
+                obj = ProjectContact(project_id=project_id, bitrix_contact_id=contact_id)
+                self.session.add(obj)
+            obj.full_name = data.get("full_name")
+            obj.post = data.get("post")
+            obj.phones = data.get("phones") or []
+            obj.emails = data.get("emails") or []
+            obj.sort_order = int(data.get("sort_order") or 0)
+
+        for contact_id, obj in existing.items():
+            if contact_id not in seen:
+                await self.session.delete(obj)
+
+        await self.session.commit()
 
 
 class UserProjectRepository(BaseRepository[UserProject]):

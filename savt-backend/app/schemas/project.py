@@ -10,6 +10,11 @@ class ProjectCreateIn(BaseModel):
 class ProjectUpdateIn(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=200)
     parent_project_id: int | None = Field(None, gt=0)
+    # Гарантия — единственное, что администратор может править: в CRM такого поля
+    # нет. Даты отгрузки, компания и контакты приезжают из Bitrix и здесь не
+    # принимаются — правки всё равно затрутся на ближайшем ONCRMDEALUPDATE.
+    warranty_starts_at: datetime | None = None
+    warranty_ends_at: datetime | None = None
 
 
 class ProjectCabinetItem(BaseModel):
@@ -19,6 +24,18 @@ class ProjectCabinetItem(BaseModel):
     admin_internal_name: str | None
 
 
+class ProjectContactOut(BaseModel):
+    """Контактное лицо заказчика. Только для операторов и админов — в
+    пользовательских схемах проекта этого блока нет."""
+    id: int
+    full_name: str | None
+    post: str | None
+    phones: list[str] = []
+    emails: list[str] = []
+
+    model_config = {"from_attributes": True}
+
+
 class ProjectOut(BaseModel):
     id: int
     name: str
@@ -26,6 +43,16 @@ class ProjectOut(BaseModel):
     parent_project_id: int | None
     folder_synced_at: datetime | None = None
     cabinets: list[ProjectCabinetItem] = []
+    # из Bitrix, только для чтения
+    production_number: str | None = None
+    shipment_planned_at: datetime | None = None
+    shipment_actual_at: datetime | None = None
+    company_name: str | None = None
+    contacts: list[ProjectContactOut] = []
+    # наше, редактируется через PATCH
+    warranty_starts_at: datetime | None = None
+    warranty_ends_at: datetime | None = None
+    warranty_status: str = "none"
     created_at: datetime
     updated_at: datetime
 
@@ -37,6 +64,10 @@ class ProjectListOut(BaseModel):
     name: str
     unique_code: str
     cabinet_count: int
+    company_name: str | None = None
+    shipment_actual_at: datetime | None = None
+    warranty_ends_at: datetime | None = None
+    warranty_status: str = "none"
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -46,11 +77,16 @@ class CabinetProjectPatchIn(BaseModel):
     project_id: int | None = Field(None, gt=0)
 
 
+# Пользовательские схемы: компания, даты и гарантия видны, контактных лиц
+# заказчика здесь НЕТ — это персональные данные, а доступ к проекту получают
+# по QR-коду, то есть потенциально широкий круг людей
 class UserProjectListItemOut(BaseModel):
     project_id: int
     name: str
     is_primary: bool
     cabinet_count: int
+    company_name: str | None = None
+    warranty_status: str = "none"
 
 
 class UserProjectDetailOut(BaseModel):
@@ -58,6 +94,12 @@ class UserProjectDetailOut(BaseModel):
     name: str
     is_primary: bool
     cabinets: list[ProjectCabinetItem] = []
+    company_name: str | None = None
+    shipment_planned_at: datetime | None = None
+    shipment_actual_at: datetime | None = None
+    warranty_starts_at: datetime | None = None
+    warranty_ends_at: datetime | None = None
+    warranty_status: str = "none"
 
 
 class AddProjectByQrIn(BaseModel):

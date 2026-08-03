@@ -5,6 +5,7 @@ from app.repositories.cabinet import CabinetRepository, UserCabinetRepository
 from app.repositories.project import ProjectRepository, ProjectRequestRepository, UserProjectRepository
 from app.schemas.project import ProjectCabinetItem, UserProjectDetailOut, UserProjectListItemOut
 from app.services.project_reconciliation import reconcile_cabinet_access
+from app.utils.warranty import warranty_status as _warranty_status
 
 
 class UserProjectService:
@@ -25,6 +26,8 @@ class UserProjectService:
             items.append(UserProjectListItemOut(
                 project_id=project.id, name=project.name, is_primary=up.is_primary,
                 cabinet_count=len(cabinets),
+                company_name=project.company_name,
+                warranty_status=_warranty_status(project.warranty_ends_at),
             ))
         return items
 
@@ -49,6 +52,13 @@ class UserProjectService:
                 )
                 for c in accessible
             ],
+            # Контактных лиц заказчика здесь намеренно нет — только сотрудникам
+            company_name=project.company_name,
+            shipment_planned_at=project.shipment_planned_at,
+            shipment_actual_at=project.shipment_actual_at,
+            warranty_starts_at=project.warranty_starts_at,
+            warranty_ends_at=project.warranty_ends_at,
+            warranty_status=_warranty_status(project.warranty_ends_at),
         )
 
     # Добавление проекта по кур-коду

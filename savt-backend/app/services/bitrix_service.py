@@ -196,44 +196,119 @@ async def get_task_statuses(task_ids: list[str]) -> dict[str, str]:
     return parsed
 
 
-async def get_deal_title(deal_id: str) -> str | None:
-    """Дотягивает название сделки CRM по её ID (crm.deal.get) — событие ONCRMDEALADD/
-    ONCRMDEALUPDATE присылает только ID, полей сделки в самом вебхуке нет. Требует,
-    чтобы у входящего вебхука (BITRIX_WEBHOOK_URL) была включена область "CRM"."""
+async def _call(method: str, payload: dict | None = None) -> dict | list | None:
+    """Один вызов REST-метода Bitrix. None — Bitrix не настроен, сеть отвалилась
+    или метод вернул ошибку; вызывающий сам решает, что делать (обычно —
+    пропустить обновление, а не ронять обработку вебхука)."""
     if not settings.bitrix_webhook_url:
         return None
-    url = f"{settings.bitrix_webhook_url.rstrip('/')}/crm.deal.get.json"
+    url = f"{settings.bitrix_webhook_url.rstrip('/')}/{method}.json"
     try:
-        resp = await _get_client().get(url, params={"ID": deal_id})
-    except httpx.RequestError:
+        resp = await _get_client().post(url, json=payload or {})
+    except httpx.RequestError as e:
+        _log.warning("Bitrix %s: сетевая ошибка %s", method, e)
         return None
     if not resp.is_success:
+        _log.warning("Bitrix %s: HTTP %s %s", method, resp.status_code, resp.text[:200])
         return None
     data = resp.json()
     if "error" in data:
+        _log.warning("Bitrix %s: %s", method, data)
         return None
-    result = data.get("result") or {}
-    return result.get("TITLE")
+    return data.get("result")
 
 
-async def list_deal_titles(start: int = 0) -> tuple[dict[str, str], int | None]:
-    """Одна страница сделок CRM (ID -> TITLE) через crm.deal.list — для разового
-    импорта уже существующих сделок (app/cli.py import-bitrix-deals). Возвращает
-    (страница, next) — next передаётся в следующий вызов как start, None — сделок больше нет."""
+async def get_deal(deal_id: str) -> dict | None:
+    """Сделка CRM целиком (crm.deal.get) — событие ONCRMDEALADD/ONCRMDEALUPDATE
+    присылает только ID, полей в самом вебхуке нет. Возвращает и стандартные поля
+    (TITLE, COMPANY_ID, CONTACT_ID), и пользовательские UF_CRM_*. Требует, чтобы у
+    входящего вебхука (BITRIX_WEBHOOK_URL) была включена область "CRM"."""
+    result = await _call("crm.deal.get", {"ID": deal_id})
+    return result if isinstance(result, dict) else None
+
+
+async def get_company_name(company_id: str) -> str | None:
+    """Название компании-заказчика (crm.company.get). У сделки есть только
+    COMPANY_ID, само название — отдельным запросом."""
+    if not company_id or str(company_id) in ("0", "None"):
+        return None
+    result = await _call("crm.company.get", {"ID": company_id})
+    return (result or {}).get("TITLE") if isinstance(result, dict) else None
+
+
+async def get_deal_contact_ids(deal_id: str) -> list[str] | None:
+    """ID всех контактов сделки (crm.deal.contact.items.get) в порядке сортировки.
+    У сделки может быть несколько контактных лиц — CONTACT_ID хранит только основное.
+
+    None — запрос не удался, пустой список — контактов действительно нет. Разница
+    важна: набор контактов синхронизируется с заменой, и при сбое нельзя принять
+    "ничего не пришло" за "контактов больше нет" и стереть их."""
+    result = await _call("crm.deal.contact.items.get", {"id": deal_id})
+    if not isinstance(result, list):
+        return None
+    items = sorted(result, key=lambda r: int(r.get("SORT") or 0))
+    return [str(r["CONTACT_ID"]) for r in items if r.get("CONTACT_ID")]
+
+
+def _multifield_values(raw) -> list[str]:
+    """Телефоны и почты в Bitrix — множественные поля: список словарей вида
+    [{"VALUE": "+375...", "VALUE_TYPE": "WORK"}]. Достаём только значения."""
+    if not isinstance(raw, list):
+        return []
+    return [str(item["VALUE"]) for item in raw if isinstance(item, dict) and item.get("VALUE")]
+
+
+async def get_contact(contact_id: str) -> dict | None:
+    """Контактное лицо (crm.contact.get) — ФИО, должность, телефоны, почты."""
+    result = await _call("crm.contact.get", {"ID": contact_id})
+    if not isinstance(result, dict):
+        return None
+    full_name = " ".join(
+        part for part in (
+            result.get("LAST_NAME"), result.get("NAME"), result.get("SECOND_NAME"),
+        ) if part
+    ).strip()
+    return {
+        "bitrix_contact_id": str(result.get("ID") or contact_id),
+        "full_name": full_name or None,
+        "post": result.get("POST") or None,
+        "phones": _multifield_values(result.get("PHONE")),
+        "emails": _multifield_values(result.get("EMAIL")),
+    }
+
+
+def _deal_select_fields() -> list[str]:
+    """Поля сделки, нужные для карточки проекта. Пользовательские берём из
+    настроек — их коды свои у каждого портала."""
+    fields = ["ID", "TITLE", "COMPANY_ID", "CONTACT_ID"]
+    for setting in (
+        settings.bitrix_field_production_number,
+        settings.bitrix_field_shipment_planned,
+        settings.bitrix_field_shipment_actual,
+    ):
+        fields.extend(code.strip() for code in (setting or "").split(",") if code.strip())
+    return fields
+
+
+async def list_deals(start: int = 0) -> tuple[list[dict], int | None]:
+    """Одна страница сделок CRM через crm.deal.list — для разового импорта уже
+    существующих сделок (app/cli.py import-bitrix-deals). Возвращает (сделки, next):
+    next передаётся в следующий вызов как start, None — сделок больше нет."""
     if not settings.bitrix_webhook_url:
-        return {}, None
+        return [], None
 
     url = f"{settings.bitrix_webhook_url.rstrip('/')}/crm.deal.list.json"
-    resp = await _get_client().post(url, json={"select": ["ID", "TITLE"], "start": start})
+    resp = await _get_client().post(
+        url, json={"select": _deal_select_fields(), "start": start}
+    )
     if not resp.is_success:
         raise RuntimeError(f"Bitrix crm.deal.list {resp.status_code}: {resp.text}")
     data = resp.json()
     if "error" in data:
         raise RuntimeError(f"Bitrix crm.deal.list error: {data}")
 
-    deals = data.get("result") or []
-    page = {str(d["ID"]): d["TITLE"] for d in deals if "ID" in d and "TITLE" in d}
-    return page, data.get("next")
+    deals = [d for d in (data.get("result") or []) if "ID" in d]
+    return deals, data.get("next")
 
 
 async def get_user_name(bitrix_user_id: str) -> str | None:

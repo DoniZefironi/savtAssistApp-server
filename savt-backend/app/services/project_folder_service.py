@@ -52,15 +52,28 @@ def _mirrored_filename(title: str, file_url: str | None) -> str:
     return sanitize_folder_name(title) + ext
 
 
-def is_sync_eligible(cabinets: list[Cabinet]) -> bool:
-    """Гарантия проекта = крайняя (MAX) дата окончания гарантии среди его ШУ.
-    Если ни у одного ШУ гарантия ещё не проставлена — синхронизация разрешена
-    (не блокируем свежий проект, которому ещё не привязали ШУ/гарантию)."""
-    ends = [c.warranty_ends_at for c in cabinets if c.warranty_ends_at is not None]
-    if not ends:
+def is_sync_eligible(cabinets: list[Cabinet], project: Project | None = None) -> bool:
+    """Синхронизировать ли папку проекта. Порядок источников гарантии:
+
+    1) project.warranty_ends_at — если администратор её проставил, решает она:
+       это прямой ответ человека, он важнее вычисленного;
+    2) иначе — крайняя (MAX) дата окончания среди гарантий ШУ проекта, как было
+       до появления проектной гарантии;
+    3) если нет ни того, ни другого — синхронизируем (не блокируем свежий проект,
+       которому ещё не привязали ШУ и не заполнили гарантию).
+
+    Пока проектная гарантия не заполнена, поведение ровно прежнее."""
+    deadline = None
+    if project is not None and project.warranty_ends_at is not None:
+        deadline = project.warranty_ends_at
+    else:
+        ends = [c.warranty_ends_at for c in cabinets if c.warranty_ends_at is not None]
+        if ends:
+            deadline = max(ends)
+
+    if deadline is None:
         return True
-    latest = max(ends)
-    return latest + timedelta(days=_GRACE_DAYS) >= datetime.now(timezone.utc)
+    return deadline + timedelta(days=_GRACE_DAYS) >= datetime.now(timezone.utc)
 
 
 async def _parent_root_path(project: Project, project_repo: ProjectRepository) -> Path:
@@ -165,7 +178,7 @@ async def sync_all_project_folders() -> None:
         projects = await project_repo.list_all_active()
         for project in projects:
             cabinets = await cabinet_repo.list_by_project(project.id)
-            if not is_sync_eligible(cabinets):
+            if not is_sync_eligible(cabinets, project):
                 continue
             try:
                 await sync_project_folder(session, project)

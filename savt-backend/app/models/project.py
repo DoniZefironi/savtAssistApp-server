@@ -26,6 +26,24 @@ class Project(Base):
     parent_project_id: Mapped[int | None] = mapped_column(
         ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # --- из карточки сделки Bitrix, перезаписывается на каждом ONCRMDEALUPDATE ---
+    # В админке доступны только для чтения: правки всё равно затрутся при следующем
+    # изменении сделки, а расхождение с CRM хуже, чем невозможность поправить.
+    shipment_planned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    shipment_actual_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    bitrix_company_id: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    company_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # --- наше, Bitrix не трогает ---
+    # Поля гарантии в CRM нет, даты ставит администратор. По warranty_ends_at
+    # отбираются проекты для ночной синхронизации папок на NAS: если она задана,
+    # решает она, иначе — как раньше, максимум по гарантиям ШУ проекта
+    # (см. project_folder_service.is_sync_eligible).
+    warranty_starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    warranty_ends_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+
     # санитизированное имя папки на NAS, реально использованное при последнем
     # создании/переименовании — по нему определяем, разошлось ли name с папкой на диске
     folder_name: Mapped[str | None] = mapped_column(String(160), nullable=True)

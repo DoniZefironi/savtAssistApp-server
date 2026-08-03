@@ -38,6 +38,7 @@ async def _create_staff(login: str, password: str, full_name: str | None, role_n
 
 
 async def _import_bitrix_deals() -> None:
+    from app.config import settings
     from app.services import bitrix_service
     from app.services.bitrix_webhook_service import upsert_project_from_deal
 
@@ -45,9 +46,9 @@ async def _import_bitrix_deals() -> None:
     start: int | None = 0
     async with AsyncSessionLocal() as session:
         while start is not None:
-            page, start = await bitrix_service.list_deal_titles(start)
-            for _deal_id, title in page.items():
-                project, was_created = await upsert_project_from_deal(session, title)
+            page, start = await bitrix_service.list_deals(start)
+            for deal in page:
+                project, was_created = await upsert_project_from_deal(session, deal)
                 if project is None:
                     skipped += 1
                 elif was_created:
@@ -55,7 +56,12 @@ async def _import_bitrix_deals() -> None:
                 else:
                     updated += 1
 
-    print(f"Готово: создано {created}, обновлено {updated}, пропущено (номер не найден в названии) {skipped}")
+    print(f"Готово: создано {created}, обновлено {updated}, пропущено (номер не определился) {skipped}")
+    if not settings.bitrix_production_years:
+        print(
+            "BITRIX_PRODUCTION_YEARS пуст — импортированы сделки за все годы. "
+            "Чтобы взять только нужные, укажите, например, 25,26,27 и запустите заново."
+        )
 
 
 def main():

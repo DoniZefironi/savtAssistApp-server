@@ -27,8 +27,15 @@ class Document(Base):
     file_size_bytes: Mapped[int] = mapped_column(BigInteger)
     # миме-тип
     mime_type: Mapped[str] = mapped_column(String(100))
-    # требуется ли разрешение на доступ
+    # требуется ли разрешение на доступ: документ виден в списке, скачивание — по заявке
     requires_approval: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", index=True
+    )
+    # Служебный документ — виден только операторам и админам. В отличие от
+    # requires_approval пользователю не показывается вовсе, даже названием, и
+    # запросить доступ нельзя. Для счетов и договоров: проект добавляется по
+    # QR-коду, то есть его участником может стать посторонний.
+    is_internal: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", index=True
     )
     # номер версии
