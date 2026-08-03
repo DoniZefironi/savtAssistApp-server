@@ -35,6 +35,12 @@ TEMPLATE_SUBFOLDERS = [
     "Переписка",
 ]
 
+_CHAT_TITLES = {
+    "project": "Чат проекта",
+    "cabinet": "Чат ШУ",
+    "support": "Чат поддержки",
+}
+
 _QR_FILENAME = "QR.png"
 _INVALID_CHARS_RE = re.compile(r'[\\/:*?"<>|]')
 # Синхронизация продолжается ещё столько дней после истечения гарантии — если
@@ -165,8 +171,170 @@ async def sync_project_folder(session: AsyncSession, project: Project) -> None:
 
     await import_new_files_from_nas(session, project, root, docs)
 
+    # Уровень проекта: его собственные фото и переписка
+    await export_photos(session, root, project_id=project.id)
+    await export_chats(session, root, project_id=project.id)
+
+    # Уровень ШУ: у каждого шкафа проекта своя папка с тем же шаблоном
+    for cabinet in await CabinetRepository(session).list_by_project(project.id):
+        cabinet_root = root / _cabinet_folder_name(cabinet)
+        await _ensure_structure(cabinet_root)
+        await export_photos(session, cabinet_root, cabinet_id=cabinet.id)
+        await export_chats(session, cabinet_root, cabinet_id=cabinet.id)
+
     project.folder_synced_at = datetime.now(timezone.utc)
     await session.commit()
+
+
+def _cabinet_folder_name(cabinet: Cabinet) -> str:
+    """Папка ШУ внутри папки проекта: "29_099 ШУ-18К" либо просто номер объекта."""
+    parts = [cabinet.object_number or f"ШУ-{cabinet.id}"]
+    if cabinet.admin_internal_name:
+        parts.append(cabinet.admin_internal_name)
+    return sanitize_folder_name(" ".join(parts))
+
+
+async def export_photos(
+    session: AsyncSession, root: Path, *,
+    cabinet_id: int | None = None, project_id: int | None = None,
+) -> int:
+    """Раскладывает фотографии в подпапку «Фото». Уже скопированные пропускает —
+    файл на NAS не перезаписывается, чтобы не трогать то, что могли переименовать
+    или дополнить вручную."""
+    from app.models.cabinet_photo import CabinetPhoto
+    from sqlalchemy import select
+
+    stmt = select(CabinetPhoto).order_by(CabinetPhoto.sort_order, CabinetPhoto.id)
+    stmt = stmt.where(
+        CabinetPhoto.project_id == project_id if project_id is not None
+        else CabinetPhoto.cabinet_id == cabinet_id
+    )
+    photos = list((await session.execute(stmt)).scalars().all())
+    if not photos:
+        return 0
+
+    dest_dir = root / "Фото"
+    await asyncio.to_thread(dest_dir.mkdir, parents=True, exist_ok=True)
+
+    copied = 0
+    for index, photo in enumerate(photos, start=1):
+        src = UPLOAD_ROOT / (photo.url or "").removeprefix("/static/")
+        if not await asyncio.to_thread(src.is_file):
+            continue
+        # Номер в начале удерживает порядок сортировки в проводнике
+        stem = sanitize_folder_name(photo.caption) if photo.caption else f"Фото {index}"
+        dest = dest_dir / f"{index:03d} {stem}{src.suffix}"
+        if await asyncio.to_thread(dest.exists):
+            continue
+        try:
+            await asyncio.to_thread(shutil.copyfile, src, dest)
+            copied += 1
+        except OSError:
+            logger.exception("Не удалось скопировать фото %s в %s", photo.id, dest)
+    return copied
+
+
+def _format_message(msg, sender_name: str | None, attachments: list) -> str:
+    stamp = msg.created_at.strftime("%d.%m.%Y %H:%M") if msg.created_at else "—"
+    author = sender_name or "—"
+    if msg.deleted_at:
+        return f"[{stamp}] {author}: (сообщение удалено)"
+
+    lines = [f"[{stamp}] {author}: {msg.text or ''}".rstrip()]
+    for att in attachments:
+        if att.attachment_type == "location":
+            lines.append(f"    [геолокация: {att.latitude}, {att.longitude}]")
+        else:
+            lines.append(f"    [вложение: {att.file_name or 'без имени'}]")
+    return "\n".join(lines)
+
+
+async def export_chats(
+    session: AsyncSession, root: Path, *,
+    cabinet_id: int | None = None, project_id: int | None = None,
+) -> int:
+    """Выгружает переписку в подпапку «Переписка»: по файлу на чат, вложения —
+    в «Переписка/вложения» рядом.
+
+    Стенограммы перезаписываются на каждой сверке: переписка растёт, и дописывать
+    хвост было бы сложнее и ненадёжнее, чем просто собрать файл заново. Вложения
+    наоборот копируются один раз — они неизменны."""
+    from app.models.chat import Chat
+    from app.models.message import Message
+    from app.models.message_attchment import MessageAttachment
+    from app.models.user import User
+    from sqlalchemy import select
+
+    stmt = select(Chat).where(
+        Chat.project_id == project_id if project_id is not None
+        else Chat.cabinet_id == cabinet_id
+    )
+    chats = list((await session.execute(stmt)).scalars().all())
+    if not chats:
+        return 0
+
+    dest_dir = root / "Переписка"
+    att_dir = dest_dir / "вложения"
+    await asyncio.to_thread(dest_dir.mkdir, parents=True, exist_ok=True)
+
+    exported = 0
+    for chat in chats:
+        rows = (await session.execute(
+            select(Message, User)
+            .outerjoin(User, User.id == Message.sender_id)
+            .where(Message.chat_id == chat.id)
+            .order_by(Message.id)
+        )).all()
+        if not rows:
+            continue
+
+        msg_ids = [m.id for m, _ in rows]
+        atts_by_msg: dict[int, list] = {mid: [] for mid in msg_ids}
+        for att in (await session.execute(
+            select(MessageAttachment).where(MessageAttachment.message_id.in_(msg_ids))
+        )).scalars().all():
+            atts_by_msg[att.message_id].append(att)
+
+        owner = await session.get(User, chat.user_id)
+        owner_name = (owner.full_name or owner.phone or f"id{chat.user_id}") if owner else f"id{chat.user_id}"
+        title = _CHAT_TITLES.get(chat.chat_type, "Чат")
+        if chat.chat_type == "service_request" and chat.service_request_id:
+            title = f"Заявка {chat.service_request_id}"
+
+        header = [
+            f"{title} — {owner_name}",
+            f"Выгружено: {datetime.now(timezone.utc).strftime('%d.%m.%Y %H:%M')} UTC",
+            "",
+        ]
+        body = [_format_message(m, u.full_name if u else None, atts_by_msg[m.id]) for m, u in rows]
+
+        dest = dest_dir / f"{sanitize_folder_name(f'{title} — {owner_name}')}.txt"
+        try:
+            await asyncio.to_thread(dest.write_text, "\n".join(header + body), "utf-8")
+            exported += 1
+        except OSError:
+            logger.exception("Не удалось записать стенограмму чата %s", chat.id)
+            continue
+
+        # Вложения кладём рядом, с id сообщения в имени — иначе одноимённые
+        # файлы из разных сообщений затирали бы друг друга
+        for mid in msg_ids:
+            for att in atts_by_msg[mid]:
+                if not att.file_url:
+                    continue
+                src = UPLOAD_ROOT / att.file_url.removeprefix("/static/")
+                if not await asyncio.to_thread(src.is_file):
+                    continue
+                name = sanitize_folder_name(att.file_name or src.name)
+                att_dest = att_dir / f"{mid}_{name}"
+                if await asyncio.to_thread(att_dest.exists):
+                    continue
+                await asyncio.to_thread(att_dir.mkdir, parents=True, exist_ok=True)
+                try:
+                    await asyncio.to_thread(shutil.copyfile, src, att_dest)
+                except OSError:
+                    logger.exception("Не удалось скопировать вложение %s", att.id)
+    return exported
 
 
 async def import_new_files_from_nas(
@@ -275,6 +443,31 @@ def schedule_folder_sync(project_id: int) -> None:
                 await sync_project_folder(session, project)
             except Exception:
                 logger.exception("Не удалось синхронизировать папку проекта %s", project_id)
+    asyncio.create_task(_task())
+
+
+def schedule_cabinet_folder(cabinet_id: int) -> None:
+    """Папка ШУ внутри папки проекта — с тем же шаблоном подпапок.
+
+    При отвязке или переносе ШУ в другой проект старая папка НЕ переносится и не
+    удаляется: в ней могут лежать файлы, положенные людьми вручную. Новая просто
+    создаётся на новом месте, старую при необходимости переносят руками — так же,
+    как со сменой родителя у проекта."""
+    async def _task():
+        if not settings.project_folders_root:
+            return
+        async with AsyncSessionLocal() as session:
+            cabinet = await CabinetRepository(session).get_by_id(cabinet_id)
+            if cabinet is None or cabinet.project_id is None:
+                return
+            project = await ProjectRepository(session).get_by_id(cabinet.project_id)
+            if project is None:
+                return
+            try:
+                root = await _project_root_path(project, ProjectRepository(session))
+                await _ensure_structure(root / _cabinet_folder_name(cabinet))
+            except Exception:
+                logger.exception("Не удалось создать папку ШУ %s на NAS", cabinet_id)
     asyncio.create_task(_task())
 
 

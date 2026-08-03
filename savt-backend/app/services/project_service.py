@@ -249,6 +249,11 @@ class ProjectService:
 
         await self.session.commit()
 
+        # Папка ШУ внутри папки проекта — с тем же шаблоном подпапок
+        if data.project_id is not None:
+            from app.services import project_folder_service
+            project_folder_service.schedule_cabinet_folder(cabinet_id)
+
         if created_chats:
             from app.services.chat_service import chat_summary_dict
             from app.services.realtime_events import publish_chat_created
