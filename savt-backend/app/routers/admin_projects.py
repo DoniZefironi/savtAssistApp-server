@@ -18,6 +18,19 @@ from app.services.project_service import ProjectService
 
 router = APIRouter(prefix="/admin/projects", tags=["admin: projects"])
 
+# Синхронизировать папку проекта на NAS прямо сейчас — то же, что делает ночной
+# прогон, но по кнопке. Нужно, когда файл положили в папку напрямую и ждать
+# ночи не хочется. Ограничение по гарантии здесь не применяется: раз админ
+# нажал кнопку осознанно, синхронизируем даже просроченный проект.
+@router.post("/{project_id}/sync-folder")
+async def sync_project_folder_now(
+    project_id: int,
+    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    session: AsyncSession = Depends(get_session),
+):
+    return await ProjectService(session).sync_folder_now(project_id)
+
+
 # Создать проект
 @router.post("", response_model=ProjectOut, status_code=status.HTTP_201_CREATED)
 async def create_project(

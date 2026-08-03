@@ -135,6 +135,43 @@ async def save_voice(file: UploadFile) -> str:
     return url
 
 
+def save_local_file(source: Path) -> FileInfo:
+    """Кладёт в /uploads файл, уже лежащий на диске, и отдаёт те же метаданные,
+    что и загрузка через HTTP. Используется обратной синхронизацией папок проекта:
+    файл положили прямо в папку на NAS, а приложению нужна своя копия — источник
+    истины для скачивания через API остаётся /uploads.
+
+    Синхронная (shutil.copyfile) — вызывается из asyncio.to_thread."""
+    import mimetypes
+    import shutil
+
+    mime = mimetypes.guess_type(source.name)[0] or "application/octet-stream"
+    if mime in _ATTACHMENT_TYPES:
+        folder, ext = _ATTACHMENT_TYPES[mime]
+    elif mime.startswith("image/"):
+        folder, ext = "photos", mime.split("/", 1)[1]
+    elif mime.startswith("video/"):
+        folder, ext = "videos", mime.split("/", 1)[1]
+    elif mime.startswith("audio/"):
+        folder, ext = "voices", mime.split("/", 1)[1]
+    else:
+        folder = "files"
+        ext = source.suffix.lstrip(".") or "bin"
+
+    filename = f"{uuid.uuid4().hex}.{_sanitize_ext(ext)}"
+    dest_dir = UPLOAD_ROOT / folder
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / filename
+    shutil.copyfile(source, dest)
+
+    return FileInfo(
+        url=f"/static/{folder}/{filename}",
+        file_size_bytes=dest.stat().st_size,
+        mime_type=mime,
+        doc_type=_MIME_TO_DOC_TYPE.get(mime, "other"),
+    )
+
+
 _CHUNK_SIZE = 1024 * 1024  # 1 МБ
 
 

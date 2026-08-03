@@ -98,6 +98,36 @@ class ProjectService:
             updated_at=project.updated_at,
         )
 
+    # Синхронизация папки проекта по кнопке. В отличие от ночного прогона
+    # выполняется синхронно (админ ждёт результат) и без отбора по гарантии —
+    # явное действие человека всегда срабатывает.
+    async def sync_folder_now(self, project_id: int) -> dict:
+        from app.config import settings
+        from app.services import project_folder_service
+
+        project = await self.repo.get_by_id(project_id)
+        if project is None or project.deleted_at is not None:
+            raise NotFoundError("Проект не найден")
+        if not settings.project_folders_root:
+            raise NotFoundError("Синхронизация папок не настроена (PROJECT_FOLDERS_ROOT)")
+
+        from app.repositories.document import DocumentRepository
+        doc_repo = DocumentRepository(self.session)
+
+        docs_before, _ = await doc_repo.list_admin(project_id=project_id, limit=10_000)
+        await project_folder_service.sync_project_folder(self.session, project)
+        docs_after, _ = await doc_repo.list_admin(project_id=project_id, limit=10_000)
+
+        imported = len(docs_after) - len(docs_before)
+        return {
+            "synced_at": project.folder_synced_at,
+            "imported_documents": max(imported, 0),
+            "message": (
+                f"Подхвачено новых файлов из папки: {imported}" if imported > 0
+                else "Папка синхронизирована, новых файлов не найдено"
+            ),
+        }
+
     # Обновление проекта
     async def update(self, project_id: int, data: ProjectUpdateIn, actor_id: int, actor_role: str) -> ProjectOut:
         project = await self.repo.get_by_id(project_id)

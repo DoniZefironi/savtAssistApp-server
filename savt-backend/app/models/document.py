@@ -39,6 +39,12 @@ class Document(Base):
     is_internal: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", index=True
     )
+    # Фактическое имя файла в папке проекта на NAS — заполняется, когда документ
+    # подхвачен обратной синхронизацией (файл положили в папку напрямую).
+    # Без него сверка была бы неустойчивой: имя зеркала вычисляется как
+    # sanitize(title)+расширение, и файл с "неудобными" символами в имени
+    # считался бы новым при каждом прогоне и импортировался заново.
+    nas_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # номер версии
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     # дата создания

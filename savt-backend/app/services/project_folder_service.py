@@ -16,7 +16,7 @@ from app.repositories.cabinet import CabinetRepository
 from app.repositories.document import DocumentRepository
 from app.repositories.project import ProjectRepository
 from app.services.qr_service import generate_qr
-from app.services.upload_service import UPLOAD_ROOT
+from app.services.upload_service import UPLOAD_ROOT, save_local_file
 
 logger = logging.getLogger(__name__)
 
@@ -163,8 +163,69 @@ async def sync_project_folder(session: AsyncSession, project: Project) -> None:
         if not await asyncio.to_thread(dest.exists):
             await mirror_document_to_nas(root, doc)
 
+    await import_new_files_from_nas(session, project, root, docs)
+
     project.folder_synced_at = datetime.now(timezone.utc)
     await session.commit()
+
+
+async def import_new_files_from_nas(
+    session: AsyncSession, project: Project, root: Path, known_docs: list[Document],
+) -> int:
+    """Обратное направление: файл положили в папку проекта напрямую — заводим
+    на него документ в приложении. Возвращает число подхваченных файлов.
+
+    Сканируется только корень папки проекта: именно туда кладёт зеркалирование,
+    и именно там человек оставляет файл «чтобы появился в приложении». Вложенные
+    папки шаблона (_Проект, _Программа, Фото и т.п.) не трогаем — файлы там
+    разложены осмысленно, и сваливать их в плоский список документов означало бы
+    потерять эту структуру."""
+    if not settings.project_folders_root:
+        return 0
+
+    # Имя зеркала для документов, загруженных через приложение, плюс фактическое
+    # имя для тех, что уже были подхвачены отсюда раньше
+    known_names = {_mirrored_filename(d.title, d.file_url) for d in known_docs}
+    known_names |= {d.nas_filename for d in known_docs if d.nas_filename}
+
+    try:
+        entries = await asyncio.to_thread(lambda: sorted(root.iterdir(), key=lambda p: p.name))
+    except OSError:
+        logger.exception("Не удалось прочитать папку проекта %s", project.id)
+        return 0
+
+    doc_repo = DocumentRepository(session)
+    imported = 0
+    for entry in entries:
+        if await asyncio.to_thread(entry.is_dir):
+            continue
+        if entry.name in known_names or entry.name.startswith("~$"):
+            continue
+        try:
+            info = await asyncio.to_thread(save_local_file, entry)
+        except OSError:
+            logger.exception("Не удалось скопировать %s в uploads", entry)
+            continue
+
+        await doc_repo.create(
+            project_id=project.id,
+            cabinet_id=None,
+            title=entry.stem or entry.name,
+            doc_type=info.doc_type,
+            file_url=info.url,
+            file_size_bytes=info.file_size_bytes,
+            mime_type=info.mime_type,
+            requires_approval=False,
+            # Запоминаем имя как оно есть на диске — иначе следующая сверка
+            # снова сочтёт файл новым (см. комментарий у Document.nas_filename)
+            nas_filename=entry.name,
+        )
+        imported += 1
+        logger.info("Подхвачен файл из папки проекта %s: %s", project.id, entry.name)
+
+    if imported:
+        await session.commit()
+    return imported
 
 
 async def sync_all_project_folders() -> None:
