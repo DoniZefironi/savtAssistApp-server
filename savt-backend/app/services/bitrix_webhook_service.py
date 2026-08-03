@@ -27,12 +27,19 @@ def _first_filled(deal: dict, codes: str):
     """Первое непустое значение среди перечисленных через запятую полей.
 
     Нужно для фактической даты отгрузки: в портале живут два поля сразу (старое и
-    новое), и пока идёт переезд часть сделок заполнена по-старому, часть по-новому."""
+    новое), и пока идёт переезд часть сделок заполнена по-старому, часть по-новому.
+
+    Часть полей объявлена множественными и приходит списком (пустое значение у них
+    не "", а []) — берём первый элемент. Без этого дата из множественного поля
+    молча не разбиралась бы: на вход парсеру уходил бы список, а не строка."""
     for code in (c.strip() for c in (codes or "").split(",")):
-        if code:
-            value = deal.get(code)
-            if value not in (None, "", [], False):
-                return value
+        if not code:
+            continue
+        value = deal.get(code)
+        if isinstance(value, list):
+            value = value[0] if value else None
+        if value not in (None, "", False):
+            return value
     return None
 
 
