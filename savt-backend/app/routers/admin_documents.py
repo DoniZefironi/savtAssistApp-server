@@ -46,6 +46,8 @@ async def create_document(
     project_id: str | None = Form(None),
     title: str | None = Form(None),
     requires_approval: bool = Form(False),
+    # служебный документ (счёт, договор) — пользователям не показывается вовсе
+    is_internal: bool = Form(False),
     actor: User = Depends(require_role(RoleName.ADMIN)),
     actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
@@ -64,6 +66,7 @@ async def create_document(
         project_id=int(project_id) if project_id else None,
         title=title.strip() or None if title else None,
         requires_approval=requires_approval,
+        is_internal=is_internal,
         actor_id=actor.id,
         actor_role=actor_role,
     )

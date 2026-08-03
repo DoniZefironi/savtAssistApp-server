@@ -132,7 +132,11 @@ class DocumentRepository:
         # пользователь вообще знал об их существовании и мог запросить
         # доступ) — file_url для них скрывается на уровне сервиса
         # (UserDocumentService.list_documents), а не здесь.
-        conditions = [scope]
+        #
+        # А вот is_internal отсекается прямо здесь: служебный документ не должен
+        # быть виден пользователю вообще, даже названием в списке. Это и есть
+        # разница между двумя флагами.
+        conditions = [scope, Document.is_internal.is_(False)]
         if tag_ids:
             tag_subq = (
                 select(DocumentTag.document_id)

@@ -41,6 +41,7 @@ class AdminDocumentService:
         project_id: int | None,
         title: str | None,
         requires_approval: bool,
+        is_internal: bool = False,
         actor_id: int = 0,
         actor_role: str = "admin",
     ) -> DocumentOut:
@@ -54,6 +55,7 @@ class AdminDocumentService:
             file_size_bytes=info.file_size_bytes,
             mime_type=info.mime_type,
             requires_approval=requires_approval,
+            is_internal=is_internal,
         )
         await self.session.flush()
         self.audit.log("document.create", "document", doc.id, actor_id, actor_role,
@@ -323,7 +325,9 @@ class UserDocumentService:
 
     async def get_file_path(self, user_id: int, doc_id: int) -> tuple[Path, str, str]:
         doc = await self.doc_repo.get_by_id(doc_id)
-        if doc is None:
+        # Служебный документ пользователю не показывается вовсе — отвечаем как на
+        # несуществующий, чтобы по коду ответа нельзя было узнать, что он есть
+        if doc is None or doc.is_internal:
             raise NotFoundError("Документ не найден")
         if doc.requires_approval and not await self.doc_repo.has_access(user_id, doc_id):
             raise PermissionDeniedError("Нет доступа к этому документу")
@@ -347,7 +351,8 @@ class UserDocumentService:
         self, user_id: int, doc_id: int, user_message: str | None
     ) -> int:
         doc = await self.doc_repo.get_by_id(doc_id)
-        if doc is None:
+        # Служебный документ пользователю не виден, запрашивать к нему доступ нельзя
+        if doc is None or doc.is_internal:
             raise NotFoundError("Документ не найден")
         if not doc.requires_approval:
             raise AlreadyExistsError("Документ доступен без запроса")

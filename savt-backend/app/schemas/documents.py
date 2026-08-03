@@ -16,6 +16,7 @@ class DocumentOut(BaseModel):
     file_size_bytes: int
     mime_type: str
     requires_approval: bool
+    is_internal: bool = False
     version: int
     tags: list[TagOut] = []
     created_at: datetime

@@ -7,7 +7,8 @@
 
 documents.is_internal — документ, видимый только операторам и админам. В отличие
 от requires_approval, где документ виден в списке и доступ можно запросить, этот
-не показывается пользователям вовсе: нужен для счетов и договоров.
+не показывается пользователям вовсе — ни в списке, ни названием. Для счетов,
+договоров и прочей внутренней документации.
 
 Revision ID: 229b04d4a392
 Revises: 9edabb9982eb
@@ -58,7 +59,7 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_project_contacts_project_id"), "project_contacts", ["project_id"])
 
-    # --- служебные документы (счёт/договор) ---
+    # --- служебные документы, видимые только сотрудникам ---
     op.add_column(
         "documents",
         sa.Column("is_internal", sa.Boolean(), nullable=False, server_default="false"),
