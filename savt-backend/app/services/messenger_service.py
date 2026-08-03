@@ -33,9 +33,19 @@ def build_deep_link(channel: str, token: str) -> str:
 
 
 async def send_verification_code(channel: str, external_chat_id: str, code: str) -> None:
+    """Шлёт код двумя сообщениями: пояснение отдельно, сам код отдельно.
+
+    Одним сообщением код приходилось выделять из строки текста — на телефоне это
+    неудобно. Отдельным сообщением он копируется долгим тапом целиком."""
     if channel != CHANNEL_TELEGRAM:
         raise ValueError(f"Неизвестный канал доставки: {channel}")
-    await _send_telegram(external_chat_id, f"Код подтверждения SAVT Assist: {code}")
+    await _send_telegram(
+        external_chat_id,
+        "Вот код подтверждения SAVT Assist:",
+        # Заодно убираем кнопку «Отправить мой номер» — она уже отработала
+        reply_markup={"remove_keyboard": True},
+    )
+    await _send_telegram(external_chat_id, code)
 
 
 # Просит поделиться номером. Telegram подставит в контакт номер, который сам
