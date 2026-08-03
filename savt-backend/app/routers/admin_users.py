@@ -141,6 +141,19 @@ async def create_admin_short(
     return await AdminUserService(session).create_admin(payload, actor.id, actor_role)
 
 
+# Удалить администратора — только суперадмин.
+# Учётка не стирается, а деактивируется и обезличивается: на неё ссылаются
+# журнал действий и обработанные заявки.
+@router.delete("/admin/admins/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_admin(
+    user_id: int,
+    actor: User = Depends(require_role(RoleName.SUPERADMIN)),
+    actor_role: str = Depends(get_role_from_token),
+    session: AsyncSession = Depends(get_session),
+):
+    await AdminUserService(session).delete_admin(user_id, actor.id, actor_role)
+
+
 # Детальная карточка администратора — ДОЛЖЕН быть ПОСЛЕ /admin/admins (без параметра)
 @router.get("/admin/admins/{user_id}", response_model=AdminUserDetailOut)
 async def get_admin(

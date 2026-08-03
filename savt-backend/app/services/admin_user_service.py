@@ -229,6 +229,45 @@ class AdminUserService:
         await self._log(actor_id, actor_role, "user.delete_operator", "user", user_id, {})
         await self.session.commit()
 
+    # Удаление администратора — только суперадмин (роль проверяется в роутере).
+    # Механика та же, что у операторов: сессии отзываются, учётка деактивируется
+    # и обезличивается, а не стирается из БД — на неё ссылаются журнал действий
+    # и обработанные заявки (resolved_by_admin_id).
+    async def delete_admin(self, user_id: int, actor_id: int, actor_role: str) -> None:
+        from datetime import datetime, timezone
+        from sqlalchemy import update
+        from app.models.role import Role
+        from app.models.refresh_token import RefreshToken
+        from app.core.exceptions import PermissionDeniedError
+
+        if user_id == actor_id:
+            raise PermissionDeniedError("Нельзя удалить собственную учётную запись")
+
+        user = await self.user_repo.get_by_id(user_id)
+        if user is None:
+            raise NotFoundError("Пользователь не найден")
+
+        role = await self.session.get(Role, user.role_id)
+        # Суперадминов этим эндпоинтом не удаляем: их заводит только CLI, и
+        # взаимное удаление суперадминов легко оставило бы систему без владельца
+        if role is None or role.name != "admin":
+            raise PermissionDeniedError("Можно удалять только администраторов")
+
+        await self.session.execute(
+            update(RefreshToken)
+            .where(RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None))
+            .values(revoked_at=datetime.now(timezone.utc))
+        )
+
+        user.is_active = False
+        user.login = f"_deleted_{user_id}"
+        user.hashed_password = "DELETED"
+        user.full_name = None
+        user.email = None
+
+        await self._log(actor_id, actor_role, "user.delete_admin", "user", user_id, {})
+        await self.session.commit()
+
     # Бан пользователя
     async def ban_user(self, user_id: int, reason: str, actor_id: int, actor_role: str) -> None:
         user = await self.user_repo.get_by_id(user_id)

@@ -6,6 +6,7 @@ from sqlalchemy import cast, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.core.constants import BOT_USER_LOGIN as _BOT_USER_LOGIN
 from app.models.chat import Chat
 from app.models.embedding import Embedding
 from app.models.message import Message
@@ -13,7 +14,6 @@ from app.services import yandex_service
 from app.services.chat_service import chat_summary_dict
 from app.services.realtime_events import publish_chat_updated, publish_message_created
 
-_BOT_USER_LOGIN = "__ася__"
 _BOT_NAME = "Ася"
 
 _SYSTEM_PROMPT = """Ты — помощник Ася, виртуальный ассистент сервисной службы SAVT.

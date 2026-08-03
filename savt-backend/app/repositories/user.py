@@ -2,6 +2,7 @@ from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.role import Role
+from app.core.constants import SYSTEM_USER_LOGINS
 from app.models.user import User
 from app.repositories.base import BaseRepository
 from app.utils.db import fuzzy_condition
@@ -52,6 +53,13 @@ class UserRepository(BaseRepository[User]):
         # NULL login (пользователи по телефону) тоже включаем
         conditions.append(
             or_(User.login.is_(None), ~User.login.ilike("_deleted_%"))
+        )
+        # Служебные учётки бота и интеграции с Bitrix — не сотрудники, управлять
+        # ими нельзя. Пользователь Bitrix заведён с ролью operator (иначе его не
+        # пустит в чаты заявок), поэтому фильтром по роли не отсекается и до сих
+        # пор показывался в списке операторов под именем "Ася".
+        conditions.append(
+            or_(User.login.is_(None), User.login.notin_(SYSTEM_USER_LOGINS))
         )
 
         if query:

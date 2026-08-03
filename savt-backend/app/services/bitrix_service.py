@@ -4,12 +4,12 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.core.constants import BITRIX_USER_LOGIN as _INCOMING_USER_LOGIN
 
 _log = logging.getLogger(__name__)
 
 _client: httpx.AsyncClient | None = None
 
-_INCOMING_USER_LOGIN = "__bitrix__"
 # Отображается в чате как имя отправителя пересланных из Bitrix сообщений —
 # "Ася", чтобы визуально выглядело как ответ бота (сам текст сообщения при
 # этом явно поясняет, что ответ на самом деле от оператора, см. handle_task_comment_webhook)
