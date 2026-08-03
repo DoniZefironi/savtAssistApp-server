@@ -1,4 +1,5 @@
 import hmac
+import html
 import logging
 
 import httpx
@@ -45,7 +46,12 @@ async def send_verification_code(channel: str, external_chat_id: str, code: str)
         # Заодно убираем кнопку «Отправить мой номер» — она уже отработала
         reply_markup={"remove_keyboard": True},
     )
-    await _send_telegram(external_chat_id, code)
+    # Моноширинный блок: в Telegram по нему копируется в один тап.
+    # HTML, а не MarkdownV2 — экранировать нужно всего три символа, а не полтора
+    # десятка, так что разметка не сломается, даже если формат кода поменяется.
+    await _send_telegram(
+        external_chat_id, f"<code>{html.escape(code)}</code>", parse_mode="HTML"
+    )
 
 
 # Просит поделиться номером. Telegram подставит в контакт номер, который сам
@@ -75,7 +81,12 @@ async def send_plain(channel: str, external_chat_id: str, text: str) -> None:
     await _send_telegram(external_chat_id, text, reply_markup={"remove_keyboard": True})
 
 
-async def _send_telegram(chat_id: str, text: str, reply_markup: dict | None = None) -> None:
+async def _send_telegram(
+    chat_id: str,
+    text: str,
+    reply_markup: dict | None = None,
+    parse_mode: str | None = None,
+) -> None:
     # Токен бота не задан — dev-режим, просто логируем (аналог MockSmsProvider)
     if not settings.telegram_bot_token:
         logger.info(f"[MOCK TELEGRAM] chat_id={chat_id}: {text}")
@@ -85,6 +96,10 @@ async def _send_telegram(chat_id: str, text: str, reply_markup: dict | None = No
     payload: dict = {"chat_id": chat_id, "text": text}
     if reply_markup is not None:
         payload["reply_markup"] = reply_markup
+    # Ставится точечно, только там, где разметка действительно нужна: с включённым
+    # parse_mode Telegram отвергнет любое сообщение с неэкранированным спецсимволом
+    if parse_mode is not None:
+        payload["parse_mode"] = parse_mode
 
     url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
     try:
