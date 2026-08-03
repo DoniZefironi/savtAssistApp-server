@@ -80,6 +80,9 @@ class UserProjectService:
             created_chats = await reconcile_cabinet_access(
                 self.session, project.id, [user_id], bypass_request=False,
             )
+            # Чат самого проекта — как чат ШУ при привязке шкафа
+            from app.services.chat_service import ChatService
+            created_chats.append(await ChatService(self.session).ensure_project_chat(user_id, project.id))
             await self.session.commit()
             if created_chats:
                 from app.services.chat_service import chat_summary_dict

@@ -58,6 +58,23 @@ class ChatService:
             existing = await self.chat_repo.create(user_id, "cabinet", cabinet_id)
         return existing
 
+    # Чат проекта — по одному на пару пользователь + проект, наравне с чатом ШУ
+    async def ensure_project_chat(self, user_id: int, project_id: int) -> Chat:
+        existing = await self.chat_repo.find(user_id, "project", project_id=project_id)
+        if existing is None:
+            existing = await self.chat_repo.create(user_id, "project", project_id=project_id)
+        return existing
+
+    async def get_project_chat(self, user_id: int, project_id: int) -> ChatOut:
+        from app.repositories.project import UserProjectRepository
+        if not await UserProjectRepository(self.session).find(user_id, project_id):
+            raise PermissionDeniedError("У вас нет доступа к этому проекту")
+        chat = await self.chat_repo.find(user_id, "project", project_id=project_id)
+        if chat is None:
+            chat = await self.chat_repo.create(user_id, "project", project_id=project_id)
+            await self.session.commit()
+        return _to_chat_out(chat)
+
     # Чат заявки на обслуживание — один на заявку, привязан к тому же ШУ
     # (для отображения контекста в списке чатов), видим и пользователю, и операторам
     async def ensure_service_request_chat(
@@ -101,6 +118,12 @@ class ChatService:
                     cabinet_name = cab.admin_internal_name or cab.object_number
                     cabinet_object_number = cab.object_number
 
+            project_name = None
+            if chat.project_id:
+                from app.repositories.project import ProjectRepository
+                proj = await ProjectRepository(self.session).get_by_id(chat.project_id)
+                project_name = proj.name if proj else None
+
             last_text = None
             msgs = await self.msg_repo.get_messages(chat.id, limit=1)
             if msgs:
@@ -115,6 +138,8 @@ class ChatService:
                 cabinet_id=chat.cabinet_id,
                 cabinet_name=cabinet_name,
                 cabinet_object_number=cabinet_object_number,
+                project_id=chat.project_id,
+                project_name=project_name,
                 last_message_text=last_text,
                 last_message_at=chat.last_message_at,
                 unread_count=unread,
@@ -138,14 +163,14 @@ class ChatService:
         if not rows:
             return []
 
-        chat_ids = [chat.id for chat, _, _ in rows]
+        chat_ids = [chat.id for chat, _, _, _ in rows]
         unread_counts = await self.chat_repo.get_unread_counts_batch(chat_ids, operator_id)
         last_msgs = await self.msg_repo.get_last_messages_batch(chat_ids)
-        sr_ids = [chat.service_request_id for chat, _, _ in rows if chat.service_request_id is not None]
+        sr_ids = [chat.service_request_id for chat, _, _, _ in rows if chat.service_request_id is not None]
         sr_map = await self._get_service_requests(sr_ids)
 
         result = []
-        for chat, user, cabinet in rows:
+        for chat, user, cabinet, project in rows:
             cabinet_name = None
             cabinet_object_number = None
             if cabinet:
@@ -162,6 +187,8 @@ class ChatService:
                 cabinet_id=chat.cabinet_id,
                 cabinet_name=cabinet_name,
                 cabinet_object_number=cabinet_object_number,
+                project_id=chat.project_id,
+                project_name=project.name if project else None,
                 user_id=chat.user_id,
                 user_name=user.full_name if user else None,
                 last_message_text=last_text,
@@ -640,6 +667,7 @@ def chat_summary_dict(chat: Chat, last_text: str | None = None, user_name: str |
         "id": chat.id,
         "chat_type": chat.chat_type,
         "cabinet_id": chat.cabinet_id,
+        "project_id": chat.project_id,
         "service_request_id": chat.service_request_id,
         "user_id": chat.user_id,
         "user_name": user_name,
@@ -657,6 +685,7 @@ def _to_chat_out(chat: Chat) -> ChatOut:
         id=chat.id,
         chat_type=chat.chat_type,
         cabinet_id=chat.cabinet_id,
+        project_id=chat.project_id,
         service_request_id=chat.service_request_id,
         problem_status=chat.problem_status,
         bot_active=chat.bot_active,

@@ -110,17 +110,26 @@ async def delete_document(
 @router.post("/admin/photos", response_model=PhotoOut, status_code=status.HTTP_201_CREATED)
 async def create_photo(
     file: UploadFile = File(...),
-    cabinet_id: str = Form(...),
+    cabinet_id: str | None = Form(None),
+    project_id: str | None = Form(None),
     caption: str | None = Form(None),
     sort_order: str = Form("0"),
     _: User = Depends(require_role(RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
-    if not cabinet_id or not cabinet_id.strip().isdigit():
-        raise HTTPException(status_code=422, detail="cabinet_id обязателен и должен быть числом")
+    # Фото принадлежит либо ШУ, либо проекту — ровно одно из двух, как у документов
+    cabinet_id = cabinet_id.strip() if cabinet_id else None
+    project_id = project_id.strip() if project_id else None
+    if bool(cabinet_id) == bool(project_id):
+        raise HTTPException(status_code=422, detail="Нужно указать ровно одно из cabinet_id/project_id")
+    if cabinet_id and not cabinet_id.isdigit():
+        raise HTTPException(status_code=422, detail="cabinet_id должен быть числом")
+    if project_id and not project_id.isdigit():
+        raise HTTPException(status_code=422, detail="project_id должен быть числом")
     return await AdminDocumentService(session).create_photo(
         file=file,
-        cabinet_id=int(cabinet_id),
+        cabinet_id=int(cabinet_id) if cabinet_id else None,
+        project_id=int(project_id) if project_id else None,
         caption=caption.strip() or None if caption else None,
         sort_order=int(sort_order) if sort_order and sort_order.strip().lstrip("-").isdigit() else 0,
     )
@@ -129,12 +138,15 @@ async def create_photo(
 @router.get("/admin/photos", response_model=PageOut[PhotoOut])
 async def list_photos(
     cabinet_id: int | None = Query(None),
+    project_id: int | None = Query(None),
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
     _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
-    return await AdminDocumentService(session).list_photos(cabinet_id=cabinet_id, page=page, size=size)
+    return await AdminDocumentService(session).list_photos(
+        cabinet_id=cabinet_id, project_id=project_id, page=page, size=size
+    )
 
 # Изменить подпись
 @router.patch("/admin/photos/{photo_id}", response_model=PhotoOut)

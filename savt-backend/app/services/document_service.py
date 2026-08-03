@@ -122,10 +122,12 @@ class AdminDocumentService:
         cabinet_id: int | None,
         caption: str | None,
         sort_order: int,
+        project_id: int | None = None,
     ) -> PhotoOut:
         info = await save_attachment_with_meta(file)
         photo = await self.photo_repo.create(
             cabinet_id=cabinet_id,
+            project_id=project_id,
             url=info.url,
             caption=caption,
             sort_order=sort_order,
@@ -135,10 +137,12 @@ class AdminDocumentService:
         return PhotoOut.model_validate(photo)
 
     async def list_photos(
-        self, cabinet_id: int | None, page: int = 1, size: int = 50
+        self, cabinet_id: int | None, page: int = 1, size: int = 50,
+        project_id: int | None = None,
     ) -> PageOut[PhotoOut]:
         items, total = await self.photo_repo.list_all(
-            cabinet_id=cabinet_id, offset=(page - 1) * size, limit=size
+            cabinet_id=cabinet_id, project_id=project_id,
+            offset=(page - 1) * size, limit=size,
         )
         return make_page([PhotoOut.model_validate(p) for p in items], total, page, size)
 
@@ -344,6 +348,18 @@ class UserDocumentService:
             raise PermissionDeniedError("У вас нет доступа к этому ШУ")
         items, total = await self.photo_repo.list_all(
             cabinet_id=cabinet_id, offset=(page - 1) * size, limit=size
+        )
+        return make_page([PhotoOut.model_validate(p) for p in items], total, page, size)
+
+    # Фотографии проекта в целом — отдельный список от фото ШУ, как и с документами
+    async def list_project_photos(
+        self, user_id: int, project_id: int, page: int = 1, size: int = 50
+    ) -> PageOut[PhotoOut]:
+        from app.repositories.project import UserProjectRepository
+        if not await UserProjectRepository(self.session).find(user_id, project_id):
+            raise PermissionDeniedError("У вас нет доступа к этому проекту")
+        items, total = await self.photo_repo.list_all(
+            project_id=project_id, offset=(page - 1) * size, limit=size
         )
         return make_page([PhotoOut.model_validate(p) for p in items], total, page, size)
 

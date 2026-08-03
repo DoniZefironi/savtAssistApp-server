@@ -122,6 +122,8 @@ class ChatListOut(BaseModel):
     cabinet_id: int | None
     cabinet_name: str | None
     cabinet_object_number: str | None = None
+    project_id: int | None = None
+    project_name: str | None = None
     user_id: int | None = None
     user_name: str | None = None
     last_message_text: str | None
@@ -151,6 +153,7 @@ class ChatOut(BaseModel):
     id: int
     chat_type: str
     cabinet_id: int | None
+    project_id: int | None = None
     service_request_id: int | None = None
     service_request_type: str | None = None
     service_request_status: str | None = None

@@ -13,7 +13,7 @@ from app.utils.db import escape_like
 
 # Типы чатов, видимые в общих списках/поиске оператора (личные заметки "notes"
 # сюда никогда не входят - это приватное пространство самого пользователя)
-VISIBLE_CHAT_TYPES = ("cabinet", "support", "service_request")
+VISIBLE_CHAT_TYPES = ("cabinet", "support", "service_request", "project")
 
 
 class ChatRepository:
@@ -23,25 +23,33 @@ class ChatRepository:
     async def get_by_id(self, chat_id: int) -> Chat | None:
         return await self.session.get(Chat, chat_id)
 
-    async def find(self, user_id: int, chat_type: str, cabinet_id: int | None = None) -> Chat | None:
+    async def find(
+        self, user_id: int, chat_type: str,
+        cabinet_id: int | None = None, project_id: int | None = None,
+    ) -> Chat | None:
         stmt = select(Chat).where(
             Chat.user_id == user_id,
             Chat.chat_type == chat_type,
         )
-        if cabinet_id is not None:
+        if project_id is not None:
+            stmt = stmt.where(Chat.project_id == project_id)
+        elif cabinet_id is not None:
             stmt = stmt.where(Chat.cabinet_id == cabinet_id)
         else:
-            stmt = stmt.where(Chat.cabinet_id.is_(None))
+            # support и notes — по одному на пользователя, без привязки к объекту
+            stmt = stmt.where(Chat.cabinet_id.is_(None), Chat.project_id.is_(None))
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
     async def create(
         self, user_id: int, chat_type: str, cabinet_id: int | None = None,
-        service_request_id: int | None = None, bot_active: bool = True,
+        service_request_id: int | None = None, project_id: int | None = None,
+        bot_active: bool = True,
     ) -> Chat:
         chat = Chat(
             user_id=user_id, chat_type=chat_type, cabinet_id=cabinet_id,
-            service_request_id=service_request_id, bot_active=bot_active,
+            service_request_id=service_request_id, project_id=project_id,
+            bot_active=bot_active,
         )
         self.session.add(chat)
         await self.session.flush()
@@ -72,10 +80,12 @@ class ChatRepository:
     ) -> list[tuple]:
         from sqlalchemy import or_
         from app.models.cabinets import Cabinet
+        from app.models.project import Project
         stmt = (
-            select(Chat, User, Cabinet)
+            select(Chat, User, Cabinet, Project)
             .outerjoin(User, User.id == Chat.user_id)
             .outerjoin(Cabinet, Cabinet.id == Chat.cabinet_id)
+            .outerjoin(Project, Project.id == Chat.project_id)
             .where(Chat.chat_type.in_(VISIBLE_CHAT_TYPES))
         )
         stmt = stmt.where(Chat.archived_at.isnot(None) if archived else Chat.archived_at.is_(None))
@@ -89,6 +99,7 @@ class ChatRepository:
                 Cabinet.object_number.ilike(pattern, escape="\\"),
                 Cabinet.admin_internal_name.ilike(pattern, escape="\\"),
                 Cabinet.type.ilike(pattern, escape="\\"),
+                Project.name.ilike(pattern, escape="\\"),
             ))
         stmt = stmt.order_by(Chat.operator_requested.desc(), Chat.last_message_at.desc().nullslast())
         result = await self.session.execute(stmt)

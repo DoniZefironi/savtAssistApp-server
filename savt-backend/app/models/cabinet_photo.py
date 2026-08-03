@@ -1,4 +1,4 @@
-from sqlalchemy import String, ForeignKey, Integer, DateTime, func
+from sqlalchemy import CheckConstraint, String, ForeignKey, Integer, DateTime, func
 from datetime import datetime
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -6,11 +6,21 @@ from app.database import Base
 
 
 class CabinetPhoto(Base):
+    """Фотография ШУ или проекта — ровно одна из двух привязок, как у Document.
+
+    Имя таблицы историческое: фото проектов появились позже, а переименование
+    задело бы все существующие запросы ради косметики."""
     __tablename__ = "cabinet_photos"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    # ссылка на ШУ
-    cabinet_id: Mapped[int] = mapped_column(ForeignKey("cabinets.id", ondelete="CASCADE"), index=True)
+    # ссылка на ШУ — ровно одна из cabinet_id/project_id заполнена (см. CHECK ниже)
+    cabinet_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cabinets.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    # ссылка на проект (фотографии проекта в целом, не привязанные к конкретному ШУ)
+    project_id: Mapped[int | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     # юрл изображения
     url: Mapped[str] = mapped_column(String(500))
     # подпись
@@ -24,4 +34,11 @@ class CabinetPhoto(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<CabinetPhoto id={self.id}>"
+        return f"<CabinetPhoto id={self.id} cabinet_id={self.cabinet_id} project_id={self.project_id}>"
+
+    __table_args__ = (
+        CheckConstraint(
+            "(cabinet_id IS NOT NULL) != (project_id IS NOT NULL)",
+            name="ck_photo_cabinet_or_project",
+        ),
+    )

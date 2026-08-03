@@ -207,11 +207,18 @@ class PhotoRepository:
 
     async def list_all(
         self,
-        cabinet_id: int,
+        cabinet_id: int | None = None,
+        project_id: int | None = None,
         offset: int = 0,
         limit: int = 50,
     ) -> tuple[list[CabinetPhoto], int]:
-        conditions = [CabinetPhoto.cabinet_id == cabinet_id]
+        # Фото принадлежат либо ШУ, либо проекту (см. CHECK у модели). Оба
+        # фильтра пустые — выдача без ограничения, для админского списка.
+        conditions = []
+        if project_id is not None:
+            conditions.append(CabinetPhoto.project_id == project_id)
+        elif cabinet_id is not None:
+            conditions.append(CabinetPhoto.cabinet_id == cabinet_id)
 
         count_stmt = select(func.count(CabinetPhoto.id))
         if conditions:

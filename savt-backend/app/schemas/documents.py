@@ -43,7 +43,9 @@ class UserDocumentOut(BaseModel):
 
 class PhotoOut(BaseModel):
     id: int
-    cabinet_id: int
+    # ровно одно из двух заполнено
+    cabinet_id: int | None = None
+    project_id: int | None = None
     url: SignedUrl
     caption: str | None
     sort_order: int

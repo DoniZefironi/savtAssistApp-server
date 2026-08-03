@@ -56,7 +56,7 @@ async def update_global_chat_settings(
 @router.get("/chats", response_model=list[ChatListOut])
 async def list_operator_chats(
     search: str | None = Query(None, min_length=1, max_length=200),
-    chat_type: str | None = Query(None, pattern="^(cabinet|support|service_request)$"),
+    chat_type: str | None = Query(None, pattern="^(cabinet|support|service_request|project)$"),
     archived: bool = Query(False),
     operator: User = Depends(require_role(RoleName.OPERATOR, RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),

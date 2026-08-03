@@ -83,6 +83,19 @@ async def list_cabinet_photos(
     )
 
 
+@router.get("/projects/{project_id}/photos", response_model=PageOut[PhotoOut])
+async def list_project_photos(
+    project_id: int,
+    page: int = Query(1, ge=1),
+    size: int = Query(50, ge=1, le=200),
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await UserDocumentService(session).list_project_photos(
+        user_id=current_user.id, project_id=project_id, page=page, size=size
+    )
+
+
 @router.post("/documents/{doc_id}/request-access", status_code=status.HTTP_201_CREATED)
 async def request_document_access(
     doc_id: int,

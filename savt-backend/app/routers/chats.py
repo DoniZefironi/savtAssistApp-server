@@ -30,7 +30,7 @@ async def update_global_chat_settings(
 # Список чатов пользователя
 @router.get("/chats", response_model=list[ChatListOut])
 async def list_chats(
-    chat_type: str | None = Query(None, pattern="^(cabinet|support|notes|service_request)$"),
+    chat_type: str | None = Query(None, pattern="^(cabinet|support|notes|service_request|project)$"),
     archived: bool = Query(False),
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
@@ -45,6 +45,15 @@ async def get_cabinet_chat(
     session: AsyncSession = Depends(get_session),
 ):
     return await ChatService(session).get_cabinet_chat(current_user.id, cabinet_id)
+
+# Получить/создать чат проекта — то же самое, что чат ШУ, но на уровне проекта
+@router.get("/projects/{project_id}/chat", response_model=ChatOut)
+async def get_project_chat(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    return await ChatService(session).get_project_chat(current_user.id, project_id)
 
 # История
 @router.get("/chats/{chat_id}/messages", response_model=list[MessageOut])

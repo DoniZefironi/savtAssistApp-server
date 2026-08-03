@@ -14,10 +14,15 @@ class Chat(Base):
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
-    # cabinet | support | notes | service_request
+    # cabinet | support | notes | service_request | project
     chat_type: Mapped[str] = mapped_column(String(20), index=True)
     # ид шкафа
     cabinet_id: Mapped[int | None] = mapped_column(ForeignKey("cabinets.id"), index=True)
+    # ид проекта (только для chat_type='project') — проект теперь самостоятельная
+    # сущность со своим чатом, наравне с ШУ
+    project_id: Mapped[int | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
     # ид заявки на обслуживание (только для chat_type='service_request')
     service_request_id: Mapped[int | None] = mapped_column(
         ForeignKey("service_requests.id", ondelete="CASCADE"), index=True
@@ -73,6 +78,13 @@ class Chat(Base):
             unique=True,
             postgresql_where=text("chat_type = 'notes'"),
         ),
+        # один project-чат на пару пользователь + проект
+        Index(
+            "uq_user_project_chat",
+            "user_id", "project_id",
+            unique=True,
+            postgresql_where=text("chat_type = 'project' AND project_id IS NOT NULL"),
+        ),
         # один чат на заявку
         Index(
             "uq_chat_service_request",
@@ -85,7 +97,7 @@ class Chat(Base):
             name="ck_chat_problem_status",
         ),
         CheckConstraint(
-            "chat_type IN ('cabinet', 'support', 'notes', 'service_request')",
+            "chat_type IN ('cabinet', 'support', 'notes', 'service_request', 'project')",
             name="ck_chat_type",
         ),
     )
