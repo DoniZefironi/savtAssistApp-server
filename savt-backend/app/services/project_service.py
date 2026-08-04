@@ -1,6 +1,6 @@
 import logging
 import secrets
-from datetime import datetime
+from datetime import date, datetime, time, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +24,21 @@ from app.services.audit_service import AuditLogger
 from app.services.project_reconciliation import reconcile_cabinet_access
 
 logger = logging.getLogger(__name__)
+
+
+# Границы диапазонов приходят календарными датами ("2026-08-15" из input[type=date]),
+# а в колонках лежит timestamptz. Разворачиваем их в UTC явно и здесь: datetime без
+# зоны PostgreSQL истолковал бы в часовом поясе сессии, и граница молча уехала бы на
+# несколько часов — на границе суток это меняет выдачу.
+def _day_start(day: date | None) -> datetime | None:
+    return datetime.combine(day, time.min, tzinfo=timezone.utc) if day else None
+
+
+def _next_day_start(day: date | None) -> datetime | None:
+    """Верхняя граница — начало следующих суток, сравнение строгое. Иначе
+    "по 15 августа" означало бы "до 15 августа 00:00" и отсекало бы весь день."""
+    start = _day_start(day)
+    return start + timedelta(days=1) if start else None
 
 
 class ProjectService:
@@ -162,16 +177,6 @@ class ProjectService:
             project_folder_service.schedule_folder_sync(project_id)
         return await self.get(project_id)
 
-    # Ручной запуск синхронизации папки проекта на NAS (вне расписания и вне
-    # проверки is_sync_eligible — явное действие админа должно срабатывать всегда)
-    async def sync_folder(self, project_id: int) -> ProjectOut:
-        project = await self.repo.get_by_id(project_id)
-        if project is None or project.deleted_at is not None:
-            raise NotFoundError("Проект не найден")
-        await project_folder_service.sync_project_folder(self.session, project)
-        await self.session.refresh(project)
-        return await self.get(project_id)
-
     # Удаление проекта (soft-delete, как у Cabinet)
     async def delete(self, project_id: int, actor_id: int, actor_role: str) -> None:
         project = await self.repo.get_by_id(project_id)
@@ -200,10 +205,10 @@ class ProjectService:
         year: int | None = None,
         company: str | None = None,
         shipped: bool | None = None,
-        shipment_planned_from: datetime | None = None,
-        shipment_planned_to: datetime | None = None,
-        shipment_actual_from: datetime | None = None,
-        shipment_actual_to: datetime | None = None,
+        shipment_planned_from: date | None = None,
+        shipment_planned_to: date | None = None,
+        shipment_actual_from: date | None = None,
+        shipment_actual_to: date | None = None,
         has_project_documents: bool | None = None,
         has_project_photos: bool | None = None,
         has_project_users: bool | None = None,
@@ -221,10 +226,10 @@ class ProjectService:
             has_users=has_users, has_service_requests=has_service_requests,
             cabinet_warranty_status=cabinet_warranty_status,
             year=year, company=company, shipped=shipped,
-            shipment_planned_from=shipment_planned_from,
-            shipment_planned_to=shipment_planned_to,
-            shipment_actual_from=shipment_actual_from,
-            shipment_actual_to=shipment_actual_to,
+            shipment_planned_from=_day_start(shipment_planned_from),
+            shipment_planned_before=_next_day_start(shipment_planned_to),
+            shipment_actual_from=_day_start(shipment_actual_from),
+            shipment_actual_before=_next_day_start(shipment_actual_to),
             has_project_documents=has_project_documents,
             has_project_photos=has_project_photos,
             has_project_users=has_project_users,

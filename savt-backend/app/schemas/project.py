@@ -78,6 +78,16 @@ class ProjectListOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class SyncFolderResultOut(BaseModel):
+    """Итог ручной сверки папки. Не ProjectOut: кнопку нажимают, чтобы узнать,
+    что именно сделалось, а карточка проекта от сверки не меняется."""
+    synced_at: datetime | None = None
+    imported_documents: int = 0
+    # готовая фраза для тоста — считается на сервере, чтобы клиенты не собирали
+    # её каждый по-своему
+    message: str
+
+
 class CabinetProjectPatchIn(BaseModel):
     project_id: int | None = Field(None, gt=0)
 

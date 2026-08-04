@@ -147,10 +147,12 @@ class ProjectRepository(BaseRepository[Project]):
         year: int | None = None,
         company: str | None = None,
         shipped: bool | None = None,
+        # *_before — граница исключающая (начало следующих суток), см.
+        # project_service._next_day_start
         shipment_planned_from: datetime | None = None,
-        shipment_planned_to: datetime | None = None,
+        shipment_planned_before: datetime | None = None,
         shipment_actual_from: datetime | None = None,
-        shipment_actual_to: datetime | None = None,
+        shipment_actual_before: datetime | None = None,
         has_project_documents: bool | None = None,
         has_project_photos: bool | None = None,
         has_project_users: bool | None = None,
@@ -199,12 +201,12 @@ class ProjectRepository(BaseRepository[Project]):
             )
         for column, bound, is_lower in (
             (Project.shipment_planned_at, shipment_planned_from, True),
-            (Project.shipment_planned_at, shipment_planned_to, False),
+            (Project.shipment_planned_at, shipment_planned_before, False),
             (Project.shipment_actual_at, shipment_actual_from, True),
-            (Project.shipment_actual_at, shipment_actual_to, False),
+            (Project.shipment_actual_at, shipment_actual_before, False),
         ):
             if bound is not None:
-                conditions.append(column >= bound if is_lower else column <= bound)
+                conditions.append(column >= bound if is_lower else column < bound)
 
         for flag, subquery in (
             (has_project_documents, select(Document.id).where(Document.project_id == Project.id)),

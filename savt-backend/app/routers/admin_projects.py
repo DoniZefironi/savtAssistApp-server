@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +14,7 @@ from app.schemas.project import (
     ProjectListOut,
     ProjectOut,
     ProjectUpdateIn,
+    SyncFolderResultOut,
 )
 from app.services import project_code_service
 from app.services.project_service import ProjectService
@@ -24,7 +25,7 @@ router = APIRouter(prefix="/admin/projects", tags=["admin: projects"])
 # прогон, но по кнопке. Нужно, когда файл положили в папку напрямую и ждать
 # ночи не хочется. Ограничение по гарантии здесь не применяется: раз админ
 # нажал кнопку осознанно, синхронизируем даже просроченный проект.
-@router.post("/{project_id}/sync-folder")
+@router.post("/{project_id}/sync-folder", response_model=SyncFolderResultOut)
 async def sync_project_folder_now(
     project_id: int,
     _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
@@ -60,10 +61,13 @@ async def list_projects(
     year: int | None = Query(None, ge=2000, le=2100),
     company: str | None = Query(None),
     shipped: bool | None = Query(None),
-    shipment_planned_from: datetime | None = Query(None),
-    shipment_planned_to: datetime | None = Query(None),
-    shipment_actual_from: datetime | None = Query(None),
-    shipment_actual_to: datetime | None = Query(None),
+    # Календарные даты, YYYY-MM-DD. Обе границы включающие: "по 15 августа"
+    # забирает весь день. datetime здесь нельзя — без зоны PostgreSQL истолковал
+    # бы его в часовом поясе сессии и граница уехала бы на несколько часов
+    shipment_planned_from: date | None = Query(None),
+    shipment_planned_to: date | None = Query(None),
+    shipment_actual_from: date | None = Query(None),
+    shipment_actual_to: date | None = Query(None),
     has_project_documents: bool | None = Query(None),
     has_project_photos: bool | None = Query(None),
     has_project_users: bool | None = Query(None),
@@ -150,13 +154,3 @@ async def delete_project(
     session: AsyncSession = Depends(get_session),
 ):
     await ProjectService(session).delete(project_id, actor.id, actor_role)
-
-# Ручной запуск синхронизации папки проекта на NAS (вне расписания и вне
-# проверки актуальности гарантии — явное действие админа срабатывает всегда)
-@router.post("/{project_id}/sync-folder", response_model=ProjectOut)
-async def sync_project_folder(
-    project_id: int,
-    _: User = Depends(require_role(RoleName.ADMIN)),
-    session: AsyncSession = Depends(get_session),
-):
-    return await ProjectService(session).sync_folder(project_id)
