@@ -82,7 +82,38 @@ def is_sync_eligible(cabinets: list[Cabinet], project: Project | None = None) ->
     return deadline + timedelta(days=_GRACE_DAYS) >= datetime.now(timezone.utc)
 
 
+def _year_folder_name(project: Project) -> str:
+    """Годовая папка верхнего уровня — "!2026". Так же разложено в Bitrix.
+
+    Год берём из производственного номера ("26_170" → 2026): это год проекта по
+    документам, а не по тому, когда запись завели у нас. У заведённых вручную
+    проектов номера нет — тогда по дате создания, чтобы в корне не заводилось
+    исключений и он оставался только из годовых папок.
+
+    Восклицательный знак — чтобы годовые папки всплывали над остальным
+    содержимым при сортировке по имени."""
+    number = project.production_number or ""
+    if len(number) >= 2 and number[:2].isdigit():
+        return f"!{2000 + int(number[:2])}"
+    created = project.created_at or datetime.now(timezone.utc)
+    return f"!{created.year}"
+
+
 async def _parent_root_path(project: Project, project_repo: ProjectRepository) -> Path:
+    ancestors = await project_repo.get_ancestors(project.id)
+    # Годовую папку определяет корень ветки: вложенный проект живёт внутри
+    # родителя и не должен уезжать в другой год, даже если номера разошлись
+    root = Path(settings.project_folders_root) / _year_folder_name(
+        ancestors[0] if ancestors else project
+    )
+    for ancestor in ancestors:
+        root = root / (ancestor.folder_name or sanitize_folder_name(ancestor.name))
+    return root
+
+
+async def _legacy_parent_root_path(project: Project, project_repo: ProjectRepository) -> Path:
+    """Где папка лежала до появления годовых — плоско в корне. Нужно ровно один
+    раз на проект, чтобы найти её и перенести (см. sync_project_folder)."""
     ancestors = await project_repo.get_ancestors(project.id)
     root = Path(settings.project_folders_root)
     for ancestor in ancestors:
@@ -134,11 +165,77 @@ async def create_project_folder_structure(project: Project, project_repo: Projec
     await write_project_qr(root, project)
 
 
+async def _relocate_folder(
+    project: Project, project_repo: ProjectRepository, target: Path,
+) -> None:
+    """Подтягивает папку проекта на её текущее место: переименование при смене
+    названия и переезд в годовую папку у проектов, заведённых до её появления.
+
+    Оба случая — одно и то же действие (rename), поэтому и обрабатываются вместе:
+    иначе переименованный до переезда проект нашёлся бы только под старым именем
+    в старом месте, и сверка завела бы рядом пустую папку. В пределах одной шары
+    это перемещение записи каталога, файлы никуда не копируются."""
+    if await asyncio.to_thread(target.exists):
+        return
+
+    # Имя, под которым папка лежит сейчас. Если folder_name пуст, папку нам никто
+    # не создавал — забирать из корня что-то одноимённое наугад нельзя
+    current_name = project.folder_name
+    if not current_name:
+        return
+
+    # Одноимённая папка в общем корне при дубле названий досталась бы тому
+    # проекту, который синхронизируется первым, вместе с чужими файлами
+    if await project_repo.count_active_by_folder_name(current_name) > 1:
+        logger.warning(
+            "Папку проекта %s (%r) не переношу: такое же имя ещё у одного активного "
+            "проекта, какая из них чья — по имени не определить. Перенесите вручную.",
+            project.id, current_name,
+        )
+        return
+
+    legacy_root = await _legacy_parent_root_path(project, project_repo)
+    # Сначала то же место под старым именем (переименование), потом прежнее,
+    # догодовое расположение (переезд) — второе бывает ровно один раз на проект
+    for source in (target.parent / current_name, legacy_root / current_name):
+        if source == target or not await asyncio.to_thread(source.is_dir):
+            continue
+        try:
+            await asyncio.to_thread(target.parent.mkdir, parents=True, exist_ok=True)
+            await asyncio.to_thread(source.rename, target)
+            logger.info("Папка проекта %s перенесена: %s → %s", project.id, source, target)
+        except OSError:
+            logger.exception("Не удалось перенести папку проекта %s из %s", project.id, source)
+        return
+
+
+async def relocate_project_folder(session: AsyncSession, project: Project) -> None:
+    """Только переезд папки в её годовую, без остальной сверки. Для проектов, у
+    которых гарантия истекла: раскладку им поправить надо, а перечитывать чаты,
+    фото и документы — уже незачем.
+
+    Пустых папок не создаёт: если папки на диске нет, значит проект заводился
+    без NAS, и незачем плодить пустышки на каждый архивный проект."""
+    if not settings.project_folders_root:
+        return
+    project_repo = ProjectRepository(session)
+    new_name = sanitize_folder_name(project.name)
+    parent_root = await _parent_root_path(project, project_repo)
+    target = parent_root / new_name
+    if await asyncio.to_thread(target.exists):
+        return
+    await _relocate_folder(project, project_repo, target)
+    if await asyncio.to_thread(target.is_dir):
+        project.folder_name = new_name
+        await session.commit()
+
+
 async def sync_project_folder(session: AsyncSession, project: Project) -> None:
     """Структурная сверка + сверка документов проекта с их зеркалом на NAS.
-    Переименовывает корневую папку, если project.name разошёлся с folder_name,
-    досоздаёт недостающие подпапки шаблона, докопировает отсутствующие в корне
-    файлы документов проекта (Document.project_id)."""
+    Подтягивает папку на её место (переименование при смене названия, переезд в
+    годовую папку у старых проектов), досоздаёт недостающие подпапки шаблона,
+    докопировает отсутствующие в корне файлы документов проекта
+    (Document.project_id)."""
     if not settings.project_folders_root:
         return
 
@@ -146,16 +243,9 @@ async def sync_project_folder(session: AsyncSession, project: Project) -> None:
     parent_root = await _parent_root_path(project, project_repo)
     new_name = sanitize_folder_name(project.name)
 
-    if project.folder_name and project.folder_name != new_name:
-        old_path = parent_root / project.folder_name
-        new_path = parent_root / new_name
-        if await asyncio.to_thread(old_path.exists) and not await asyncio.to_thread(new_path.exists):
-            await asyncio.to_thread(old_path.rename, new_path)
-        project.folder_name = new_name
-    elif not project.folder_name:
-        project.folder_name = new_name
-
-    root = parent_root / project.folder_name
+    root = parent_root / new_name
+    await _relocate_folder(project, project_repo, root)
+    project.folder_name = new_name
     await _ensure_structure(root)
 
     qr_path = root / "_Маркировка" / _QR_FILENAME
@@ -423,7 +513,12 @@ async def import_new_files_from_nas(
 
 async def sync_all_project_folders() -> None:
     """Ночной прогон: синхронизирует только проекты, у которых гарантия ШУ ещё
-    актуальна (+ неделя запаса) — см. is_sync_eligible."""
+    актуальна (+ неделя запаса) — см. is_sync_eligible.
+
+    Раскладку по годам это ограничение не касается: папка проекта с истёкшей
+    гарантией всё равно переезжает в свою годовую. Иначе половина архива навсегда
+    осталась бы лежать плоско в корне — а именно старые проекты и составляют его
+    основную часть."""
     if not settings.project_folders_root:
         return
     async with AsyncSessionLocal() as session:
@@ -432,10 +527,11 @@ async def sync_all_project_folders() -> None:
         projects = await project_repo.list_all_active()
         for project in projects:
             cabinets = await cabinet_repo.list_by_project(project.id)
-            if not is_sync_eligible(cabinets, project):
-                continue
             try:
-                await sync_project_folder(session, project)
+                if is_sync_eligible(cabinets, project):
+                    await sync_project_folder(session, project)
+                else:
+                    await relocate_project_folder(session, project)
             except Exception:
                 logger.exception("Не удалось синхронизировать папку проекта %s", project.id)
 

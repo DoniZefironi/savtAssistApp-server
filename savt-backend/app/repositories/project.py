@@ -43,6 +43,18 @@ class ProjectRepository(BaseRepository[Project]):
         project.deleted_at = datetime.now(timezone.utc)
         await self.session.flush()
 
+    # Сколько активных проектов претендуют на папку с таким именем. Нужно при
+    # переносе папок в годовые: одноимённую папку в общем корне нельзя молча
+    # присвоить одному из них — файлы уехали бы к чужому проекту.
+    async def count_active_by_folder_name(self, folder_name: str) -> int:
+        result = await self.session.execute(
+            select(func.count(Project.id)).where(
+                Project.folder_name == folder_name,
+                Project.deleted_at.is_(None),
+            )
+        )
+        return result.scalar() or 0
+
     async def list_all_active(self) -> list[Project]:
         result = await self.session.execute(
             select(Project).where(Project.deleted_at.is_(None))
