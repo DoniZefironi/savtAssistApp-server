@@ -1,4 +1,6 @@
-from sqlalchemy import Boolean, ForeignKey, Integer
+from datetime import datetime, timezone
+
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -29,6 +31,25 @@ class NotificationSettings(Base):
     request_status_change: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="true"
     )
+
+    # --- временная пауза: глушит ВСЕ пуши, независимо от переключателей выше ---
+    # Две колонки, а не одна с датой-«бесконечностью»: "тишина навсегда" — это
+    # другое состояние, а не очень далёкая дата, и по сентинелу его пришлось бы
+    # угадывать. Пауза не мешает копиться истории: пользователь просил не
+    # беспокоить, а не выбрасывать уведомления.
+    muted_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    muted_indefinitely: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
+    )
+
+    def is_muted(self, now: datetime | None = None) -> bool:
+        if self.muted_indefinitely:
+            return True
+        if self.muted_until is None:
+            return False
+        return self.muted_until > (now or datetime.now(timezone.utc))
 
     def __repr__(self) -> str:
         return f"<NotificationSettings user_id={self.user_id}>"

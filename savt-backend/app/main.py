@@ -57,6 +57,7 @@ from app.core.firebase import init_firebase
 from app.services.warranty_scheduler import check_warranty_expiry
 from app.services.project_folder_service import sync_all_project_folders
 from app.services.service_request_service import sync_statuses_from_bitrix
+from app.services import promo_service
 from app.core.limiter import limiter
 from app.database import AsyncSessionLocal
 
@@ -67,6 +68,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 # echo=True (см. app/database.py) сам вешает свой хендлер на sqlalchemy.engine —
 # без этого его записи дублировались бы (свой хендлер + после basicConfig ещё и корневой)
 logging.getLogger("sqlalchemy.engine.Engine").propagate = False
+
+logger = logging.getLogger(__name__)
 
 
 async def _bot_follow_up_job() -> None:
@@ -92,6 +95,14 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(sync_all_project_folders, "cron", hour=2, minute=0)
     scheduler.add_job(sync_statuses_from_bitrix, "interval", minutes=15)
     scheduler.add_job(_bot_follow_up_job, "interval", minutes=10)
+
+    # Реклама рассылается автоматически, только если час задан явно: она уходит
+    # живым людям, включать её должно быть осознанным действием (см. README)
+    promo_hour = promo_service.auto_send_hour()
+    if promo_hour is not None:
+        scheduler.add_job(promo_service.send_random_scheduled, "cron", hour=promo_hour, minute=0)
+        logger.info("Автоматическая рассылка рекламы включена: ежедневно в %02d:00", promo_hour)
+
     scheduler.start()
 
     yield

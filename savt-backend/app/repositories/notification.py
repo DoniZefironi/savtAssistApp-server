@@ -21,16 +21,27 @@ class NotificationRepository:
     async def get_by_id(self, notif_id: int) -> Notification | None:
         return await self.session.get(Notification, notif_id)
 
+    async def count_unread(self, user_id: int) -> int:
+        result = await self.session.execute(
+            select(func.count(Notification.id)).where(
+                Notification.user_id == user_id, Notification.is_read == False
+            )
+        )
+        return result.scalar() or 0
+
     async def list_for_user(
         self,
         user_id: int,
         is_read: bool | None = None,
+        types: list[str] | None = None,
         offset: int = 0,
         limit: int = 20,
     ) -> tuple[list[Notification], int]:
         conditions = [Notification.user_id == user_id]
         if is_read is not None:
             conditions.append(Notification.is_read == is_read)
+        if types:
+            conditions.append(Notification.type.in_(types))
 
         total = (await self.session.execute(
             select(func.count(Notification.id)).where(*conditions)

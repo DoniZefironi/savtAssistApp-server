@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
@@ -60,11 +62,15 @@ class NotificationService:
         is_read: bool | None,
         page: int,
         size: int,
+        types: list[str] | None = None,
     ) -> PageOut[NotificationOut]:
         items, total = await self.repo.list_for_user(
-            user_id, is_read, offset=(page - 1) * size, limit=size
+            user_id, is_read, types=types, offset=(page - 1) * size, limit=size
         )
         return make_page([NotificationOut.model_validate(n) for n in items], total, page, size)
+
+    async def unread_count(self, user_id: int) -> int:
+        return await self.repo.count_unread(user_id)
 
     async def mark_read(self, user_id: int, notif_id: int) -> None:
         n = await self.repo.mark_read(notif_id, user_id)
@@ -83,7 +89,7 @@ class NotificationService:
     async def get_settings(self, user_id: int) -> NotificationSettingsOut:
         settings = await self.repo.ensure_settings(user_id)
         await self.session.commit()
-        return NotificationSettingsOut.model_validate(settings)
+        return self._settings_out(settings)
 
     async def update_settings(
         self, user_id: int, data: NotificationSettingsPatchIn
@@ -92,7 +98,38 @@ class NotificationService:
         for field, value in data.model_dump(exclude_unset=True).items():
             setattr(settings, field, value)
         await self.session.commit()
-        return NotificationSettingsOut.model_validate(settings)
+        return self._settings_out(settings)
+
+    async def mute(self, user_id: int, hours: int | None) -> NotificationSettingsOut:
+        """Тишина на hours часов, либо бессрочно при hours=None.
+
+        Срок считается от момента вызова, а не продлевается: нажали «на час»,
+        когда до конца прошлой паузы оставалось десять минут, — значит час,
+        а не час десять."""
+        settings = await self.repo.ensure_settings(user_id)
+        if hours is None:
+            settings.muted_indefinitely = True
+            settings.muted_until = None
+        else:
+            settings.muted_indefinitely = False
+            settings.muted_until = datetime.now(timezone.utc) + timedelta(hours=hours)
+        await self.session.commit()
+        return self._settings_out(settings)
+
+    async def unmute(self, user_id: int) -> NotificationSettingsOut:
+        settings = await self.repo.ensure_settings(user_id)
+        settings.muted_indefinitely = False
+        settings.muted_until = None
+        await self.session.commit()
+        return self._settings_out(settings)
+
+    @staticmethod
+    def _settings_out(settings) -> NotificationSettingsOut:
+        # is_muted считаем на сервере: сравнивать muted_until с текущим временем
+        # на клиенте значило бы разойтись с сервером на границе срока
+        out = NotificationSettingsOut.model_validate(settings)
+        out.is_muted = settings.is_muted()
+        return out
 
     async def register_device(self, user_id: int, data: DeviceTokenIn) -> None:
         await self.device_repo.upsert(user_id, data.token, data.platform)

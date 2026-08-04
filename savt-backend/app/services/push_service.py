@@ -29,13 +29,22 @@ async def _is_allowed(session: AsyncSession, user_id: int, notification_type: st
     Чаты зовут send_push напрямую (сообщение в чате не заводит запись в списке
     уведомлений — у чатов свои счётчики непрочитанного), поэтому проверка внутри
     NotificationService их не покрывала: выключенный переключатель «уведомления о
-    сообщениях» ни на что не влиял."""
-    field = _SETTING_BY_TYPE.get(notification_type or "")
-    if field is None:
-        return True
+    сообщениях» ни на что не влиял.
+
+    Здесь же — временная пауза. Именно здесь, а не в NotificationService: пауза
+    должна глушить и то, что идёт мимо него (сообщения в чатах, ответы бота,
+    сигнал операторам), иначе «не беспокоить» беспокоило бы ровно тем, чем чаще
+    всего и беспокоят."""
     settings = await session.get(NotificationSettings, user_id)
     if settings is None:
         return True  # строки нет — действуют значения по умолчанию из модели
+
+    if settings.is_muted():
+        return False
+
+    field = _SETTING_BY_TYPE.get(notification_type or "")
+    if field is None:
+        return True
     return bool(getattr(settings, field, True))
 
 
