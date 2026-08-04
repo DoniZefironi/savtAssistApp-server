@@ -125,11 +125,19 @@ class NotificationService:
 
     @staticmethod
     def _settings_out(settings) -> NotificationSettingsOut:
-        # is_muted считаем на сервере: сравнивать muted_until с текущим временем
-        # на клиенте значило бы разойтись с сервером на границе срока
-        out = NotificationSettingsOut.model_validate(settings)
-        out.is_muted = settings.is_muted()
-        return out
+        # Явные поля, а не model_validate(settings, from_attributes=True): у модели
+        # есть одноимённый МЕТОД is_muted() (см. NotificationSettings.is_muted),
+        # и from_attributes подставил бы в поле схемы сам объект метода вместо
+        # результата его вызова — ValidationError "Input should be a valid boolean".
+        return NotificationSettingsOut(
+            chat_messages=settings.chat_messages,
+            promotional=settings.promotional,
+            warranty_expiring=settings.warranty_expiring,
+            request_status_change=settings.request_status_change,
+            is_muted=settings.is_muted(),
+            muted_until=settings.muted_until,
+            muted_indefinitely=settings.muted_indefinitely,
+        )
 
     async def register_device(self, user_id: int, data: DeviceTokenIn) -> None:
         await self.device_repo.upsert(user_id, data.token, data.platform)
