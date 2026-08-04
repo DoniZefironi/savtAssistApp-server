@@ -1,9 +1,11 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import exists, func, select
+from sqlalchemy import Integer, String, cast, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.cabinet_photo import CabinetPhoto
 from app.models.cabinets import Cabinet
+from app.models.document import Document
 from app.models.project import Project
 from app.models.project_contact import ProjectContact
 from app.models.project_share_request import ProjectShareRequest
@@ -12,6 +14,39 @@ from app.models.user_project import UserProject
 from app.repositories.base import BaseRepository
 from app.repositories.cabinet import cabinet_match_conditions
 from app.utils.db import fuzzy_condition
+
+
+def project_year_expr():
+    """Год проекта: из производственного номера ("26_170" → 2026), иначе по дате
+    создания записи. Ровно то же правило, по которому раскладываются папки на NAS
+    (project_folder_service._year_folder_name) — фильтр по году и папка на диске
+    не должны расходиться.
+
+    substring() с регулярным выражением возвращает NULL, если номер не начинается
+    с двух цифр, поэтому cast к числу безопасен: нецифровой номер не уронит запрос,
+    а просто отдаст управление coalesce."""
+    from_number = 2000 + cast(
+        func.substring(Project.production_number, r"^(\d{2})"), Integer
+    )
+    return func.coalesce(
+        from_number, cast(func.extract("year", Project.created_at), Integer)
+    )
+
+
+def _warranty_conditions(column, status: str) -> list:
+    """Границы совпадают с utils.warranty.warranty_status() — фильтр обязан
+    возвращать ровно то множество, что подписано этим статусом в ответе."""
+    now = datetime.now(timezone.utc)
+    soon = now + timedelta(days=30)
+    if status == "active":
+        return [column.isnot(None), column >= soon]
+    if status == "expiring_soon":
+        return [column.isnot(None), column >= now, column < soon]
+    if status == "expired":
+        return [column.isnot(None), column < now]
+    if status == "none":
+        return [column.is_(None)]
+    return []
 
 
 class ProjectRepository(BaseRepository[Project]):
@@ -101,26 +136,94 @@ class ProjectRepository(BaseRepository[Project]):
     async def search(
         self,
         query: str | None = None,
+        # --- фильтры по шкафам проекта: проект проходит, если подошёл хотя бы один ---
         tag_ids: list[int] | None = None,
         has_documents: bool | None = None,
         has_photos: bool | None = None,
         has_users: bool | None = None,
         has_service_requests: bool | None = None,
-        warranty_status: str | None = None,  # "active" | "expired" | "none"
+        cabinet_warranty_status: str | None = None,
+        # --- фильтры по самому проекту ---
+        year: int | None = None,
+        company: str | None = None,
+        shipped: bool | None = None,
+        shipment_planned_from: datetime | None = None,
+        shipment_planned_to: datetime | None = None,
+        shipment_actual_from: datetime | None = None,
+        shipment_actual_to: datetime | None = None,
+        has_project_documents: bool | None = None,
+        has_project_photos: bool | None = None,
+        has_project_users: bool | None = None,
+        has_contacts: bool | None = None,
+        warranty_status: str | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
         offset: int = 0,
         limit: int = 20,
     ) -> tuple[list[Project], int]:
         conditions = [Project.deleted_at.is_(None)]
+
         if query:
-            conditions.append(fuzzy_condition(query, Project.name))
+            # Ищем и по карточке проекта, и по контактным лицам заказчика: искать
+            # проект по фамилии или телефону человека из сделки — обычный сценарий,
+            # а название и номер оператор помнит не всегда
+            contact_match = exists(
+                select(ProjectContact.id).where(
+                    ProjectContact.project_id == Project.id,
+                    fuzzy_condition(
+                        query,
+                        ProjectContact.full_name, ProjectContact.post,
+                        # телефоны и почты — JSON-списки; по тексту списка
+                        # находится и "+375291112233", и "ivanov@"
+                        cast(ProjectContact.phones, String),
+                        cast(ProjectContact.emails, String),
+                    ),
+                )
+            )
+            conditions.append(or_(
+                fuzzy_condition(
+                    query,
+                    Project.name, Project.production_number, Project.company_name,
+                ),
+                contact_match,
+            ))
+
+        if year is not None:
+            conditions.append(project_year_expr() == year)
+        if company:
+            conditions.append(fuzzy_condition(company, Project.company_name))
+        if shipped is not None:
+            conditions.append(
+                Project.shipment_actual_at.isnot(None) if shipped
+                else Project.shipment_actual_at.is_(None)
+            )
+        for column, bound, is_lower in (
+            (Project.shipment_planned_at, shipment_planned_from, True),
+            (Project.shipment_planned_at, shipment_planned_to, False),
+            (Project.shipment_actual_at, shipment_actual_from, True),
+            (Project.shipment_actual_at, shipment_actual_to, False),
+        ):
+            if bound is not None:
+                conditions.append(column >= bound if is_lower else column <= bound)
+
+        for flag, subquery in (
+            (has_project_documents, select(Document.id).where(Document.project_id == Project.id)),
+            (has_project_photos, select(CabinetPhoto.id).where(CabinetPhoto.project_id == Project.id)),
+            (has_project_users, select(UserProject.id).where(UserProject.project_id == Project.id)),
+            (has_contacts, select(ProjectContact.id).where(ProjectContact.project_id == Project.id)),
+        ):
+            if flag is not None:
+                condition = exists(subquery)
+                conditions.append(condition if flag else ~condition)
+
+        if warranty_status:
+            conditions.extend(_warranty_conditions(Project.warranty_ends_at, warranty_status))
 
         # Проект попадает в выдачу, если условиям соответствует хотя бы один его шкаф
         cabinet_conditions = cabinet_match_conditions(
             tag_ids=tag_ids, has_documents=has_documents, has_photos=has_photos,
             has_users=has_users, has_service_requests=has_service_requests,
-            warranty_status=warranty_status,
+            warranty_status=cabinet_warranty_status,
         )
         if cabinet_conditions:
             conditions.append(exists(
@@ -134,15 +237,30 @@ class ProjectRepository(BaseRepository[Project]):
         count_stmt = select(func.count(Project.id)).where(*conditions)
         total = (await self.session.execute(count_stmt)).scalar() or 0
 
+        cabinet_count = (
+            select(func.count(Cabinet.id))
+            .where(Cabinet.project_id == Project.id, Cabinet.deleted_at.is_(None))
+            .scalar_subquery()
+        )
         sort_column = {
             "name": Project.name,
             "created_at": Project.created_at,
+            "production_number": Project.production_number,
+            "year": project_year_expr(),
+            "company_name": Project.company_name,
+            "shipment_planned_at": Project.shipment_planned_at,
+            "shipment_actual_at": Project.shipment_actual_at,
+            "warranty_ends_at": Project.warranty_ends_at,
+            "cabinet_count": cabinet_count,
         }.get(sort_by, Project.created_at)
 
+        # Пустое значение — всегда в конце, в обе стороны сортировки: проект без
+        # даты отгрузки не должен занимать верх списка, отсортированного по ней
+        order = sort_column.asc() if sort_order == "asc" else sort_column.desc()
         stmt = (
             select(Project)
             .where(*conditions)
-            .order_by(sort_column.asc() if sort_order == "asc" else sort_column.desc())
+            .order_by(order.nulls_last(), Project.id.desc())
             .offset(offset)
             .limit(limit)
         )

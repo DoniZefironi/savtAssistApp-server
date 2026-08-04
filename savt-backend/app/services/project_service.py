@@ -1,5 +1,6 @@
 import logging
 import secrets
+from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -7,6 +8,7 @@ from app.core.exceptions import AlreadyExistsError, NotFoundError
 from app.repositories.cabinet import CabinetRepository
 from app.repositories.project import ProjectContactRepository, ProjectRepository, UserProjectRepository
 from app.schemas.pagination import PageOut, make_page
+from app.utils.project_year import project_year
 from app.utils.warranty import warranty_status as _warranty_status
 from app.schemas.project import (
     CabinetProjectPatchIn,
@@ -179,10 +181,13 @@ class ProjectService:
         await self.repo.soft_delete(project)
         await self.session.commit()
 
-    # Все проекты. Фильтры (tag_ids/has_documents/.../warranty_status) — те же, что
-    # и в общем списке ШУ: проект попадает в выдачу, если им соответствует хотя бы
-    # один его шкаф. cabinet_count при этом — общее число шкафов в проекте
-    # (не отфильтрованное), а не количество совпавших.
+    # Все проекты. Два независимых набора фильтров:
+    #  - по шкафам проекта (tag_ids/has_documents/... /cabinet_warranty_status) —
+    #    проект проходит, если подошёл хотя бы один его шкаф;
+    #  - по самому проекту (year/company/shipped/.../warranty_status) — по данным
+    #    из карточки сделки и по тому, что привязано к проекту напрямую.
+    # Заданные вместе, они складываются по И.
+    # cabinet_count в ответе — общее число шкафов в проекте, не количество совпавших.
     async def list_all(
         self,
         query: str | None = None,
@@ -191,6 +196,18 @@ class ProjectService:
         has_photos: bool | None = None,
         has_users: bool | None = None,
         has_service_requests: bool | None = None,
+        cabinet_warranty_status: str | None = None,
+        year: int | None = None,
+        company: str | None = None,
+        shipped: bool | None = None,
+        shipment_planned_from: datetime | None = None,
+        shipment_planned_to: datetime | None = None,
+        shipment_actual_from: datetime | None = None,
+        shipment_actual_to: datetime | None = None,
+        has_project_documents: bool | None = None,
+        has_project_photos: bool | None = None,
+        has_project_users: bool | None = None,
+        has_contacts: bool | None = None,
         warranty_status: str | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
@@ -202,6 +219,16 @@ class ProjectService:
             query=query, tag_ids=tag_ids,
             has_documents=has_documents, has_photos=has_photos,
             has_users=has_users, has_service_requests=has_service_requests,
+            cabinet_warranty_status=cabinet_warranty_status,
+            year=year, company=company, shipped=shipped,
+            shipment_planned_from=shipment_planned_from,
+            shipment_planned_to=shipment_planned_to,
+            shipment_actual_from=shipment_actual_from,
+            shipment_actual_to=shipment_actual_to,
+            has_project_documents=has_project_documents,
+            has_project_photos=has_project_photos,
+            has_project_users=has_project_users,
+            has_contacts=has_contacts,
             warranty_status=warranty_status,
             sort_by=sort_by, sort_order=sort_order, offset=offset, limit=size,
         )
@@ -210,8 +237,11 @@ class ProjectService:
             cabinets = await self.cabinet_repo.list_by_project(p.id)
             items.append(ProjectListOut(
                 id=p.id, name=p.name, unique_code=p.unique_code,
+                production_number=p.production_number,
+                year=project_year(p),
                 cabinet_count=len(cabinets), created_at=p.created_at,
                 company_name=p.company_name,
+                shipment_planned_at=p.shipment_planned_at,
                 shipment_actual_at=p.shipment_actual_at,
                 warranty_ends_at=p.warranty_ends_at,
                 warranty_status=_warranty_status(p.warranty_ends_at),

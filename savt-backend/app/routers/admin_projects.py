@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,17 +43,37 @@ async def create_project(
 ):
     return await ProjectService(session).create(payload, actor.id, actor_role)
 
-# Все проекты
+# Все проекты. Фильтры двух видов: has_* / tag_ids / cabinet_warranty_status
+# отбирают по шкафам проекта (подошёл хотя бы один), остальные — по самому
+# проекту. Заданные вместе складываются по И.
 @router.get("", response_model=PageOut[ProjectListOut])
 async def list_projects(
     search: str | None = Query(None),
+    # по шкафам проекта
     tag_ids: list[int] = Query(default=[]),
     has_documents: bool | None = Query(None),
     has_photos: bool | None = Query(None),
     has_users: bool | None = Query(None),
     has_service_requests: bool | None = Query(None),
+    cabinet_warranty_status: str | None = Query(None, pattern="^(active|expiring_soon|expired|none)$"),
+    # по самому проекту
+    year: int | None = Query(None, ge=2000, le=2100),
+    company: str | None = Query(None),
+    shipped: bool | None = Query(None),
+    shipment_planned_from: datetime | None = Query(None),
+    shipment_planned_to: datetime | None = Query(None),
+    shipment_actual_from: datetime | None = Query(None),
+    shipment_actual_to: datetime | None = Query(None),
+    has_project_documents: bool | None = Query(None),
+    has_project_photos: bool | None = Query(None),
+    has_project_users: bool | None = Query(None),
+    has_contacts: bool | None = Query(None),
     warranty_status: str | None = Query(None, pattern="^(active|expiring_soon|expired|none)$"),
-    sort_by: str = Query("created_at", pattern="^(name|created_at)$"),
+    sort_by: str = Query(
+        "created_at",
+        pattern="^(name|created_at|production_number|year|company_name"
+                "|shipment_planned_at|shipment_actual_at|warranty_ends_at|cabinet_count)$",
+    ),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
@@ -62,6 +84,16 @@ async def list_projects(
         query=search, tag_ids=tag_ids or None,
         has_documents=has_documents, has_photos=has_photos,
         has_users=has_users, has_service_requests=has_service_requests,
+        cabinet_warranty_status=cabinet_warranty_status,
+        year=year, company=company, shipped=shipped,
+        shipment_planned_from=shipment_planned_from,
+        shipment_planned_to=shipment_planned_to,
+        shipment_actual_from=shipment_actual_from,
+        shipment_actual_to=shipment_actual_to,
+        has_project_documents=has_project_documents,
+        has_project_photos=has_project_photos,
+        has_project_users=has_project_users,
+        has_contacts=has_contacts,
         warranty_status=warranty_status,
         sort_by=sort_by, sort_order=sort_order, page=page, size=size,
     )

@@ -63,8 +63,13 @@ class ProjectListOut(BaseModel):
     id: int
     name: str
     unique_code: str
+    production_number: str | None = None
+    # Год проекта — тот же, по которому раскладываются папки на NAS и работает
+    # фильтр year. Из номера, а при его отсутствии — из даты создания
+    year: int
     cabinet_count: int
     company_name: str | None = None
+    shipment_planned_at: datetime | None = None
     shipment_actual_at: datetime | None = None
     warranty_ends_at: datetime | None = None
     warranty_status: str = "none"

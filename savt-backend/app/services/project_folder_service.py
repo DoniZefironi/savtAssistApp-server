@@ -17,6 +17,7 @@ from app.repositories.document import DocumentRepository
 from app.repositories.project import ProjectRepository
 from app.services.qr_service import generate_qr
 from app.services.upload_service import UPLOAD_ROOT, save_local_file
+from app.utils.project_year import project_year
 
 logger = logging.getLogger(__name__)
 
@@ -85,18 +86,12 @@ def is_sync_eligible(cabinets: list[Cabinet], project: Project | None = None) ->
 def _year_folder_name(project: Project) -> str:
     """Годовая папка верхнего уровня — "!2026". Так же разложено в Bitrix.
 
-    Год берём из производственного номера ("26_170" → 2026): это год проекта по
-    документам, а не по тому, когда запись завели у нас. У заведённых вручную
-    проектов номера нет — тогда по дате создания, чтобы в корне не заводилось
-    исключений и он оставался только из годовых папок.
+    Год считает project_year() — то же правило, что у фильтра и сортировки по
+    году в списке проектов: папка на диске и выдача не должны расходиться.
 
     Восклицательный знак — чтобы годовые папки всплывали над остальным
     содержимым при сортировке по имени."""
-    number = project.production_number or ""
-    if len(number) >= 2 and number[:2].isdigit():
-        return f"!{2000 + int(number[:2])}"
-    created = project.created_at or datetime.now(timezone.utc)
-    return f"!{created.year}"
+    return f"!{project_year(project)}"
 
 
 async def _parent_root_path(project: Project, project_repo: ProjectRepository) -> Path:
