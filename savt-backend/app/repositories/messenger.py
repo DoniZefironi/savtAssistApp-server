@@ -26,6 +26,19 @@ class MessengerLinkRepository:
         )
         return result.scalar_one_or_none()
 
+    # Кому уже принадлежит этот чат Telegram. Нужно при регистрации: номер
+    # аккаунта может разойтись с номером Telegram (админ одобрил смену номера,
+    # либо человек сменил номер в самом Telegram), и тогда поиск по телефону
+    # никого не находит — а второй аккаунт на тот же чат заводить нельзя.
+    async def find_by_chat(self, channel: str, external_chat_id: str) -> MessengerLink | None:
+        result = await self.session.execute(
+            select(MessengerLink).where(
+                MessengerLink.channel == channel,
+                MessengerLink.external_chat_id == external_chat_id,
+            )
+        )
+        return result.scalars().first()
+
     async def upsert(self, user_id: int, channel: str, external_chat_id: str) -> MessengerLink:
         existing = await self.find_by_user_and_channel(user_id, channel)
         if existing is not None:

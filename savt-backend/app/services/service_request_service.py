@@ -19,6 +19,13 @@ from app.services.audit_service import AuditLogger
 
 _log = logging.getLogger(__name__)
 
+_STATUS_LABELS = {
+    "open": "новая",
+    "in_progress": "в работе",
+    "postponed": "отложена",
+    "closed": "закрыта",
+}
+
 _REQUEST_TYPE_LABELS = {
     "repair": "ремонт",
     "diagnostics": "диагностика",
@@ -381,9 +388,31 @@ class ServiceRequestService:
             if should_be_archived != (chat.archived_at is not None):
                 from app.services.chat_service import ChatService
                 await ChatService(self.session).set_archived(chat.id, should_be_archived)
+                # Закрытый чат больше не меняется — выгружаем стенограмму сразу,
+                # не дожидаясь ночной сверки папок
+                if should_be_archived:
+                    from app.services.project_folder_service import schedule_request_chat_export
+                    schedule_request_chat_export(chat.id)
 
         from app.repositories.cabinet import CabinetRepository
         from app.repositories.user import UserRepository
         cabinet = await CabinetRepository(self.session).get_by_id(req.cabinet_id)
         user = await UserRepository(self.session).get_by_id(req.user_id)
+
+        # Заявитель узнаёт о смене статуса, а не выясняет её, заходя в приложение.
+        # Только при реальном изменении — плановый опрос Bitrix идёт каждые 15 минут
+        # и переписывал бы статус тем же значением.
+        if old_status != req.status:
+            from app.services.notification_service import NotificationService
+            await NotificationService(self.session).send(
+                user_id=req.user_id,
+                type_="request_status",
+                title="Заявка на обслуживание",
+                body=f"Статус изменён: {_STATUS_LABELS.get(req.status, req.status)}",
+                data={
+                    "type": "service_request", "request_id": str(req_id),
+                    "status": req.status, "chat_id": str(chat_id) if chat_id else "",
+                },
+            )
+
         return _to_detail(req, user, cabinet, chat_id)

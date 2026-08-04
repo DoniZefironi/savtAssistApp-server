@@ -103,7 +103,8 @@ class RegisterStatusOut(BaseModel):
     # expired        — истёк срок, начинать заново
     # completed      — регистрация уже завершена по этому токену
     status: str
-    # foreign_contact | bad_phone | phone_already_registered — только при failed
+    # foreign_contact | bad_phone | phone_already_registered |
+    # telegram_already_linked — только при failed
     reason: str | None = None
 
 

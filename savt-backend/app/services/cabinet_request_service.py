@@ -23,6 +23,16 @@ class CabinetRequestService:
         self.user_cabinet_repo = UserCabinetRepository(session)
         self.audit = AuditLogger(session)
 
+    # Заявитель узнаёт о решении, а не выясняет его, заходя в приложение.
+    # Тип request_status — тот же переключатель в настройках уведомлений, что и
+    # у остальных заявок.
+    async def _notify(self, user_id: int, title: str, body: str | None, data: dict) -> None:
+        from app.services.notification_service import NotificationService
+        await NotificationService(self.session).send(
+            user_id=user_id, type_="request_status",
+            title=title, body=body or "Решение принято администратором", data=data,
+        )
+
     # Все заявки на добавление по фото
     async def list_additions(
         self, status: str | None = None, resolved_by_admin_id: int | None = None,
@@ -95,6 +105,9 @@ class CabinetRequestService:
         await self.session.commit()
         from app.services.realtime_events import publish_chat_created
         await publish_chat_created(chat.id, chat_summary_dict(chat))
+        await self._notify(req.user_id, "Заявка на добавление ШУ одобрена",
+                           f"ШУ {cabinet.object_number} добавлен в ваш список",
+                           {"type": "cabinet_request", "cabinet_id": str(data.cabinet_id)})
 
     # Не апрув заявки
     async def reject_addition(
@@ -114,6 +127,8 @@ class CabinetRequestService:
         self.audit.log("cabinet_request.reject_addition", "cabinet_addition_request", request_id,
                        admin_id, actor_role, {"user_id": req.user_id, "reason": data.admin_response})
         await self.session.commit()
+        await self._notify(req.user_id, "Заявка на добавление ШУ отклонена",
+                           data.admin_response, {"type": "cabinet_request"})
 
     # Все заявки на добавление
     async def list_shares(
@@ -189,6 +204,9 @@ class CabinetRequestService:
         await self.session.commit()
         from app.services.realtime_events import publish_chat_created
         await publish_chat_created(chat.id, chat_summary_dict(chat))
+        await self._notify(req.user_id, "Доступ к ШУ открыт",
+                           f"ШУ {cabinet.object_number} добавлен в ваш список",
+                           {"type": "cabinet_request", "cabinet_id": str(req.cabinet_id)})
 
     # Не апрув заявки
     async def reject_share(
@@ -208,3 +226,5 @@ class CabinetRequestService:
         self.audit.log("cabinet_request.reject_share", "cabinet_share_request", request_id,
                        admin_id, actor_role, {"user_id": req.user_id, "reason": data.admin_response})
         await self.session.commit()
+        await self._notify(req.user_id, "Заявка на доступ к ШУ отклонена",
+                           data.admin_response, {"type": "cabinet_request"})

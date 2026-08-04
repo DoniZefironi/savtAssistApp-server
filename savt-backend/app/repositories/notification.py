@@ -75,6 +75,18 @@ class NotificationRepository:
             await self.session.flush()
         return settings
 
+    # Кому из перечисленных разрешён этот тип уведомлений. Строки настроек может
+    # не быть — тогда действуют значения по умолчанию из модели, то есть разрешено.
+    async def filter_by_setting(self, user_ids: list[int], field: str) -> list[int]:
+        if not user_ids:
+            return []
+        rows = await self.session.execute(
+            select(NotificationSettings.user_id, getattr(NotificationSettings, field))
+            .where(NotificationSettings.user_id.in_(user_ids))
+        )
+        explicit = {user_id: bool(value) for user_id, value in rows.all()}
+        return [user_id for user_id in user_ids if explicit.get(user_id, True)]
+
     async def get_all_user_ids(self, role_name: str | None = None) -> list[int]:
         from app.models.user import User
         from app.models.role import Role

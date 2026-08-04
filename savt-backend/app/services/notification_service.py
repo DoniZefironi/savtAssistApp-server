@@ -105,7 +105,11 @@ class NotificationService:
         await self.session.commit()
 
     async def broadcast(self, data: BroadcastIn, actor_id: int = 0, actor_role: str = "admin") -> None:
-        user_ids = await self.repo.get_all_user_ids(data.role)
+        all_ids = await self.repo.get_all_user_ids(data.role)
+        # Рассылка уважает переключатель promotional — и для пуша, и для записи
+        # в списке уведомлений. Раньше он не проверялся вовсе: пользователь мог
+        # выключить рекламные уведомления и всё равно их получать.
+        user_ids = await self.repo.filter_by_setting(all_ids, "promotional")
         for user_id in user_ids:
             await self.repo.create(
                 user_id=user_id,
@@ -115,12 +119,12 @@ class NotificationService:
                 data={},
             )
         self.audit.log("notification.broadcast", "notification", None, actor_id, actor_role,
-                       {"title": data.title, "role": data.role, "recipients": len(user_ids)})
+                       {"title": data.title, "role": data.role,
+                        "recipients": len(user_ids), "opted_out": len(all_ids) - len(user_ids)})
         await self.session.commit()
 
         for user_id in user_ids:
-            # notification_type намеренно не передаём: рассылка админа сейчас идёт
-            # всем, минуя переключатель promotional (он выключен по умолчанию, и
-            # фильтрация обрубила бы рассылки почти всем). Записи в списке
-            # уведомлений выше создаются по той же логике — без учёта настроек.
-            await send_push(self.session, user_id, data.title, data.body)
+            await send_push(
+                self.session, user_id, data.title, data.body,
+                notification_type="promotional",
+            )

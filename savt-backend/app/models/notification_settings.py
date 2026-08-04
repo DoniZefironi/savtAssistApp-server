@@ -14,9 +14,12 @@ class NotificationSettings(Base):
     chat_messages: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="true"
     )
-    # рекламные уведомления
+    # рекламные уведомления и рассылки администратора.
+    # По умолчанию включены: переключатель до недавнего времени не проверялся
+    # вовсе — рассылки уходили всем независимо от него. Оставить дефолт false,
+    # начав его проверять, значило бы молча отключить рассылки почти всем.
     promotional: Mapped[bool] = mapped_column(
-        Boolean, default=False, server_default="false"
+        Boolean, default=True, server_default="true"
     )
     # уведомление о гарантии
     warranty_expiring: Mapped[bool] = mapped_column(

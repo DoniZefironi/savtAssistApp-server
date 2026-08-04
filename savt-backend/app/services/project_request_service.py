@@ -94,6 +94,18 @@ class ProjectRequestService:
             for chat in created_chats:
                 await publish_chat_created(chat.id, chat_summary_dict(chat))
 
+        await self._notify(req.user_id, "Доступ к проекту открыт",
+                           f"Проект «{project.name}» добавлен в ваш список",
+                           {"type": "project_request", "project_id": str(req.project_id)})
+
+    # Заявитель узнаёт о решении, а не выясняет его, заходя в приложение
+    async def _notify(self, user_id: int, title: str, body: str | None, data: dict) -> None:
+        from app.services.notification_service import NotificationService
+        await NotificationService(self.session).send(
+            user_id=user_id, type_="request_status",
+            title=title, body=body or "Решение принято администратором", data=data,
+        )
+
     # Не апрув заявки
     async def reject_share(
         self, request_id: int, data: RejectRequestIn, admin_id: int, actor_role: str
@@ -112,3 +124,5 @@ class ProjectRequestService:
         self.audit.log("project_request.reject_share", "project_share_request", request_id,
                        admin_id, actor_role, {"user_id": req.user_id, "reason": data.admin_response})
         await self.session.commit()
+        await self._notify(req.user_id, "Заявка на доступ к проекту отклонена",
+                           data.admin_response, {"type": "project_request"})

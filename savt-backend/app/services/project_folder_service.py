@@ -171,16 +171,19 @@ async def sync_project_folder(session: AsyncSession, project: Project) -> None:
 
     await import_new_files_from_nas(session, project, root, docs)
 
+    # Чаты, где с прошлой сверки ничего не писали, перечитывать не нужно
+    since = project.folder_synced_at
+
     # Уровень проекта: его собственные фото и переписка
     await export_photos(session, root, project_id=project.id)
-    await export_chats(session, root, project_id=project.id)
+    await export_chats(session, root, project_id=project.id, since=since)
 
     # Уровень ШУ: у каждого шкафа проекта своя папка с тем же шаблоном
     for cabinet in await CabinetRepository(session).list_by_project(project.id):
         cabinet_root = root / _cabinet_folder_name(cabinet)
         await _ensure_structure(cabinet_root)
         await export_photos(session, cabinet_root, cabinet_id=cabinet.id)
-        await export_chats(session, cabinet_root, cabinet_id=cabinet.id)
+        await export_chats(session, cabinet_root, cabinet_id=cabinet.id, since=since)
 
     project.folder_synced_at = datetime.now(timezone.utc)
     await session.commit()
@@ -252,13 +255,21 @@ def _format_message(msg, sender_name: str | None, attachments: list) -> str:
 async def export_chats(
     session: AsyncSession, root: Path, *,
     cabinet_id: int | None = None, project_id: int | None = None,
+    since: datetime | None = None, only_chat_id: int | None = None,
 ) -> int:
     """Выгружает переписку в подпапку «Переписка»: по файлу на чат, вложения —
     в «Переписка/вложения» рядом.
 
     Стенограммы перезаписываются на каждой сверке: переписка растёт, и дописывать
     хвост было бы сложнее и ненадёжнее, чем просто собрать файл заново. Вложения
-    наоборот копируются один раз — они неизменны."""
+    наоборот копируются один раз — они неизменны.
+
+    since — не перечитывать чаты, где с этого момента ничего не писали (обычно
+    это folder_synced_at проекта). Файл всё равно собирается заново, если его
+    ещё нет на диске: пропускать можно только то, что уже выгружено.
+
+    only_chat_id — выгрузить один конкретный чат (закрытие заявки), не трогая
+    соседние стенограммы."""
     from app.models.chat import Chat
     from app.models.message import Message
     from app.models.message_attchment import MessageAttachment
@@ -269,6 +280,8 @@ async def export_chats(
         Chat.project_id == project_id if project_id is not None
         else Chat.cabinet_id == cabinet_id
     )
+    if only_chat_id is not None:
+        stmt = stmt.where(Chat.id == only_chat_id)
     chats = list((await session.execute(stmt)).scalars().all())
     if not chats:
         return 0
@@ -279,6 +292,25 @@ async def export_chats(
 
     exported = 0
     for chat in chats:
+        # Имя файла считаем до чтения сообщений: по нему решаем, можно ли
+        # вообще пропустить чат
+        owner = await session.get(User, chat.user_id)
+        owner_name = (owner.full_name or owner.phone or f"id{chat.user_id}") if owner else f"id{chat.user_id}"
+        title = _CHAT_TITLES.get(chat.chat_type, "Чат")
+        if chat.chat_type == "service_request" and chat.service_request_id:
+            title = f"Заявка {chat.service_request_id}"
+        dest = dest_dir / f"{sanitize_folder_name(f'{title} — {owner_name}')}.txt"
+
+        # Ничего не писали с прошлой сверки и файл уже есть — перечитывать
+        # переписку незачем. На больших проектах это основная экономия.
+        if (
+            since is not None
+            and chat.last_message_at is not None
+            and chat.last_message_at <= since
+            and await asyncio.to_thread(dest.exists)
+        ):
+            continue
+
         rows = (await session.execute(
             select(Message, User)
             .outerjoin(User, User.id == Message.sender_id)
@@ -295,12 +327,6 @@ async def export_chats(
         )).scalars().all():
             atts_by_msg[att.message_id].append(att)
 
-        owner = await session.get(User, chat.user_id)
-        owner_name = (owner.full_name or owner.phone or f"id{chat.user_id}") if owner else f"id{chat.user_id}"
-        title = _CHAT_TITLES.get(chat.chat_type, "Чат")
-        if chat.chat_type == "service_request" and chat.service_request_id:
-            title = f"Заявка {chat.service_request_id}"
-
         header = [
             f"{title} — {owner_name}",
             f"Выгружено: {datetime.now(timezone.utc).strftime('%d.%m.%Y %H:%M')} UTC",
@@ -308,7 +334,6 @@ async def export_chats(
         ]
         body = [_format_message(m, u.full_name if u else None, atts_by_msg[m.id]) for m, u in rows]
 
-        dest = dest_dir / f"{sanitize_folder_name(f'{title} — {owner_name}')}.txt"
         try:
             await asyncio.to_thread(dest.write_text, "\n".join(header + body), "utf-8")
             exported += 1
@@ -468,6 +493,49 @@ def schedule_cabinet_folder(cabinet_id: int) -> None:
                 await _ensure_structure(root / _cabinet_folder_name(cabinet))
             except Exception:
                 logger.exception("Не удалось создать папку ШУ %s на NAS", cabinet_id)
+    asyncio.create_task(_task())
+
+
+def schedule_request_chat_export(chat_id: int) -> None:
+    """Выгружает стенограмму чата заявки в папку сразу при её закрытии.
+
+    Закрытие — естественная точка архивации: чат становится read-only, значит
+    выгруженный файл уже не устареет. Ждать ночной сверки незачем, а на самой
+    сверке этот чат будет пропущен как неизменившийся."""
+    async def _task():
+        if not settings.project_folders_root:
+            return
+        async with AsyncSessionLocal() as session:
+            from app.models.chat import Chat
+            chat = await session.get(Chat, chat_id)
+            if chat is None:
+                return
+
+            project_repo = ProjectRepository(session)
+            cabinet = None
+            if chat.cabinet_id is not None:
+                cabinet = await CabinetRepository(session).get_by_id(chat.cabinet_id)
+                project_id = cabinet.project_id if cabinet else None
+            else:
+                project_id = chat.project_id
+            if project_id is None:
+                return
+            project = await project_repo.get_by_id(project_id)
+            if project is None:
+                return
+
+            try:
+                root = await _project_root_path(project, project_repo)
+                if cabinet is not None:
+                    root = root / _cabinet_folder_name(cabinet)
+                await _ensure_structure(root)
+                await export_chats(
+                    session, root,
+                    cabinet_id=chat.cabinet_id, project_id=chat.project_id,
+                    only_chat_id=chat_id,
+                )
+            except Exception:
+                logger.exception("Не удалось выгрузить стенограмму чата %s при закрытии заявки", chat_id)
     asyncio.create_task(_task())
 
 

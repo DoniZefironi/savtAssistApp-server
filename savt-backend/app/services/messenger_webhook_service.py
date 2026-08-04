@@ -136,6 +136,29 @@ async def _handle_contact(external_chat_id: str, message: dict, contact: dict) -
             return
 
         user_repo = UserRepository(session)
+        link_repo = MessengerLinkRepository(session)
+
+        # Этот Telegram уже принадлежит подтверждённому аккаунту? Проверяем ДО
+        # поиска по телефону: номер аккаунта мог разойтись с номером Telegram —
+        # админ одобрил смену номера, либо человек сменил номер в самом Telegram.
+        # Тогда поиск по телефону никого не найдёт, и без этой проверки завёлся
+        # бы второй аккаунт на тот же чат: сброс пароля для обоих приходил бы в
+        # одно место, а различить их можно было бы только по тексту.
+        # Незавершённая регистрация не мешает — там аккаунт ещё не подтверждён,
+        # и человек просто проходит флоу заново.
+        existing_link = await link_repo.find_by_chat(messenger_service.CHANNEL_TELEGRAM, external_chat_id)
+        if existing_link is not None:
+            linked = await user_repo.get_by_id(existing_link.user_id)
+            if linked is not None and linked.is_phone_verified:
+                _log.info("Telegram webhook: чат %s уже привязан к аккаунту %s", external_chat_id, linked.id)
+                await _fail(
+                    "telegram_already_linked",
+                    f"Этот Telegram уже привязан к аккаунту {linked.phone}. Войдите в "
+                    f"приложение по этому номеру, а если забыли пароль — воспользуйтесь "
+                    f"восстановлением.",
+                )
+                return
+
         existing = await user_repo.find_by_phone(phone)
         if existing is not None and existing.is_phone_verified:
             _log.info("Telegram webhook: номер %s уже зарегистрирован", phone)
@@ -173,9 +196,7 @@ async def _handle_contact(external_chat_id: str, message: dict, contact: dict) -
             await session.flush()
 
         pending.user_id = user.id
-        await MessengerLinkRepository(session).upsert(
-            user.id, messenger_service.CHANNEL_TELEGRAM, external_chat_id
-        )
+        await link_repo.upsert(user.id, messenger_service.CHANNEL_TELEGRAM, external_chat_id)
         await session.commit()
 
         try:

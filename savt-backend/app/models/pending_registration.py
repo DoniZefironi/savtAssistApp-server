@@ -39,7 +39,8 @@ class PendingRegistration(Base):
     # Почему бот отказал на шаге подтверждения номера. Отказ виден только в
     # Telegram, а приложение стоит на экране ввода кода — без этого поля оно не
     # может отличить "ещё не нажал кнопку" от "отказано" и ждёт код вечно.
-    # Значения: foreign_contact | bad_phone | phone_already_registered
+    # Значения: foreign_contact | bad_phone | phone_already_registered |
+    #           telegram_already_linked
     failed_reason: Mapped[str | None] = mapped_column(String(40))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

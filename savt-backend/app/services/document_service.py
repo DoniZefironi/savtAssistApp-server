@@ -34,6 +34,14 @@ class AdminDocumentService:
         self.tag_repo = TagRepository(session)
         self.audit = AuditLogger(session)
 
+    # Заявитель узнаёт о решении, а не выясняет его, заходя в приложение
+    async def _notify(self, user_id: int, title: str, body: str | None, data: dict) -> None:
+        from app.services.notification_service import NotificationService
+        await NotificationService(self.session).send(
+            user_id=user_id, type_="request_status",
+            title=title, body=body or "Решение принято администратором", data=data,
+        )
+
     async def create_document(
         self,
         file: UploadFile,
@@ -218,6 +226,9 @@ class AdminDocumentService:
         self.audit.log("document_request.approve", "document_request", request_id, admin_id, actor_role,
                        {"user_id": req.user_id, "document_id": req.document_id})
         await self.session.commit()
+        await self._notify(req.user_id, "Доступ к документу открыт",
+                           data.admin_response or "Документ доступен для скачивания",
+                           {"type": "document_request", "document_id": str(req.document_id)})
 
     async def reject_request(
         self, request_id: int, data: RejectDocumentRequestIn, admin_id: int, actor_role: str = "admin"
@@ -234,6 +245,8 @@ class AdminDocumentService:
         self.audit.log("document_request.reject", "document_request", request_id, admin_id, actor_role,
                        {"user_id": req.user_id, "reason": data.admin_response})
         await self.session.commit()
+        await self._notify(req.user_id, "Заявка на доступ к документу отклонена",
+                           data.admin_response, {"type": "document_request"})
 
 
 class UserDocumentService:
