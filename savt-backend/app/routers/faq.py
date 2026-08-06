@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_current_user, get_session
+from app.core.dependencies import get_current_user_or_guest, get_session
 from app.models.user import User
 from app.schemas.faq import FaqCategoryOut, FaqEntryOut
 from app.schemas.pagination import PageOut
@@ -12,7 +12,7 @@ router = APIRouter(prefix="/faq", tags=["faq"])
 
 @router.get("/categories", response_model=list[FaqCategoryOut])
 async def list_categories(
-    _: User = Depends(get_current_user),
+    _: User | None = Depends(get_current_user_or_guest),
     session: AsyncSession = Depends(get_session),
 ):
     return await FaqCategoryService(session).list_all()
@@ -26,7 +26,7 @@ async def list_entries(
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
-    _: User = Depends(get_current_user),
+    _: User | None = Depends(get_current_user_or_guest),
     session: AsyncSession = Depends(get_session),
 ):
     return await FaqEntryService(session).list_entries(category_id, search, sort_by, sort_order, page, size)

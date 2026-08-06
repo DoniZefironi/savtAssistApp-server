@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_current_user, get_session
+from app.core.dependencies import get_current_user_or_guest, get_session
 from app.models.user import User
 from app.schemas.kb import KbArticleDetailOut, KbArticleListOut, KbCategoryOut
 from app.schemas.pagination import PageOut
@@ -13,7 +13,7 @@ router = APIRouter(prefix="/kb", tags=["kb"])
 
 @router.get("/categories", response_model=list[KbCategoryOut])
 async def list_categories(
-    _: User = Depends(get_current_user),
+    _: User | None = Depends(get_current_user_or_guest),
     session: AsyncSession = Depends(get_session),
 ):
     return await KbCategoryService(session).list_all()
@@ -28,7 +28,7 @@ async def list_articles(
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
-    _: User = Depends(get_current_user),
+    _: User | None = Depends(get_current_user_or_guest),
     session: AsyncSession = Depends(get_session),
 ):
     return await KbArticleService(session).list_articles(
@@ -45,7 +45,7 @@ async def list_articles(
 @router.get("/articles/{article_id}", response_model=KbArticleDetailOut)
 async def get_article(
     article_id: int,
-    _: User = Depends(get_current_user),
+    _: User | None = Depends(get_current_user_or_guest),
     session: AsyncSession = Depends(get_session),
 ):
     return await KbArticleService(session).get_detail(article_id)
@@ -55,7 +55,7 @@ async def get_article(
 async def download_attachment(
     article_id: int,
     att_id: int,
-    _: User = Depends(get_current_user),
+    _: User | None = Depends(get_current_user_or_guest),
     session: AsyncSession = Depends(get_session),
 ):
     file_path, mime_type, title = await KbArticleService(session).download_attachment(

@@ -144,6 +144,14 @@ class TokenPairOut(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
 
+
+# Гостевой токен: без refresh_token — выдача дешёвая (без обращения к БД),
+# клиент при истечении просто запрашивает новый, а не обновляет старый
+class GuestTokenOut(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
+
 # Профиль пользователя
 class UserMeOut(BaseModel):
     id: int

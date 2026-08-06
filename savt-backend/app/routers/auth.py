@@ -1,11 +1,14 @@
 from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.core.dependencies import get_current_user, get_session
 from app.core.limiter import limiter
+from app.core.security import create_guest_token
 from app.models.user import User
 from app.schemas.auth import (
     AdminLoginIn,
+    GuestTokenOut,
     LoginIn,
     LogoutIn,
     PasswordChange,
@@ -37,6 +40,18 @@ def _client_info(request: Request) -> tuple[str | None, str | None]:
     user_agent = request.headers.get("user-agent")
     ip = request.client.host if request.client else None
     return user_agent, ip
+
+# Гостевой доступ — без регистрации, для экранов, явно открытых без входа
+# (сейчас это КБ и FAQ, см. get_current_user_or_guest). Не пишет в БД: сессии
+# гостя нет, поэтому и отзывать нечего — при истечении клиент просто зовёт
+# ручку заново.
+@router.post("/guest", response_model=GuestTokenOut)
+@limiter.limit("30/minute")
+async def guest_token(request: Request):
+    return GuestTokenOut(
+        access_token=create_guest_token(),
+        expires_in=settings.jwt_access_token_ttl_minutes * 60,
+    )
 
 # Регистрация
 @router.post("/register/start", response_model=RegisterStartOut)

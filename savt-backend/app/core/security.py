@@ -53,3 +53,22 @@ def create_access_token(user_id: int, role: str) -> str:
 # Бросает jwt.ExpiredSignatureError если истёк, jwt.InvalidTokenError если невалидный.
 def decode_access_token(token: str) -> dict[str, Any]:
     return jwt.decode(token, settings.jwt_secret_key, algorithms=[_JWT_ALGORITHM])
+
+
+# Гостевой токен: доступ без регистрации к тому, что явно открыто гостям
+# (см. get_current_user_or_guest) — сейчас это КБ и FAQ. Не привязан к записи
+# в users — гостя как учётной записи не существует, поэтому выдача не трогает
+# БД и не требует последующего отзыва. type="guest" отличает его от обычного
+# access-токена: get_current_user (везде, кроме гостевых роутов) отвергает
+# любой токен не типа "access", так что гость автоматически заперт снаружи
+# всего остального API без дополнительных проверок роли.
+def create_guest_token() -> str:
+    now = datetime.now(timezone.utc)
+    payload: dict[str, Any] = {
+        "sub": "guest",
+        "role": "guest",
+        "type": "guest",
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(minutes=settings.jwt_access_token_ttl_minutes)).timestamp()),
+    }
+    return jwt.encode(payload, settings.jwt_secret_key, algorithm=_JWT_ALGORITHM)

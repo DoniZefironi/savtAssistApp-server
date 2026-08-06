@@ -24,20 +24,15 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
             raise
 
 
-async def get_current_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(_security),
-    session: AsyncSession = Depends(get_session),
-) -> User:
-
+def _decode_or_401(credentials: HTTPAuthorizationCredentials | None) -> dict:
     if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Не авторизован",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
     try:
-        payload = decode_access_token(credentials.credentials)
+        return decode_access_token(credentials.credentials)
     except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -51,6 +46,13 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_security),
+    session: AsyncSession = Depends(get_session),
+) -> User:
+    payload = _decode_or_401(credentials)
+
     if payload.get("type") != "access":
         raise HTTPException(status_code=401, detail="Неверный тип токена")
 
@@ -61,6 +63,34 @@ async def get_current_user(
     if user is None or not user.is_active:
         raise HTTPException(status_code=401, detail="Пользователь недоступен")
 
+    return user
+
+
+# Пускает и обычного пользователя, и гостя (см. create_guest_token) — для
+# роутов, явно открытых без регистрации (сейчас КБ и FAQ). Гость возвращается
+# как None: в этих роутах инжектированный User нигде не читается, он там
+# только ради самой проверки допуска.
+#
+# Полностью анонимного доступа (без токена вообще) сознательно нет: гостевой
+# JWT дёшев в выдаче (POST /auth/guest, без обращения к БД) и даёт то же
+# единообразие, что и у обычных пользователей — Authorization есть всегда,
+# и остальной код клиента не разветвляется на "с токеном" / "без токена".
+async def get_current_user_or_guest(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_security),
+    session: AsyncSession = Depends(get_session),
+) -> User | None:
+    payload = _decode_or_401(credentials)
+
+    if payload.get("type") == "guest":
+        return None
+
+    if payload.get("type") != "access":
+        raise HTTPException(status_code=401, detail="Неверный тип токена")
+
+    user_id = int(payload["sub"])
+    user = await UserRepository(session).get_by_id(user_id)
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=401, detail="Пользователь недоступен")
     return user
 
 
