@@ -6,7 +6,6 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy import text
@@ -116,9 +115,21 @@ app = FastAPI(title="SAVT Assist API", lifespan=lifespan)
 # Читаем реальный IP из X-Forwarded-For (Nginx proxy)
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
-# Rate limiting
+# Rate limiting. Свой обработчик вместо slowapi-шного _rate_limit_exceeded_handler:
+# дефолтный отдаёт {"error": "..."}, а весь остальной API — {"detail": "..."}
+# (см. обработчики DomainError ниже). Разные ключи под одним и тем же кодом 429
+# заставляли бы каждого клиента API помнить два формата ошибки вместо одного.
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    response = JSONResponse(
+        status_code=429,
+        content={"detail": f"Слишком много запросов. Попробуйте позже ({exc.detail})"},
+    )
+    return limiter._inject_headers(response, request.state.view_rate_limit)
+
+
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
 # CORS — разрешаем запросы с веб-версии
