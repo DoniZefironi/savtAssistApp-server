@@ -6,6 +6,7 @@ from app.core.dependencies import get_current_user, get_role_from_token, get_ses
 from app.models.user import User
 from app.schemas.notifications import (
     BroadcastIn,
+    BroadcastResultOut,
     DeviceTokenIn,
     MuteIn,
     NotificationOut,
@@ -129,14 +130,14 @@ async def remove_device(
     await NotificationService(session).remove_device(current_user.id, token)
 
 
-@router.post("/admin/notifications/broadcast", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/admin/notifications/broadcast", response_model=BroadcastResultOut)
 async def broadcast(
     payload: BroadcastIn,
     actor: User = Depends(require_role(RoleName.ADMIN)),
     actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):
-    await NotificationService(session).broadcast(payload, actor.id, actor_role)
+    return await NotificationService(session).broadcast(payload, actor.id, actor_role)
 
 
 # --- рекламные заготовки (PROMO_MESSAGES_FILE) ---

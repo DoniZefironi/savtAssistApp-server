@@ -58,6 +58,11 @@ class BroadcastIn(BaseModel):
     role: str | None = Field(None, pattern="^(user|operator|admin)$")
 
 
+class BroadcastResultOut(BaseModel):
+    sent_to: int
+    skipped_opted_out: int
+
+
 class PromoMessageOut(BaseModel):
     """Заготовка рекламного уведомления из файла (см. PROMO_MESSAGES_FILE)."""
     id: str

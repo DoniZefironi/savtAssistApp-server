@@ -7,6 +7,7 @@ from app.repositories.notification import DeviceTokenRepository, NotificationRep
 from app.services.audit_service import AuditLogger
 from app.schemas.notifications import (
     BroadcastIn,
+    BroadcastResultOut,
     DeviceTokenIn,
     NotificationOut,
     NotificationSettingsOut,
@@ -149,7 +150,9 @@ class NotificationService:
             raise NotFoundError("Токен не найден")
         await self.session.commit()
 
-    async def broadcast(self, data: BroadcastIn, actor_id: int = 0, actor_role: str = "admin") -> None:
+    async def broadcast(
+        self, data: BroadcastIn, actor_id: int = 0, actor_role: str = "admin",
+    ) -> BroadcastResultOut:
         all_ids = await self.repo.get_all_user_ids(data.role)
         # Рассылка уважает переключатель promotional — и для пуша, и для записи
         # в списке уведомлений. Раньше он не проверялся вовсе: пользователь мог
@@ -163,9 +166,10 @@ class NotificationService:
                 body=data.body,
                 data={},
             )
+        skipped = len(all_ids) - len(user_ids)
         self.audit.log("notification.broadcast", "notification", None, actor_id, actor_role,
                        {"title": data.title, "role": data.role,
-                        "recipients": len(user_ids), "opted_out": len(all_ids) - len(user_ids)})
+                        "recipients": len(user_ids), "opted_out": skipped})
         await self.session.commit()
 
         for user_id in user_ids:
@@ -173,3 +177,5 @@ class NotificationService:
                 self.session, user_id, data.title, data.body,
                 notification_type="promotional",
             )
+
+        return BroadcastResultOut(sent_to=len(user_ids), skipped_opted_out=skipped)
