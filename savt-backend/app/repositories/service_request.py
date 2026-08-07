@@ -11,12 +11,16 @@ class ServiceRequestRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def create(self, user_id: int, cabinet_id: int, request_type: str, description: str) -> ServiceRequest:
+    async def create(
+        self, user_id: int, cabinet_id: int, request_type: str, description: str,
+        client_token: str | None = None,
+    ) -> ServiceRequest:
         req = ServiceRequest(
             user_id=user_id,
             cabinet_id=cabinet_id,
             request_type=request_type,
             description=description,
+            client_token=client_token,
         )
         self.session.add(req)
         await self.session.flush()
@@ -24,6 +28,15 @@ class ServiceRequestRepository:
 
     async def get_by_id(self, req_id: int) -> ServiceRequest | None:
         return await self.session.get(ServiceRequest, req_id)
+
+    async def find_by_client_token(self, user_id: int, client_token: str) -> ServiceRequest | None:
+        result = await self.session.execute(
+            select(ServiceRequest).where(
+                ServiceRequest.user_id == user_id,
+                ServiceRequest.client_token == client_token,
+            )
+        )
+        return result.scalar_one_or_none()
 
     async def find_by_bitrix_task_id(self, bitrix_task_id: str) -> ServiceRequest | None:
         result = await self.session.execute(

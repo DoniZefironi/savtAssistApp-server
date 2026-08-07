@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timezone
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError, PermissionDeniedError
@@ -294,18 +295,43 @@ class ServiceRequestService:
         self.user_cabinet_repo = UserCabinetRepository(session)
         self.audit = AuditLogger(session)
 
+    async def _existing_by_client_token(self, user_id: int, client_token: str) -> ServiceRequestOut | None:
+        existing = await self.repo.find_by_client_token(user_id, client_token)
+        if existing is None:
+            return None
+        from app.repositories.cabinet import CabinetRepository
+        from app.repositories.chat import ChatRepository
+        cabinet = await CabinetRepository(self.session).get_by_id(existing.cabinet_id)
+        chat = await ChatRepository(self.session).find_by_service_request(existing.id)
+        return _to_out(existing, cabinet, chat.id if chat else None)
+
     async def create(self, user_id: int, data: ServiceRequestCreateIn) -> ServiceRequestOut:
         link = await self.user_cabinet_repo.find(user_id, data.cabinet_id)
         if link is None:
             raise PermissionDeniedError("У вас нет доступа к этому ШУ")
 
-        req = await self.repo.create(
-            user_id=user_id,
-            cabinet_id=data.cabinet_id,
-            request_type=data.request_type,
-            description=data.description,
-        )
-        await self.session.flush()
+        if data.client_token:
+            existing_out = await self._existing_by_client_token(user_id, data.client_token)
+            if existing_out is not None:
+                return existing_out
+
+        try:
+            req = await self.repo.create(
+                user_id=user_id,
+                cabinet_id=data.cabinet_id,
+                request_type=data.request_type,
+                description=data.description,
+                client_token=data.client_token,
+            )
+            await self.session.flush()
+        except IntegrityError:
+            # Гонка: два одинаковых запроса (тот же user_id + client_token)
+            # прошли pre-check одновременно, в БД проехал только один — тот и отдаём.
+            await self.session.rollback()
+            existing_out = await self._existing_by_client_token(user_id, data.client_token) if data.client_token else None
+            if existing_out is None:
+                raise
+            return existing_out
         self.audit.log("service_request.create", "service_request", req.id, user_id, "user",
                        {"cabinet_id": data.cabinet_id, "type": data.request_type})
 

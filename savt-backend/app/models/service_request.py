@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import String, DateTime, ForeignKey, func, Text
+from sqlalchemy import String, DateTime, ForeignKey, func, Index, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -27,6 +27,19 @@ class ServiceRequest(Base):
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # ID задачи в Bitrix24 (tasks.task.add), null если Bitrix не настроен или создание не удалось
     bitrix_task_id: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # ключ идемпотентности для оффлайн-очереди клиента (обычно tempId заявки).
+    # Уникален в паре с user_id (см. индекс ниже) — повтор того же токена от
+    # того же пользователя возвращает уже созданную заявку вместо дубля.
+    client_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     def __repr__(self) -> str:
         return f"<ServiceRequest id={self.id} type={self.request_type} status={self.status}>"
+
+    __table_args__ = (
+        Index(
+            "uq_service_requests_user_client_token",
+            "user_id", "client_token",
+            unique=True,
+            postgresql_where=text("client_token IS NOT NULL"),
+        ),
+    )

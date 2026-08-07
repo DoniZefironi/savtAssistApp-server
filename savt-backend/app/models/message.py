@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Boolean, DateTime, ForeignKey, func, Text, Index
+from sqlalchemy import Boolean, DateTime, ForeignKey, func, String, Text, Index, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -17,6 +17,10 @@ class Message(Base):
     sender_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     # текст сообщения
     text: Mapped[str | None] = mapped_column(Text)
+    # ключ идемпотентности для оффлайн-очереди клиента (обычно tempId отправки).
+    # Уникален в паре с sender_id (см. индекс ниже) — повтор того же токена от
+    # того же отправителя возвращает уже созданное сообщение вместо дубля.
+    client_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # ответ на сообщение
     reply_to_message_id: Mapped[int | None] = mapped_column(
         ForeignKey("messages.id"), index=True
@@ -39,4 +43,10 @@ class Message(Base):
     
     __table_args__ = (
         Index("ix_messages_chat_created", "chat_id", "created_at"),
+        Index(
+            "uq_messages_sender_client_token",
+            "sender_id", "client_token",
+            unique=True,
+            postgresql_where=text("client_token IS NOT NULL"),
+        ),
     )

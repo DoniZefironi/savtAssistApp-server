@@ -108,6 +108,10 @@ class MessageCreateIn(BaseModel):
     text: str | None = Field(None, min_length=1, max_length=4000)
     reply_to_message_id: int | None = Field(None, gt=0)
     attachments: list[AttachmentIn] = []
+    # Ключ идемпотентности оффлайн-очереди (tempId) — повторная отправка с тем
+    # же токеном вернёт уже созданное сообщение вместо дубля. Необязателен:
+    # без него (обычный онлайн-запрос) дедупликации нет, как и раньше.
+    client_token: str | None = Field(None, min_length=1, max_length=64)
 
     @model_validator(mode="after")
     def must_have_content(self) -> "MessageCreateIn":

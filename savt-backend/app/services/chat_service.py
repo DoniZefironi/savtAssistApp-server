@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AlreadyExistsError, NotFoundError, PermissionDeniedError
@@ -231,13 +232,34 @@ class ChatService:
         if chat.archived_at is not None:
             raise PermissionDeniedError("Чат архивирован — заявка закрыта, отправка сообщений недоступна")
 
+        if data.client_token:
+            existing = await self.msg_repo.find_by_client_token(sender_id, data.client_token)
+            if existing is not None:
+                from app.repositories.user import UserRepository
+                sender = await UserRepository(self.session).get_by_id(sender_id)
+                return await self._build_message_out(existing, sender)
+
         reply_to = data.reply_to_message_id if data.reply_to_message_id else None
-        msg = await self.msg_repo.create(
-            chat_id=chat_id,
-            sender_id=sender_id,
-            text=data.text,
-            reply_to_message_id=reply_to,
-        )
+        try:
+            msg = await self.msg_repo.create(
+                chat_id=chat_id,
+                sender_id=sender_id,
+                text=data.text,
+                reply_to_message_id=reply_to,
+                client_token=data.client_token,
+            )
+        except IntegrityError:
+            # Гонка: два одинаковых запроса (тот же sender_id + client_token)
+            # прошли pre-check одновременно, в БД проехал только один — тот и отдаём.
+            await self.session.rollback()
+            if not data.client_token:
+                raise
+            existing = await self.msg_repo.find_by_client_token(sender_id, data.client_token)
+            if existing is None:
+                raise
+            from app.repositories.user import UserRepository
+            sender = await UserRepository(self.session).get_by_id(sender_id)
+            return await self._build_message_out(existing, sender)
 
         for att in data.attachments:
             if att.latitude is not None and att.longitude is not None:

@@ -7,7 +7,8 @@
       "PowerShell(Set-Location \"c:\\\\Users\\\\ShaboldaV\\\\Documents\\\\GitHub\\\\savtAssistApp-server\"; $count = \\(git ls-files | Select-String \"\\\\.venv\"\\).Count; Write-Output \"venv tracked files: $count\"; Get-Content \"savt-backend\\\\.gitignore\" -ErrorAction SilentlyContinue | Select-Object -First 30)",
       "Bash(grep -iE \"\\\\.env$|\\\\.venv\")",
       "Bash(powershell -Command \"Select-String -Path app\\\\routers\\\\auth.py -Pattern 'from fastapi import|^import'\")",
-      "Bash(powershell -Command \"Select-String -Path app\\\\core\\\\exceptions.py -Pattern 'class.*Error'; Select-String -Path app\\\\main.py -Pattern 'PermissionDeniedError'\")"
+      "Bash(powershell -Command \"Select-String -Path app\\\\core\\\\exceptions.py -Pattern 'class.*Error'; Select-String -Path app\\\\main.py -Pattern 'PermissionDeniedError'\")",
+      "PowerShell(cd savt-backend; python -m py_compile app/models/message.py app/models/service_request.py app/schemas/chat.py app/schemas/service_requests.py app/repositories/chat.py app/repositories/service_request.py app/services/chat_service.py app/services/service_request_service.py alembic/versions/d8f3a29c15be_add_client_token_idempotency.py; echo \"OK: $LASTEXITCODE\")"
     ]
   }
 }

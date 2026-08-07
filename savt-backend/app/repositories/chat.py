@@ -155,18 +155,29 @@ class MessageRepository:
     async def get_by_id(self, msg_id: int) -> Message | None:
         return await self.session.get(Message, msg_id)
 
+    async def find_by_client_token(self, sender_id: int, client_token: str) -> Message | None:
+        result = await self.session.execute(
+            select(Message).where(
+                Message.sender_id == sender_id,
+                Message.client_token == client_token,
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def create(
         self,
         chat_id: int,
         sender_id: int,
         text: str | None,
         reply_to_message_id: int | None = None,
+        client_token: str | None = None,
     ) -> Message:
         msg = Message(
             chat_id=chat_id,
             sender_id=sender_id,
             text=text,
             reply_to_message_id=reply_to_message_id,
+            client_token=client_token,
         )
         self.session.add(msg)
         await self.session.flush()

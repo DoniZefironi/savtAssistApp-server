@@ -10,6 +10,9 @@ class ServiceRequestCreateIn(BaseModel):
     cabinet_id: int = Field(..., gt=0)
     request_type: str = Field(..., pattern="^(repair|diagnostics|remote_adjustment|onsite_adjustment|other)$")
     description: str = Field(..., min_length=10, max_length=2000)
+    # Ключ идемпотентности оффлайн-очереди (tempId) — повторная отправка с тем
+    # же токеном вернёт уже созданную заявку вместо дубля. Необязателен.
+    client_token: str | None = Field(None, min_length=1, max_length=64)
 
 
 class ServiceRequestOut(BaseModel):

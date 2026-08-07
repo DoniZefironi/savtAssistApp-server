@@ -42,7 +42,7 @@ def _client_info(request: Request) -> tuple[str | None, str | None]:
     return user_agent, ip
 
 # Гостевой доступ — без регистрации, для экранов, явно открытых без входа
-# (сейчас это КБ и FAQ, см. get_current_user_or_guest). Не пишет в БД: сессии
+# (сейчас это КБ, FAQ и чтение тегов, см. get_current_user_or_guest). Не пишет в БД: сессии
 # гостя нет, поэтому и отзывать нечего — при истечении клиент просто зовёт
 # ручку заново.
 @router.post("/guest", response_model=GuestTokenOut)

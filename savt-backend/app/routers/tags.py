@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleName
-from app.core.dependencies import get_current_user, get_session, require_role
+from app.core.dependencies import get_current_user_or_guest, get_session, require_role
 from app.models.user import User
 from app.schemas.tags import DocumentTagsIn, TagCreateIn, TagOut
 from app.services.tag_service import TagService
@@ -13,7 +13,7 @@ router = APIRouter(tags=["tags"])
 @router.get("/tags", response_model=list[TagOut])
 async def list_tags(
     scope: str | None = Query(None, pattern="^(document|cabinet|cabinet_type)$"),
-    _: User = Depends(get_current_user),
+    _: User | None = Depends(get_current_user_or_guest),
     session: AsyncSession = Depends(get_session),
 ):
     return await TagService(session).list_all(scope=scope)
