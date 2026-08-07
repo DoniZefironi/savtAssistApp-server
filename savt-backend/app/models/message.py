@@ -1,5 +1,6 @@
 from datetime import datetime
-from sqlalchemy import Boolean, DateTime, ForeignKey, func, String, Text, Index, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, func, String, Text, Index
+from sqlalchemy import text as sql_text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -47,6 +48,6 @@ class Message(Base):
             "uq_messages_sender_client_token",
             "sender_id", "client_token",
             unique=True,
-            postgresql_where=text("client_token IS NOT NULL"),
+            postgresql_where=sql_text("client_token IS NOT NULL"),
         ),
     )
