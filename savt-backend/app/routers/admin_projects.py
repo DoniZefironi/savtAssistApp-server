@@ -14,6 +14,7 @@ from app.schemas.project import (
     ProjectListOut,
     ProjectOut,
     ProjectUpdateIn,
+    SyncAllFoldersResultOut,
     SyncFolderResultOut,
 )
 from app.services import project_code_service
@@ -32,6 +33,18 @@ async def sync_project_folder_now(
     session: AsyncSession = Depends(get_session),
 ):
     return await ProjectService(session).sync_folder_now(project_id)
+
+
+# Синхронизировать папки ВСЕХ проектов на NAS прямо сейчас, одним запросом —
+# то же самое, что ночной прогон (см. sync_all_project_folders), но по кнопке,
+# без ожидания до 2:00 и без похода в каждый проект отдельно. Ограничение по
+# гарантии здесь, в отличие от ручки одного проекта, сохраняется.
+@router.post("/sync-folders", response_model=SyncAllFoldersResultOut)
+async def sync_all_project_folders_now(
+    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    session: AsyncSession = Depends(get_session),
+):
+    return await ProjectService(session).sync_all_folders_now()
 
 
 # Создать проект

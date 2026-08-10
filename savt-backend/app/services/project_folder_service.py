@@ -582,29 +582,47 @@ async def import_new_files_from_nas(
     return imported
 
 
-async def sync_all_project_folders() -> None:
-    """Ночной прогон: синхронизирует только проекты, у которых гарантия ШУ ещё
-    актуальна (+ неделя запаса) — см. is_sync_eligible.
+async def _sync_all_projects(session: AsyncSession) -> dict:
+    """Общий проход по всем активным проектам — переиспользуется и ночным cron'ом
+    (sync_all_project_folders, своя сессия), и ручным запуском по кнопке
+    (ProjectService.sync_all_folders_now, сессия запроса). Синхронизирует только
+    проекты, у которых гарантия ШУ ещё актуальна (+ неделя запаса) — см.
+    is_sync_eligible; остальные только переезжают в свою годовую папку, без
+    дорогой полной сверки.
 
     Раскладку по годам это ограничение не касается: папка проекта с истёкшей
     гарантией всё равно переезжает в свою годовую. Иначе половина архива навсегда
     осталась бы лежать плоско в корне — а именно старые проекты и составляют его
-    основную часть."""
+    основную часть.
+
+    Одну "плохую" папку (например, недоступную по сети шару) не даёт уронить
+    весь прогон — ошибка на проекте логируется и считается в failed, остальные
+    проекты обрабатываются дальше."""
+    project_repo = ProjectRepository(session)
+    cabinet_repo = CabinetRepository(session)
+    projects = await project_repo.list_all_active()
+    stats = {"total": len(projects), "synced": 0, "relocated": 0, "failed": 0}
+    for project in projects:
+        cabinets = await cabinet_repo.list_by_project(project.id)
+        try:
+            if is_sync_eligible(cabinets, project):
+                await sync_project_folder(session, project)
+                stats["synced"] += 1
+            else:
+                await relocate_project_folder(session, project)
+                stats["relocated"] += 1
+        except Exception:
+            stats["failed"] += 1
+            logger.exception("Не удалось синхронизировать папку проекта %s", project.id)
+    return stats
+
+
+async def sync_all_project_folders() -> None:
+    """Ночной прогон (см. _sync_all_projects) — своя сессия, без возврата статистики."""
     if not settings.project_folders_root:
         return
     async with AsyncSessionLocal() as session:
-        project_repo = ProjectRepository(session)
-        cabinet_repo = CabinetRepository(session)
-        projects = await project_repo.list_all_active()
-        for project in projects:
-            cabinets = await cabinet_repo.list_by_project(project.id)
-            try:
-                if is_sync_eligible(cabinets, project):
-                    await sync_project_folder(session, project)
-                else:
-                    await relocate_project_folder(session, project)
-            except Exception:
-                logger.exception("Не удалось синхронизировать папку проекта %s", project.id)
+        await _sync_all_projects(session)
 
 
 # --- fire-and-forget обёртки для вызова из request-хендлеров сервисов ---

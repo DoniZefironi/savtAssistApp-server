@@ -88,6 +88,16 @@ class SyncFolderResultOut(BaseModel):
     message: str
 
 
+class SyncAllFoldersResultOut(BaseModel):
+    """Итог ручной сверки папок всех проектов разом (кнопка "синхронизировать всё")."""
+    total_projects: int
+    synced_projects: int
+    # переехали в годовую папку без полной сверки — гарантия истекла, см. is_sync_eligible
+    relocated_projects: int
+    failed_projects: int
+    message: str
+
+
 class CabinetProjectPatchIn(BaseModel):
     project_id: int | None = Field(None, gt=0)
 

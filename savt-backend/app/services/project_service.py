@@ -145,6 +145,34 @@ class ProjectService:
             ),
         }
 
+    # То же самое, что делает ночной прогон, но по кнопке для всех проектов
+    # разом — не нужно кликать sync-folder на каждом проекте отдельно. В отличие
+    # от sync_folder_now (один конкретный проект) ограничение по гарантии тут
+    # остаётся в силе — иначе на большом архиве кнопка запускала бы полную
+    # сверку сотен давно закрытых проектов впустую.
+    async def sync_all_folders_now(self) -> dict:
+        from app.config import settings
+        from app.services import project_folder_service
+
+        if not settings.project_folders_root:
+            raise NotFoundError("Синхронизация папок не настроена (PROJECT_FOLDERS_ROOT)")
+
+        stats = await project_folder_service._sync_all_projects(self.session)
+
+        parts = [f"синхронизировано: {stats['synced']}"]
+        if stats["relocated"]:
+            parts.append(f"перенесено без полной сверки (гарантия истекла): {stats['relocated']}")
+        if stats["failed"]:
+            parts.append(f"с ошибкой: {stats['failed']}")
+
+        return {
+            "total_projects": stats["total"],
+            "synced_projects": stats["synced"],
+            "relocated_projects": stats["relocated"],
+            "failed_projects": stats["failed"],
+            "message": f"Проектов всего: {stats['total']} — " + ", ".join(parts),
+        }
+
     # Обновление проекта
     async def update(self, project_id: int, data: ProjectUpdateIn, actor_id: int, actor_role: str) -> ProjectOut:
         project = await self.repo.get_by_id(project_id)
