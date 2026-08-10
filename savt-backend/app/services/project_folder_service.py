@@ -47,6 +47,9 @@ _INVALID_CHARS_RE = re.compile(r'[\\/:*?"<>|]')
 # Синхронизация продолжается ещё столько дней после истечения гарантии — если
 # гарантию продлят позже, синхронизация возобновится сама при следующем прогоне
 _GRACE_DAYS = 7
+# Запас на грубость mtime у сетевых шар/старых ФС — разница меньше этого не
+# считается изменением содержимого фото на NAS
+_MTIME_EPSILON_SECONDS = 2.0
 
 
 def sanitize_folder_name(name: str) -> str:
@@ -299,13 +302,16 @@ async def export_photos(
     Имя на NAS фото получает один раз (при первом экспорте) и дальше сверяется
     по нему (CabinetPhoto.nas_filename), а не пересчитывается из caption заново —
     иначе смена подписи в приложении плодила бы на диске второй файл вместо
-    переиспользования старого.
+    переиспользования старого. Смена подписи файл на диске не переименовывает.
 
     Файл, который раньше был синхронизирован (nas_filename уже проставлен), а
     теперь пропал с NAS — это осознанное удаление человеком, а не сбой: фото
-    убирается и в приложении, а не восстанавливается копией из /uploads. Без
-    этого удалить фото с диска было бы вообще нельзя — на следующей же сверке
-    оно возвращалось бы само."""
+    убирается и в приложении, а не восстанавливается копией из /uploads.
+
+    Если файл на месте, но его содержимое подменили под тем же именем (mtime
+    разошёлся с CabinetPhoto.nas_mtime) — новое содержимое перезаливается в
+    /uploads, url обновляется. caption/sort_order при этом не трогаются, это
+    поля приложения, а не диска."""
     from app.models.cabinet_photo import CabinetPhoto
     from sqlalchemy import select
 
@@ -326,12 +332,34 @@ async def export_photos(
     for index, photo in enumerate(photos, start=1):
         if photo.nas_filename:
             dest = dest_dir / photo.nas_filename
-            if await asyncio.to_thread(dest.exists):
-                remaining.append(photo)
+            if not await asyncio.to_thread(dest.exists):
+                await session.delete(photo)
+                changed = True
+                logger.info("Фото %s удалено вручную с NAS (%s) — убрано и в приложении", photo.id, dest)
                 continue
-            await session.delete(photo)
-            changed = True
-            logger.info("Фото %s удалено вручную с NAS (%s) — убрано и в приложении", photo.id, dest)
+
+            mtime = (await asyncio.to_thread(dest.stat)).st_mtime
+            if photo.nas_mtime is None:
+                # Первая сверка с этим полем в схеме — фиксируем базовую точку,
+                # само по себе это не значит, что файл только что заменили
+                photo.nas_mtime = mtime
+                changed = True
+            elif mtime - photo.nas_mtime > _MTIME_EPSILON_SECONDS:
+                try:
+                    info = await asyncio.to_thread(save_local_file, dest)
+                    if info.mime_type.startswith("image/"):
+                        photo.url = info.url
+                        photo.nas_mtime = mtime
+                        changed = True
+                        logger.info("Фото %s заменено на NAS (%s) — обновлено в приложении", photo.id, dest)
+                    else:
+                        logger.warning(
+                            "Файл %s заменён на не-изображение (%s) — фото %s не обновлено",
+                            dest, info.mime_type, photo.id,
+                        )
+                except OSError:
+                    logger.exception("Не удалось перезалить изменённое фото %s из %s", photo.id, dest)
+            remaining.append(photo)
             continue
 
         src = UPLOAD_ROOT / (photo.url or "").removeprefix("/static/")
@@ -343,13 +371,18 @@ async def export_photos(
         stem = sanitize_folder_name(photo.caption) if photo.caption else f"Фото {index}"
         dest = dest_dir / f"{index:03d} {stem}{src.suffix}"
         if await asyncio.to_thread(dest.exists):
-            # Имя уже занято — например, файлом, подхваченным обратной
-            # синхронизацией с точно таким же именем. Не перезаписываем.
+            # Файл с таким именем уже на месте — почти наверняка наша же
+            # прошлая выгрузка (сделанная до появления nas_filename), просто ещё
+            # не привязанная к записи. Привязываем, не перезаписывая содержимое.
+            photo.nas_filename = dest.name
+            photo.nas_mtime = (await asyncio.to_thread(dest.stat)).st_mtime
+            changed = True
             remaining.append(photo)
             continue
         try:
             await asyncio.to_thread(shutil.copyfile, src, dest)
             photo.nas_filename = dest.name
+            photo.nas_mtime = (await asyncio.to_thread(dest.stat)).st_mtime
             changed = True
         except OSError:
             logger.exception("Не удалось скопировать фото %s в %s", photo.id, dest)

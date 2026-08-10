@@ -25,7 +25,8 @@
       "PowerShell(cd savt-backend; python -m py_compile app/services/chat_service.py app/routers/operator.py; echo \"compile exit: $LASTEXITCODE\")",
       "PowerShell(cd savt-backend; python -m py_compile app/schemas/chat.py app/services/chat_service.py app/routers/chats.py; echo \"compile exit: $LASTEXITCODE\")",
       "PowerShell(cd savt-backend; python -m py_compile app/services/project_folder_service.py app/services/project_service.py app/schemas/project.py app/routers/admin_projects.py; echo \"compile exit: $LASTEXITCODE\")",
-      "PowerShell(cd savt-backend; python -m py_compile app/services/project_folder_service.py app/services/document_service.py; echo \"compile exit: $LASTEXITCODE\")"
+      "PowerShell(cd savt-backend; python -m py_compile app/services/project_folder_service.py app/services/document_service.py; echo \"compile exit: $LASTEXITCODE\")",
+      "PowerShell(cd savt-backend; python -m py_compile app/models/cabinet_photo.py app/services/project_folder_service.py alembic/versions/a29e6c4d8f13_add_cabinet_photo_nas_mtime.py; echo \"compile exit: $LASTEXITCODE\")"
     ]
   }
 }

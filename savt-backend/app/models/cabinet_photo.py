@@ -1,4 +1,4 @@
-from sqlalchemy import CheckConstraint, String, ForeignKey, Integer, DateTime, func
+from sqlalchemy import CheckConstraint, Float, String, ForeignKey, Integer, DateTime, func
 from datetime import datetime
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -38,6 +38,10 @@ class CabinetPhoto(Base):
     # иначе смена подписи в приложении плодила бы на NAS второй файл вместо
     # переиспользования старого (см. Document.nas_filename — тот же принцип).
     nas_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # mtime (эпоха, секунды) файла на NAS на момент последней сверки — по нему
+    # отличаем "файл не менялся" от "содержимое подменили на диске, имя то же".
+    # При расхождении содержимое перезаливается в /uploads поверх старого url.
+    nas_mtime: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     def __repr__(self) -> str:
         return f"<CabinetPhoto id={self.id} cabinet_id={self.cabinet_id} project_id={self.project_id}>"
