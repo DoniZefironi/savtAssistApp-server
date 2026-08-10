@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user, get_session
 from app.models.user import User
-from app.schemas.chat import ChatAttachmentOut, ChatListOut, ChatOut, ChatSettingsIn, ChatSettingsOut, MessageCreateIn, MessageOut, WallpaperIn
+from app.schemas.chat import ChatAttachmentOut, ChatListOut, ChatOut, ChatSettingsIn, ChatSettingsOut, MessageBulkDeleteIn, MessageBulkDeleteOut, MessageCreateIn, MessageOut, WallpaperIn
 from app.services.chat_service import ChatService
 
 router = APIRouter(tags=["chats"])
@@ -113,6 +113,20 @@ async def delete_message(
     session: AsyncSession = Depends(get_session),
 ):
     await ChatService(session).delete_message(chat_id, msg_id, current_user.id)
+
+# Массовое удаление своих сообщений одним запросом — вместо цикла из отдельных
+# DELETE на клиенте, который на полусотне сообщений упирался в rate-limit
+@router.delete("/chats/{chat_id}/messages", response_model=MessageBulkDeleteOut)
+async def bulk_delete_messages(
+    chat_id: int,
+    payload: MessageBulkDeleteIn,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    deleted_ids = await ChatService(session).bulk_delete_messages(
+        chat_id, current_user.id, payload.message_ids
+    )
+    return MessageBulkDeleteOut(deleted_ids=deleted_ids)
 
 # Поставить реакцию
 @router.post("/chats/{chat_id}/messages/{msg_id}/reactions/{emoji}", status_code=status.HTTP_204_NO_CONTENT)

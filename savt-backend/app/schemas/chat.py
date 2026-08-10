@@ -120,6 +120,16 @@ class MessageCreateIn(BaseModel):
         return self
 
 
+class MessageBulkDeleteIn(BaseModel):
+    message_ids: list[int] = Field(..., min_length=1, max_length=200)
+
+
+class MessageBulkDeleteOut(BaseModel):
+    # Только реально удалённые: чужие/несуществующие/уже удалённые ID молча
+    # пропускаются, а не роняют весь запрос — см. ChatService.bulk_delete_messages
+    deleted_ids: list[int]
+
+
 class ChatListOut(BaseModel):
     id: int
     chat_type: str

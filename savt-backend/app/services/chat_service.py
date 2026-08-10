@@ -479,6 +479,34 @@ class ChatService:
         await self.session.commit()
         await publish_message_deleted(chat_id, msg_id)
 
+    # Массовое удаление одним запросом вместо N по одному — цикл из отдельных
+    # DELETE на каждое сообщение упирался в общий rate-limit (200/minute, см.
+    # core/limiter.py) уже на паре десятков сообщений. Чужие/несуществующие/уже
+    # удалённые ID тут не ошибка, а просто пропускаются — партия не должна
+    # падать целиком из-за одного "плохого" ID в списке.
+    async def bulk_delete_messages(
+        self, chat_id: int, user_id: int, message_ids: list[int]
+    ) -> list[int]:
+        from sqlalchemy import update as sa_update
+        await self._get_chat_or_403(chat_id, user_id)
+        now = datetime.now(timezone.utc)
+        result = await self.session.execute(
+            sa_update(Message)
+            .where(
+                Message.chat_id == chat_id,
+                Message.id.in_(message_ids),
+                Message.sender_id == user_id,
+                Message.deleted_at.is_(None),
+            )
+            .values(deleted_at=now, text=None)
+            .returning(Message.id)
+        )
+        deleted_ids = list(result.scalars().all())
+        await self.session.commit()
+        for msg_id in deleted_ids:
+            await publish_message_deleted(chat_id, msg_id)
+        return deleted_ids
+
     async def add_reaction(
         self, chat_id: int, msg_id: int, user_id: int, emoji: str
     ) -> None:
