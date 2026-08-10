@@ -32,6 +32,12 @@ class CabinetPhoto(Base):
         DateTime(timezone=True),
         server_default=func.now(),
     )
+    # Фактическое имя файла в подпапке «Фото» на NAS — заполняется один раз при
+    # первом экспорте или при подхвате обратной синхронизацией. Дальше сверка
+    # сверяется по этому имени, а не пересчитывает его из caption заново —
+    # иначе смена подписи в приложении плодила бы на NAS второй файл вместо
+    # переиспользования старого (см. Document.nas_filename — тот же принцип).
+    nas_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     def __repr__(self) -> str:
         return f"<CabinetPhoto id={self.id} cabinet_id={self.cabinet_id} project_id={self.project_id}>"

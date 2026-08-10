@@ -226,11 +226,13 @@ async def relocate_project_folder(session: AsyncSession, project: Project) -> No
 
 
 async def sync_project_folder(session: AsyncSession, project: Project) -> None:
-    """Структурная сверка + сверка документов проекта с их зеркалом на NAS.
+    """Структурная сверка + сверка документов и фото проекта с их зеркалом на NAS.
     Подтягивает папку на её место (переименование при смене названия, переезд в
     годовую папку у старых проектов), досоздаёт недостающие подпапки шаблона,
     докопировает отсутствующие в корне файлы документов проекта
-    (Document.project_id)."""
+    (Document.project_id), а также заводит документы и фото на файлы, которые
+    положили в папку проекта/ШУ напрямую, минуя приложение (см.
+    import_new_files_from_nas, import_new_photos_from_nas)."""
     if not settings.project_folders_root:
         return
 
@@ -260,14 +262,18 @@ async def sync_project_folder(session: AsyncSession, project: Project) -> None:
     since = project.folder_synced_at
 
     # Уровень проекта: его собственные фото и переписка
-    await export_photos(session, root, project_id=project.id)
+    project_photos = await export_photos(session, root, project_id=project.id)
+    await import_new_photos_from_nas(session, root / "Фото", project_photos, project_id=project.id)
     await export_chats(session, root, project_id=project.id, since=since)
 
     # Уровень ШУ: у каждого шкафа проекта своя папка с тем же шаблоном
     for cabinet in await CabinetRepository(session).list_by_project(project.id):
         cabinet_root = root / _cabinet_folder_name(cabinet)
         await _ensure_structure(cabinet_root)
-        await export_photos(session, cabinet_root, cabinet_id=cabinet.id)
+        cabinet_photos = await export_photos(session, cabinet_root, cabinet_id=cabinet.id)
+        await import_new_photos_from_nas(
+            session, cabinet_root / "Фото", cabinet_photos, cabinet_id=cabinet.id,
+        )
         await export_chats(session, cabinet_root, cabinet_id=cabinet.id, since=since)
 
     project.folder_synced_at = datetime.now(timezone.utc)
@@ -285,10 +291,16 @@ def _cabinet_folder_name(cabinet: Cabinet) -> str:
 async def export_photos(
     session: AsyncSession, root: Path, *,
     cabinet_id: int | None = None, project_id: int | None = None,
-) -> int:
-    """Раскладывает фотографии в подпапку «Фото». Уже скопированные пропускает —
-    файл на NAS не перезаписывается, чтобы не трогать то, что могли переименовать
-    или дополнить вручную."""
+) -> list["CabinetPhoto"]:
+    """Раскладывает фотографии в подпапку «Фото» и возвращает список фото —
+    вызывающий код передаёт его в import_new_photos_from_nas, чтобы не
+    запрашивать те же строки из БД второй раз.
+
+    Имя на NAS фото получает один раз (при первом экспорте) и дальше сверяется
+    по нему (CabinetPhoto.nas_filename), а не пересчитывается из caption заново —
+    иначе смена подписи в приложении плодила бы на диске второй файл вместо
+    переиспользования старого. Пропавший файл (стёрли вручную) восстанавливается
+    под тем же именем."""
     from app.models.cabinet_photo import CabinetPhoto
     from sqlalchemy import select
 
@@ -299,27 +311,91 @@ async def export_photos(
     )
     photos = list((await session.execute(stmt)).scalars().all())
     if not photos:
-        return 0
+        return photos
 
     dest_dir = root / "Фото"
     await asyncio.to_thread(dest_dir.mkdir, parents=True, exist_ok=True)
 
-    copied = 0
     for index, photo in enumerate(photos, start=1):
         src = UPLOAD_ROOT / (photo.url or "").removeprefix("/static/")
         if not await asyncio.to_thread(src.is_file):
             continue
-        # Номер в начале удерживает порядок сортировки в проводнике
-        stem = sanitize_folder_name(photo.caption) if photo.caption else f"Фото {index}"
-        dest = dest_dir / f"{index:03d} {stem}{src.suffix}"
-        if await asyncio.to_thread(dest.exists):
-            continue
+
+        if photo.nas_filename:
+            dest = dest_dir / photo.nas_filename
+            if await asyncio.to_thread(dest.exists):
+                continue
+        else:
+            # Номер в начале удерживает порядок сортировки в проводнике
+            stem = sanitize_folder_name(photo.caption) if photo.caption else f"Фото {index}"
+            dest = dest_dir / f"{index:03d} {stem}{src.suffix}"
+            if await asyncio.to_thread(dest.exists):
+                # Имя уже занято — например, файлом, подхваченным обратной
+                # синхронизацией с точно таким же именем. Не перезаписываем.
+                continue
+            photo.nas_filename = dest.name
+
         try:
             await asyncio.to_thread(shutil.copyfile, src, dest)
-            copied += 1
         except OSError:
             logger.exception("Не удалось скопировать фото %s в %s", photo.id, dest)
-    return copied
+    return photos
+
+
+async def import_new_photos_from_nas(
+    session: AsyncSession, dest_dir: Path, known_photos: list["CabinetPhoto"], *,
+    cabinet_id: int | None = None, project_id: int | None = None,
+) -> int:
+    """Обратное направление для фото — тот же принцип, что у import_new_files_from_nas,
+    но область уже: только сама подпапка «Фото» конкретного ШУ/проекта (не весь
+    корень, там фото и не раскладываются).
+
+    Файлы, которые не похожи на изображение (mime не image/*), пропускает — в
+    «Фото» иногда по ошибке кладут скан или документ, и заводить на него
+    CabinetPhoto не нужно."""
+    from app.repositories.document import PhotoRepository
+
+    known_names = {p.nas_filename for p in known_photos if p.nas_filename}
+
+    try:
+        entries = await asyncio.to_thread(lambda: sorted(dest_dir.iterdir(), key=lambda p: p.name))
+    except OSError:
+        logger.exception("Не удалось прочитать папку «Фото» %s", dest_dir)
+        return 0
+
+    next_order = max((p.sort_order for p in known_photos), default=0) + 1
+    photo_repo = PhotoRepository(session)
+    imported = 0
+    for entry in entries:
+        if await asyncio.to_thread(entry.is_dir):
+            continue
+        if entry.name in known_names or entry.name.startswith("~$"):
+            continue
+        try:
+            info = await asyncio.to_thread(save_local_file, entry)
+        except OSError:
+            logger.exception("Не удалось скопировать %s в uploads", entry)
+            continue
+        if not info.mime_type.startswith("image/"):
+            continue
+
+        await photo_repo.create(
+            cabinet_id=cabinet_id,
+            project_id=project_id,
+            url=info.url,
+            caption=entry.stem or None,
+            sort_order=next_order,
+            # Запоминаем имя как оно есть на диске — иначе следующая сверка
+            # снова сочтёт файл новым (см. комментарий у CabinetPhoto.nas_filename)
+            nas_filename=entry.name,
+        )
+        next_order += 1
+        imported += 1
+        logger.info("Подхвачено фото из папки «Фото» %s: %s", dest_dir, entry.name)
+
+    if imported:
+        await session.commit()
+    return imported
 
 
 def _format_message(msg, sender_name: str | None, attachments: list) -> str:
