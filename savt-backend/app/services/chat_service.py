@@ -207,6 +207,71 @@ class ChatService:
             ))
         return result
 
+    # Один чат с тем же обогащением, что и в списке (имя ШУ/проекта, автор) —
+    # для прямого перехода по ID (пуш, ссылка, перезагрузка страницы), когда
+    # список чатов оператора ещё не загружен и строки взять неоткуда.
+    async def get_operator_chat_detail(self, chat_id: int, operator_id: int) -> ChatListOut:
+        from app.repositories.chat import VISIBLE_CHAT_TYPES
+
+        chat = await self.chat_repo.get_by_id(chat_id)
+        # "notes" (личные заметки пользователя) оператору не видны — как и в списке
+        if chat is None or chat.chat_type not in VISIBLE_CHAT_TYPES:
+            raise NotFoundError("Чат не найден")
+
+        cabinet_name = None
+        cabinet_object_number = None
+        if chat.cabinet_id:
+            from app.repositories.cabinet import CabinetRepository
+            cab = await CabinetRepository(self.session).get_by_id(chat.cabinet_id)
+            if cab:
+                cabinet_name = cab.admin_internal_name or cab.object_number
+                cabinet_object_number = cab.object_number
+
+        project_name = None
+        if chat.project_id:
+            from app.repositories.project import ProjectRepository
+            proj = await ProjectRepository(self.session).get_by_id(chat.project_id)
+            project_name = proj.name if proj else None
+
+        from app.repositories.user import UserRepository
+        user = await UserRepository(self.session).get_by_id(chat.user_id)
+
+        unread = await self.chat_repo.get_unread_count(chat.id, operator_id)
+        last_text = None
+        msgs = await self.msg_repo.get_messages(chat.id, limit=1)
+        if msgs:
+            last_msg, _ = msgs[0]
+            last_text = last_msg.text if not last_msg.deleted_at else "Сообщение удалено"
+
+        sr = None
+        if chat.service_request_id:
+            sr_map = await self._get_service_requests([chat.service_request_id])
+            sr = sr_map.get(chat.service_request_id)
+
+        return ChatListOut(
+            id=chat.id,
+            chat_type=chat.chat_type,
+            cabinet_id=chat.cabinet_id,
+            cabinet_name=cabinet_name,
+            cabinet_object_number=cabinet_object_number,
+            project_id=chat.project_id,
+            project_name=project_name,
+            user_id=chat.user_id,
+            user_name=user.full_name if user else None,
+            last_message_text=last_text,
+            last_message_at=chat.last_message_at,
+            unread_count=unread,
+            problem_status=chat.problem_status,
+            bot_active=chat.bot_active,
+            operator_requested=chat.operator_requested,
+            service_request_id=chat.service_request_id,
+            service_request_type=sr.request_type if sr else None,
+            service_request_status=sr.status if sr else None,
+            service_request_description=sr.description if sr else None,
+            service_request_created_at=sr.created_at if sr else None,
+            archived_at=chat.archived_at,
+        )
+
     async def _get_service_requests(self, ids: list[int]) -> dict:
         if not ids:
             return {}

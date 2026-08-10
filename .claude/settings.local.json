@@ -21,7 +21,8 @@
       "PowerShell(.\\\\.venv\\\\Scripts\\\\python.exe -c \"import app.models; import app.main; print\\('OK'\\)\" 2>&1)",
       "PowerShell(cd savt-backend; python -m py_compile app/models/cabinet_photo.py app/services/project_folder_service.py alembic/versions/f4c7b1e9a382_add_cabinet_photo_nas_filename.py; echo \"compile exit: $LASTEXITCODE\")",
       "PowerShell($env:database_url=\"postgresql+asyncpg://u:p@localhost/db\"; $env:jwt_secret_key=\"x\"; .\\\\.venv\\\\Scripts\\\\python.exe -c \"import app.models; from app.services import project_folder_service; print\\('OK'\\)\" 2>&1 | Select-Object -Last 40)",
-      "PowerShell($env:database_url=\"postgresql+asyncpg://u:p@localhost/db\"; $env:jwt_secret_key=\"x\"; .\\\\.venv\\\\Scripts\\\\python.exe -c \"from app.models.tag import Tag\" 2>&1 | Select-Object -Last 15)"
+      "PowerShell($env:database_url=\"postgresql+asyncpg://u:p@localhost/db\"; $env:jwt_secret_key=\"x\"; .\\\\.venv\\\\Scripts\\\\python.exe -c \"from app.models.tag import Tag\" 2>&1 | Select-Object -Last 15)",
+      "PowerShell(cd savt-backend; python -m py_compile app/services/chat_service.py app/routers/operator.py; echo \"compile exit: $LASTEXITCODE\")"
     ]
   }
 }

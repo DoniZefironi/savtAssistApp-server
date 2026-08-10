@@ -66,6 +66,20 @@ async def list_operator_chats(
     )
 
 
+# Один чат по ID — для прямого перехода (пуш, ссылка, перезагрузка страницы),
+# когда список чатов ещё не загружен и строку оттуда взять неоткуда.
+# Те же поля, что и в /chats (см. ChatListOut) — заголовок и ссылки на
+# ШУ/проект/пользователя фронт строит из одного и того же набора полей
+# независимо от того, как чат был открыт.
+@router.get("/chats/{chat_id}", response_model=ChatListOut)
+async def get_operator_chat_detail(
+    chat_id: int,
+    operator: User = Depends(require_role(RoleName.OPERATOR, RoleName.ADMIN)),
+    session: AsyncSession = Depends(get_session),
+):
+    return await ChatService(session).get_operator_chat_detail(chat_id, operator.id)
+
+
 # Закреплённые сообщения чата (пустой массив — ничего не закреплено)
 @router.get("/chats/{chat_id}/pinned", response_model=list[MessageOut])
 async def get_pinned_messages(
