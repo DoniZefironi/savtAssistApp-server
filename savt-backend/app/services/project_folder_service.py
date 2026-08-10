@@ -292,15 +292,20 @@ async def export_photos(
     session: AsyncSession, root: Path, *,
     cabinet_id: int | None = None, project_id: int | None = None,
 ) -> list["CabinetPhoto"]:
-    """Раскладывает фотографии в подпапку «Фото» и возвращает список фото —
-    вызывающий код передаёт его в import_new_photos_from_nas, чтобы не
-    запрашивать те же строки из БД второй раз.
+    """Раскладывает фотографии в подпапку «Фото» и возвращает список оставшихся
+    фото (без удалённых по ходу сверки) — вызывающий код передаёт его в
+    import_new_photos_from_nas, чтобы не запрашивать те же строки из БД второй раз.
 
     Имя на NAS фото получает один раз (при первом экспорте) и дальше сверяется
     по нему (CabinetPhoto.nas_filename), а не пересчитывается из caption заново —
     иначе смена подписи в приложении плодила бы на диске второй файл вместо
-    переиспользования старого. Пропавший файл (стёрли вручную) восстанавливается
-    под тем же именем."""
+    переиспользования старого.
+
+    Файл, который раньше был синхронизирован (nas_filename уже проставлен), а
+    теперь пропал с NAS — это осознанное удаление человеком, а не сбой: фото
+    убирается и в приложении, а не восстанавливается копией из /uploads. Без
+    этого удалить фото с диска было бы вообще нельзя — на следующей же сверке
+    оно возвращалось бы само."""
     from app.models.cabinet_photo import CabinetPhoto
     from sqlalchemy import select
 
@@ -316,30 +321,43 @@ async def export_photos(
     dest_dir = root / "Фото"
     await asyncio.to_thread(dest_dir.mkdir, parents=True, exist_ok=True)
 
+    remaining: list[CabinetPhoto] = []
+    changed = False
     for index, photo in enumerate(photos, start=1):
-        src = UPLOAD_ROOT / (photo.url or "").removeprefix("/static/")
-        if not await asyncio.to_thread(src.is_file):
-            continue
-
         if photo.nas_filename:
             dest = dest_dir / photo.nas_filename
             if await asyncio.to_thread(dest.exists):
+                remaining.append(photo)
                 continue
-        else:
-            # Номер в начале удерживает порядок сортировки в проводнике
-            stem = sanitize_folder_name(photo.caption) if photo.caption else f"Фото {index}"
-            dest = dest_dir / f"{index:03d} {stem}{src.suffix}"
-            if await asyncio.to_thread(dest.exists):
-                # Имя уже занято — например, файлом, подхваченным обратной
-                # синхронизацией с точно таким же именем. Не перезаписываем.
-                continue
-            photo.nas_filename = dest.name
+            await session.delete(photo)
+            changed = True
+            logger.info("Фото %s удалено вручную с NAS (%s) — убрано и в приложении", photo.id, dest)
+            continue
 
+        src = UPLOAD_ROOT / (photo.url or "").removeprefix("/static/")
+        if not await asyncio.to_thread(src.is_file):
+            remaining.append(photo)
+            continue
+
+        # Номер в начале удерживает порядок сортировки в проводнике
+        stem = sanitize_folder_name(photo.caption) if photo.caption else f"Фото {index}"
+        dest = dest_dir / f"{index:03d} {stem}{src.suffix}"
+        if await asyncio.to_thread(dest.exists):
+            # Имя уже занято — например, файлом, подхваченным обратной
+            # синхронизацией с точно таким же именем. Не перезаписываем.
+            remaining.append(photo)
+            continue
         try:
             await asyncio.to_thread(shutil.copyfile, src, dest)
+            photo.nas_filename = dest.name
+            changed = True
         except OSError:
             logger.exception("Не удалось скопировать фото %s в %s", photo.id, dest)
-    return photos
+        remaining.append(photo)
+
+    if changed:
+        await session.commit()
+    return remaining
 
 
 async def import_new_photos_from_nas(
@@ -752,4 +770,43 @@ def schedule_document_removal(project_id: int, title: str, file_url: str | None)
                 await remove_document_from_nas(root, title, file_url)
             except Exception:
                 logger.exception("Не удалось убрать зеркало документа из папки проекта %s на NAS", project_id)
+    asyncio.create_task(_task())
+
+
+# Удаление фото через приложение убирает и его зеркало на NAS — иначе
+# осиротевший файл на следующей сверке был бы подхвачен обратной
+# синхронизацией заново как "новое" фото (import_new_photos_from_nas не
+# видит, что оно уже было удалено, у него нет записи в БД, значит для него
+# это неизвестный файл). nas_filename передаётся явно (не читается из БД
+# заново) — вызывающий код уже удалил строку к этому моменту.
+def schedule_photo_removal(
+    *, cabinet_id: int | None, project_id: int | None, nas_filename: str | None,
+) -> None:
+    async def _task():
+        if not settings.project_folders_root or not nas_filename:
+            return
+        async with AsyncSessionLocal() as session:
+            project_repo = ProjectRepository(session)
+            project = None
+            cabinet = None
+            if project_id is not None:
+                project = await project_repo.get_by_id(project_id)
+            elif cabinet_id is not None:
+                cabinet = await CabinetRepository(session).get_by_id(cabinet_id)
+                if cabinet is not None and cabinet.project_id is not None:
+                    project = await project_repo.get_by_id(cabinet.project_id)
+            if project is None:
+                return
+            try:
+                root = await _project_root_path(project, project_repo)
+                if cabinet is not None:
+                    root = root / _cabinet_folder_name(cabinet)
+                dest = root / "Фото" / nas_filename
+                if await asyncio.to_thread(dest.exists):
+                    await asyncio.to_thread(dest.unlink)
+            except Exception:
+                logger.exception(
+                    "Не удалось убрать зеркало фото из папки на NAS (cabinet_id=%s, project_id=%s)",
+                    cabinet_id, project_id,
+                )
     asyncio.create_task(_task())

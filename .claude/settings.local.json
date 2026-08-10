@@ -24,7 +24,8 @@
       "PowerShell($env:database_url=\"postgresql+asyncpg://u:p@localhost/db\"; $env:jwt_secret_key=\"x\"; .\\\\.venv\\\\Scripts\\\\python.exe -c \"from app.models.tag import Tag\" 2>&1 | Select-Object -Last 15)",
       "PowerShell(cd savt-backend; python -m py_compile app/services/chat_service.py app/routers/operator.py; echo \"compile exit: $LASTEXITCODE\")",
       "PowerShell(cd savt-backend; python -m py_compile app/schemas/chat.py app/services/chat_service.py app/routers/chats.py; echo \"compile exit: $LASTEXITCODE\")",
-      "PowerShell(cd savt-backend; python -m py_compile app/services/project_folder_service.py app/services/project_service.py app/schemas/project.py app/routers/admin_projects.py; echo \"compile exit: $LASTEXITCODE\")"
+      "PowerShell(cd savt-backend; python -m py_compile app/services/project_folder_service.py app/services/project_service.py app/schemas/project.py app/routers/admin_projects.py; echo \"compile exit: $LASTEXITCODE\")",
+      "PowerShell(cd savt-backend; python -m py_compile app/services/project_folder_service.py app/services/document_service.py; echo \"compile exit: $LASTEXITCODE\")"
     ]
   }
 }

@@ -168,8 +168,12 @@ class AdminDocumentService:
         photo = await self.photo_repo.get_by_id(photo_id)
         if photo is None:
             raise NotFoundError("Фото не найдено")
+        cabinet_id, project_id, nas_filename = photo.cabinet_id, photo.project_id, photo.nas_filename
         await self.photo_repo.delete(photo)
         await self.session.commit()
+        project_folder_service.schedule_photo_removal(
+            cabinet_id=cabinet_id, project_id=project_id, nas_filename=nas_filename,
+        )
 
     async def list_requests(
         self, status: str | None = None, page: int = 1, size: int = 20,
