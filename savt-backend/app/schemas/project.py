@@ -2,17 +2,14 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 
-class ProjectCreateIn(BaseModel):
-    name: str = Field(..., min_length=1, max_length=200)
-    parent_project_id: int | None = Field(None, gt=0)
-
-
 class ProjectUpdateIn(BaseModel):
-    name: str | None = Field(None, min_length=1, max_length=200)
     parent_project_id: int | None = Field(None, gt=0)
-    # Гарантия — единственное, что администратор может править: в CRM такого поля
-    # нет. Даты отгрузки, компания и контакты приезжают из Bitrix и здесь не
-    # принимаются — правки всё равно затрутся на ближайшем ONCRMDEALUPDATE.
+    # Название — тоже из Bitrix (title сделки), сюда не принимается: правка
+    # затёрлась бы на ближайшем ONCRMDEALUPDATE, а до тех пор карточка расходилась
+    # бы с CRM. Переименовать проект можно только сменой названия сделки.
+    # Гарантия — единственное, что администратор реально может править: в CRM
+    # такого поля нет. Даты отгрузки, компания и контакты тоже из Bitrix и здесь
+    # не принимаются — те же соображения, что и с названием.
     warranty_starts_at: datetime | None = None
     warranty_ends_at: datetime | None = None
 

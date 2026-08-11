@@ -10,7 +10,6 @@ from app.schemas.pagination import PageOut
 from app.schemas.project import (
     DecodeProjectCodeIn,
     DecodeProjectCodeOut,
-    ProjectCreateIn,
     ProjectListOut,
     ProjectOut,
     ProjectUpdateIn,
@@ -47,15 +46,8 @@ async def sync_all_project_folders_now(
     return await ProjectService(session).sync_all_folders_now()
 
 
-# Создать проект
-@router.post("", response_model=ProjectOut, status_code=status.HTTP_201_CREATED)
-async def create_project(
-    payload: ProjectCreateIn,
-    actor: User = Depends(require_role(RoleName.ADMIN)),
-    actor_role: str = Depends(get_role_from_token),
-    session: AsyncSession = Depends(get_session),
-):
-    return await ProjectService(session).create(payload, actor.id, actor_role)
+# Проекты создаются только из Bitrix (см. bitrix_webhook_service.upsert_project_from_deal
+# и app/cli.py import-bitrix-deals) — ручного POST /admin/projects больше нет.
 
 # Все проекты. Фильтры двух видов: has_* / tag_ids / cabinet_warranty_status
 # отбирают по шкафам проекта (подошёл хотя бы один), остальные — по самому

@@ -261,15 +261,25 @@ async def upsert_project_from_deal(session, deal: dict):
     deal_id = str(deal.get("ID") or "").strip()
 
     project_repo = ProjectRepository(session)
-    existing = await project_repo.find_by_production_number(production_number)
+    # Ищем и среди мягко удалённых: проект — собственность Bitrix, пока жива
+    # сделка — жив и он. Удаление в приложении (DELETE /admin/projects/{id})
+    # не должно быть окончательным, пока сделку не закрыли и в CRM.
+    existing = await project_repo.find_by_production_number_any(production_number)
 
     if existing is not None:
+        resurrected = existing.deleted_at is not None
+        if resurrected:
+            existing.deleted_at = None
+            _log.info(
+                "Bitrix: проект %s (%r) был удалён в приложении — воскрешён по сделке %s",
+                existing.id, title, deal_id,
+            )
         renamed = existing.name != title
         if renamed:
             existing.name = title
         await _apply_deal_fields(existing, deal)
         await session.commit()
-        if renamed:
+        if renamed or resurrected:
             project_folder_service.schedule_folder_sync(existing.id)
         if deal_id:
             await _sync_contacts(session, existing, deal_id)

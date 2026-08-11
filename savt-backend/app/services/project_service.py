@@ -1,5 +1,4 @@
 import logging
-import secrets
 from datetime import date, datetime, time, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +13,6 @@ from app.schemas.project import (
     CabinetProjectPatchIn,
     ProjectCabinetItem,
     ProjectContactOut,
-    ProjectCreateIn,
     ProjectListOut,
     ProjectOut,
     ProjectUpdateIn,
@@ -48,24 +46,6 @@ class ProjectService:
         self.cabinet_repo = CabinetRepository(session)
         self.user_project_repo = UserProjectRepository(session)
         self.audit = AuditLogger(session)
-
-    # Создание проекта
-    async def create(self, data: ProjectCreateIn, actor_id: int, actor_role: str) -> ProjectOut:
-        if data.parent_project_id is not None:
-            parent = await self.repo.get_by_id(data.parent_project_id)
-            if parent is None or parent.deleted_at is not None:
-                raise NotFoundError("Родительский проект не найден")
-
-        unique_code = await self._generate_unique_code()
-        project = await self.repo.create(
-            name=data.name, unique_code=unique_code, parent_project_id=data.parent_project_id,
-        )
-        await self.session.flush()
-        project.folder_name = project_folder_service.sanitize_folder_name(data.name)
-        self.audit.log("project.create", "project", project.id, actor_id, actor_role, {"name": project.name})
-        await self.session.commit()
-        project_folder_service.schedule_folder_creation(project.id)
-        return await self.get(project.id)
 
     # Получение проекта со всеми его шкафами (админский вид, без ограничений по владению).
     # Фильтры — те же, что и в общем списке ШУ; cabinets в ответе уже отфильтрован ими.
@@ -173,7 +153,8 @@ class ProjectService:
             "message": f"Проектов всего: {stats['total']} — " + ", ".join(parts),
         }
 
-    # Обновление проекта
+    # Обновление проекта — только parent_project_id и гарантия, имя не принимается
+    # (см. ProjectUpdateIn)
     async def update(self, project_id: int, data: ProjectUpdateIn, actor_id: int, actor_role: str) -> ProjectOut:
         project = await self.repo.get_by_id(project_id)
         if project is None or project.deleted_at is not None:
@@ -195,14 +176,11 @@ class ProjectService:
                     project_id,
                 )
 
-        name_changed = "name" in changed and changed["name"] != project.name
         for field, value in changed.items():
             setattr(project, field, value)
         self.audit.log("project.update", "project", project_id, actor_id, actor_role, {"fields": list(changed.keys())})
         await self.session.commit()
         await self.session.refresh(project)
-        if name_changed:
-            project_folder_service.schedule_folder_sync(project_id)
         return await self.get(project_id)
 
     # Удаление проекта (soft-delete, как у Cabinet)
@@ -322,10 +300,3 @@ class ProjectService:
             from app.services.realtime_events import publish_chat_created
             for chat in created_chats:
                 await publish_chat_created(chat.id, chat_summary_dict(chat))
-
-    # Генерация уникального кода (хранится в кур-коде проекта)
-    async def _generate_unique_code(self) -> str:
-        while True:
-            code = secrets.token_hex(8).upper()
-            if await self.repo.find_by_code(code) is None:
-                return code

@@ -2,12 +2,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
 from app.repositories.cabinet import CabinetRepository
-from app.repositories.project import ProjectRepository
+from app.repositories.project import ProjectRepository, UserProjectRepository
 from app.repositories.tag import TagRepository
 from app.schemas.cabinet import CabinetCreateIn, CabinetGeoItem, CabinetListOut, CabinetOut, CabinetUpdateIn
 from app.schemas.tags import TagOut
 from app.schemas.pagination import PageOut, make_page
 from app.services.audit_service import AuditLogger
+from app.services.project_reconciliation import reconcile_cabinet_access
 from app.utils.warranty import warranty_status as _warranty_status
 
 
@@ -27,12 +28,21 @@ class CabinetService:
     def __init__(self, session: AsyncSession):
         self.repo = CabinetRepository(session)
         self.project_repo = ProjectRepository(session)
+        self.user_project_repo = UserProjectRepository(session)
         self.session = session
         self.audit = AuditLogger(session)
 
-    # Создание ШУ
+    # Создание ШУ — только внутри существующего проекта (см. CabinetCreateIn.project_id).
+    # Даёт доступ участникам проекта и создаёт папку на NAS сразу же — то же самое,
+    # что делает PATCH /admin/cabinets/{id}/project при привязке уже существующего ШУ
+    # (см. ProjectService.set_cabinet_project), просто на один шаг раньше.
     async def create(self, data: CabinetCreateIn, actor_id: int, actor_role: str) -> CabinetOut:
+        project = await self.project_repo.get_by_id(data.project_id)
+        if project is None or project.deleted_at is not None:
+            raise NotFoundError("Проект не найден")
+
         cabinet = await self.repo.create(
+            project_id=data.project_id,
             type=await _resolve_type(self.session, data.type),
             object_number=data.object_number,
             description=data.description,
@@ -47,7 +57,24 @@ class CabinetService:
         await self.session.flush()
         self.audit.log("cabinet.create", "cabinet", cabinet.id, actor_id, actor_role,
                        {"object_number": cabinet.object_number, "type": cabinet.type})
+
+        member_ids = await self.user_project_repo.list_member_ids(data.project_id)
+        created_chats = (
+            await reconcile_cabinet_access(self.session, data.project_id, member_ids, bypass_request=True)
+            if member_ids else []
+        )
+
         await self.session.commit()
+
+        from app.services import project_folder_service
+        project_folder_service.schedule_cabinet_folder(cabinet.id)
+
+        if created_chats:
+            from app.services.chat_service import chat_summary_dict
+            from app.services.realtime_events import publish_chat_created
+            for chat in created_chats:
+                await publish_chat_created(chat.id, chat_summary_dict(chat))
+
         return await self.get(cabinet.id)
 
     # Получение ШУ с тегами

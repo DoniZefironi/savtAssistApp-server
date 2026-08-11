@@ -18,9 +18,11 @@ class Project(Base):
     # открытый номер проекта из Bitrix (например "26_138") — для поиска "уже есть
     # ли проект с таким номером" при повторных вызовах вебхука. unique_code для
     # этого не годится: шифруется со случайным IV, при каждом вызове получается
-    # новая строка даже для одного и того же номера. null — проекты, заведённые
-    # не из Bitrix (вручную через админку)
-    production_number: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+    # новая строка даже для одного и того же номера. Проекты заводятся только из
+    # Bitrix (см. bitrix_webhook_service.upsert_project_from_deal), поэтому null
+    # тут практически не бывает — разве что у совсем старых проектов, заведённых
+    # ещё когда ручное создание существовало.
+    production_number: Mapped[str | None] = mapped_column(String(50), unique=True, nullable=True, index=True)
     # вложенность (проект в проекте) — например, отдельная партия отгрузки внутри
     # одного производственного проекта
     parent_project_id: Mapped[int | None] = mapped_column(

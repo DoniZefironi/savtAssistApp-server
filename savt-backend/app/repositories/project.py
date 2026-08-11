@@ -74,6 +74,17 @@ class ProjectRepository(BaseRepository[Project]):
         )
         return result.scalar_one_or_none()
 
+    # Тот же поиск, но включая мягко удалённые — нужен вебхуку сделок, чтобы
+    # воскресить проект, если его удалили в приложении, а сделка в Bitrix ещё
+    # жива (см. upsert_project_from_deal). Везде, кроме этого места, удалённый
+    # проект должен вести себя как несуществующий — им и остаётся
+    # find_by_production_number выше.
+    async def find_by_production_number_any(self, production_number: str) -> Project | None:
+        result = await self.session.execute(
+            select(Project).where(Project.production_number == production_number)
+        )
+        return result.scalar_one_or_none()
+
     async def soft_delete(self, project: Project) -> None:
         project.deleted_at = datetime.now(timezone.utc)
         await self.session.flush()
