@@ -938,7 +938,7 @@ a835bebb7d46). Ответ — { sent_to, skipped_opted_out }; те же числ
 ```
 POST /service-requests
 Тело: {
-  cabinet_id: 5,
+  cabinet_id: 5,             ← либо cabinet_id, либо project_id — ровно один из двух
   request_type: "repair",   ← repair | diagnostics | remote_adjustment | onsite_adjustment | other
   description: "Не работает кнопка управления (минимум 10 символов)"
 }
@@ -946,6 +946,10 @@ POST /service-requests
 → При создании заявки автоматически создаётся её чат (chat_type: "service_request"),
   виден и пользователю, и операторам/админам в общем списке чатов.
 ```
+Заявка по проекту в целом (проблема не привязана к конкретному ШУ) — то же самое,
+но `{ project_id: 3, ... }` вместо `cabinet_id`. Оба варианта равноправны, второй
+не заменяет первый — конкретная проблема с конкретным шкафом по-прежнему
+оформляется как заявка на этот ШУ.
 
 ### Мои заявки
 ```
@@ -3240,15 +3244,16 @@ NAS-папки: такие всегда заводятся с `is_internal: true
 
 ## Рут `chats` — чаты
 
-Четыре типа чатов:
-- `cabinet` — при привязке ШУ (по QR или одобрении заявки)
+Пять типов чатов:
+- `cabinet` — заводится только пользователем, открывшим конкретный ШУ (`GET /cabinets/{id}/chat`), никогда не создаётся заранее/пачкой
+- `project` — при получении доступа к проекту (первый/основной владелец через QR, либо одобренная заявка на доступ) — один на пару пользователь + проект, независимо от числа ШУ внутри
 - `support` — при регистрации (общая поддержка с ботом)
 - `notes` — при регистрации (личные заметки, видны только самому пользователю)
-- `service_request` — автоматически при создании сервисной заявки (`POST /service-requests`), виден и пользователю, и операторам/админам. Бот (Ася) в чатах заявок не участвует — ни отвечает на сообщения, ни шлёт follow-up (`bot_active: false` по умолчанию, `chat_type` жёстко исключён из логики бота независимо от значения `bot_active`); ведёт переписку человек, сообщения заявителя дублируются в Bitrix (см. «Рут `service requests`»)
+- `service_request` — автоматически при создании сервисной заявки (`POST /service-requests`), виден и пользователю, и операторам/админам. Бот (Ася) в чатах заявок не участвует — ни отвечает на сообщения, ни шлёт follow-up (`bot_active: false` по умолчанию, `chat_type` жёстко исключён из логики бота независимо от значения `bot_active`); ведёт переписку человек, сообщения заявителя дублируются в Bitrix (см. «Рут `service requests`»). Привязан к ШУ либо к проекту в целом — ровно как сама заявка (`cabinet_id`/`project_id`)
 
 ### GET `/chats`
 Список чатов текущего пользователя. Параметры:
-- `chat_type` — `cabinet` / `support` / `notes` / `service_request`, без параметра — все типы
+- `chat_type` — `cabinet` / `project` / `support` / `notes` / `service_request`, без параметра — все типы
 - `archived` — `false` (по умолч.) — активные чаты; `true` — архив (папка «Архив», как в Telegram — чаты закрытых заявок)
 
 ```json
@@ -3259,6 +3264,8 @@ NAS-папки: такие всегда заводятся с `is_internal: true
     "cabinet_id": 5,
     "cabinet_name": "ШУ-18К",
     "cabinet_object_number": "29_099",
+    "project_id": null,
+    "project_name": null,
     "last_message_text": "Здравствуйте, помогите",
     "last_message_at": "2026-05-15T10:00:00Z",
     "unread_count": 2,
@@ -3274,6 +3281,7 @@ NAS-папки: такие всегда заводятся с `is_internal: true
   }
 ]
 ```
+`cabinet_id`/`cabinet_name`/`cabinet_object_number` заполнены для чатов ШУ и для чатов заявок по ШУ; `project_id`/`project_name` — для чатов проекта и для чатов заявок по проекту. У чата ровно одна из двух пар не `null` (кроме `support`/`notes`, где обе `null`).
 `service_request_id`/`service_request_type`/`service_request_status`/`service_request_description`/`service_request_created_at` заполнены только для `chat_type: "service_request"` — этого достаточно, чтобы отличить в списке разные заявки одного и того же пользователя (тип, дата, текст обращения), не делая отдельный запрос к `GET /service-requests/{id}`.
 `archived_at` — `null`, пока заявка не закрыта; при `status: "closed"` заполняется автоматически, при повторном открытии заявки — сбрасывается обратно в `null`. Архивный чат — read-only: `POST /chats/{chat_id}/messages` вернёт `403`, но история сообщений (`GET /chats/{chat_id}/messages`) остаётся доступна как обычно. Это только флаг состояния — сообщения физически никуда не переносятся.
 
@@ -3537,14 +3545,14 @@ NAS-папки: такие всегда заводятся с `is_internal: true
 ---
 
 ### GET `/operator/chats`
-Все `cabinet`, `support` и `service_request` чаты (`notes` — личные заметки пользователя, оператору недоступны никогда). Параметры:
-- `search` — поиск по имени/телефону пользователя, номеру/типу/названию ШУ
-- `chat_type` — `cabinet` / `support` / `service_request`, без параметра — все три
+Все `cabinet`, `project`, `support` и `service_request` чаты (`notes` — личные заметки пользователя, оператору недоступны никогда). Параметры:
+- `search` — поиск по имени/телефону пользователя, номеру/типу ШУ, названию проекта
+- `chat_type` — `cabinet` / `project` / `support` / `service_request`, без параметра — все четыре
 - `archived` — `false` (по умолч.) — активные; `true` — архив (чаты закрытых заявок)
 
 Сортировка: сначала ожидающие оператора (`operator_requested=true`), затем по последнему сообщению.
 
-Каждый чат содержит `user_id`, `user_name`, `cabinet_object_number`, а для чатов заявок — ещё и `service_request_id`/`service_request_type`/`service_request_status`/`service_request_description`/`service_request_created_at` (см. `GET /chats` выше — формат ответа общий).
+Каждый чат содержит `user_id`, `user_name`, `cabinet_object_number`/`project_name`, а для чатов заявок — ещё и `service_request_id`/`service_request_type`/`service_request_status`/`service_request_description`/`service_request_created_at` (см. `GET /chats` выше — формат ответа общий).
 
 > **Оптимизация:** запрос выполняется за 3 DB-запроса независимо от числа чатов (JOIN на User+Cabinet + batch unread counts + batch last messages), вместо 4N+1 в предыдущей версии.
 
