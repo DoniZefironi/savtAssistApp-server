@@ -70,8 +70,7 @@ class AdminDocumentService:
                        {"title": doc.title, "cabinet_id": cabinet_id, "project_id": project_id})
         await self.session.commit()
         await self.session.refresh(doc)
-        if project_id is not None:
-            project_folder_service.schedule_document_mirror(project_id, doc.id)
+        project_folder_service.schedule_document_mirror(doc.id)
         return DocumentOut.model_validate(doc)
 
     # Единственный способ изменить requires_approval/is_internal после создания —
@@ -143,11 +142,12 @@ class AdminDocumentService:
                 Embedding.source_id == doc_id,
             )
         )
-        project_id, title, file_url = doc.project_id, doc.title, doc.file_url
+        cabinet_id, project_id, title, file_url = doc.cabinet_id, doc.project_id, doc.title, doc.file_url
         await self.doc_repo.delete(doc)
         await self.session.commit()
-        if project_id is not None:
-            project_folder_service.schedule_document_removal(project_id, title, file_url)
+        project_folder_service.schedule_document_removal(
+            cabinet_id=cabinet_id, project_id=project_id, title=title, file_url=file_url,
+        )
 
     async def create_photo(
         self,

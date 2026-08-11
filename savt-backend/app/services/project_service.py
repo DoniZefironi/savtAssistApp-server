@@ -110,11 +110,21 @@ class ProjectService:
         from app.repositories.document import DocumentRepository
         doc_repo = DocumentRepository(self.session)
 
-        docs_before, _ = await doc_repo.list_admin(project_id=project_id, limit=10_000)
-        await project_folder_service.sync_project_folder(self.session, project)
-        docs_after, _ = await doc_repo.list_admin(project_id=project_id, limit=10_000)
+        # Документы считаем и у проекта, и у всех его ШУ — сверка подхватывает
+        # файлы из «_Руководство» на обоих уровнях (см. sync_project_folder)
+        async def _count_docs() -> int:
+            docs, _ = await doc_repo.list_admin(project_id=project_id, limit=10_000)
+            total = len(docs)
+            for cabinet in await self.cabinet_repo.list_by_project(project_id):
+                cabinet_docs, _ = await doc_repo.list_admin(cabinet_id=cabinet.id, limit=10_000)
+                total += len(cabinet_docs)
+            return total
 
-        imported = len(docs_after) - len(docs_before)
+        docs_before = await _count_docs()
+        await project_folder_service.sync_project_folder(self.session, project)
+        docs_after = await _count_docs()
+
+        imported = docs_after - docs_before
         return {
             "synced_at": project.folder_synced_at,
             "imported_documents": max(imported, 0),

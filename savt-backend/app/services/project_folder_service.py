@@ -148,18 +148,18 @@ async def _ensure_cabinet_structure(root: Path, cabinet: Cabinet) -> None:
         await asyncio.to_thread((root / "_Маркировка" / name / subtype).mkdir, parents=True, exist_ok=True)
 
 
-async def mirror_document_to_nas(root: Path, document: Document) -> None:
+async def mirror_document_to_nas(dest_dir: Path, document: Document) -> None:
     if not document.file_url:
         return
     src = UPLOAD_ROOT / document.file_url.removeprefix("/static/")
     if not await asyncio.to_thread(src.exists):
         return
-    dest = root / _mirrored_filename(document.title, document.file_url)
+    dest = dest_dir / _mirrored_filename(document.title, document.file_url)
     await asyncio.to_thread(shutil.copy2, src, dest)
 
 
-async def remove_document_from_nas(root: Path, title: str, file_url: str | None) -> None:
-    dest = root / _mirrored_filename(title, file_url)
+async def remove_document_from_nas(dest_dir: Path, title: str, file_url: str | None) -> None:
+    dest = dest_dir / _mirrored_filename(title, file_url)
     if await asyncio.to_thread(dest.exists):
         await asyncio.to_thread(dest.unlink)
 
@@ -250,10 +250,10 @@ async def sync_project_folder(session: AsyncSession, project: Project) -> None:
     """Структурная сверка + сверка документов и фото проекта с их зеркалом на NAS.
     Подтягивает папку на её место (переименование при смене названия, переезд в
     годовую папку у старых проектов), досоздаёт недостающие подпапки шаблона,
-    докопировает отсутствующие в корне файлы документов проекта
-    (Document.project_id), а также заводит документы и фото на файлы, которые
-    положили в папку проекта/ШУ напрямую, минуя приложение (см.
-    import_new_files_from_nas, import_new_photos_from_nas)."""
+    докопировает отсутствующие документы проекта и его ШУ в «_Руководство»
+    (Document.project_id / Document.cabinet_id), а также заводит документы и
+    фото на файлы, которые положили в папку проекта/ШУ напрямую, минуя
+    приложение (см. import_new_files_from_nas, import_new_photos_from_nas)."""
     if not settings.project_folders_root:
         return
 
@@ -271,13 +271,15 @@ async def sync_project_folder(session: AsyncSession, project: Project) -> None:
         await write_project_qr(root, project)
 
     doc_repo = DocumentRepository(session)
-    docs, _ = await doc_repo.list_admin(project_id=project.id, limit=10_000)
-    for doc in docs:
-        dest = root / _mirrored_filename(doc.title, doc.file_url)
-        if not await asyncio.to_thread(dest.exists):
-            await mirror_document_to_nas(root, doc)
 
-    await import_new_files_from_nas(session, project, root, docs)
+    # Уровень проекта: его собственные документы — прямо в «_Руководство»
+    project_guide_dir = root / "_Руководство"
+    project_docs, _ = await doc_repo.list_admin(project_id=project.id, limit=10_000)
+    for doc in project_docs:
+        dest = project_guide_dir / _mirrored_filename(doc.title, doc.file_url)
+        if not await asyncio.to_thread(dest.exists):
+            await mirror_document_to_nas(project_guide_dir, doc)
+    await import_new_files_from_nas(session, project_guide_dir, project_docs, project_id=project.id)
 
     # Чаты, где с прошлой сверки ничего не писали, перечитывать не нужно
     since = project.folder_synced_at
@@ -293,6 +295,15 @@ async def sync_project_folder(session: AsyncSession, project: Project) -> None:
     for cabinet in await CabinetRepository(session).list_by_project(project.id):
         await _ensure_cabinet_structure(root, cabinet)
         cabinet_name = _cabinet_folder_name(cabinet)
+
+        cabinet_guide_dir = root / "_Руководство" / cabinet_name
+        cabinet_docs, _ = await doc_repo.list_admin(cabinet_id=cabinet.id, limit=10_000)
+        for doc in cabinet_docs:
+            dest = cabinet_guide_dir / _mirrored_filename(doc.title, doc.file_url)
+            if not await asyncio.to_thread(dest.exists):
+                await mirror_document_to_nas(cabinet_guide_dir, doc)
+        await import_new_files_from_nas(session, cabinet_guide_dir, cabinet_docs, cabinet_id=cabinet.id)
+
         cabinet_photo_dir = root / "Фото" / cabinet_name
         cabinet_photos = await export_photos(session, cabinet_photo_dir, cabinet_id=cabinet.id)
         await import_new_photos_from_nas(
@@ -611,15 +622,18 @@ async def export_chats(
 
 
 async def import_new_files_from_nas(
-    session: AsyncSession, project: Project, root: Path, known_docs: list[Document],
+    session: AsyncSession, dest_dir: Path, known_docs: list[Document], *,
+    cabinet_id: int | None = None, project_id: int | None = None,
 ) -> int:
-    """Обратное направление: файл положили в папку проекта напрямую — заводим
-    на него документ в приложении. Возвращает число подхваченных файлов.
+    """Обратное направление: файл положили в папку «_Руководство» напрямую —
+    заводим на него документ в приложении. Возвращает число подхваченных файлов.
 
-    Сканируется только корень папки проекта: именно туда кладёт зеркалирование,
-    и именно там человек оставляет файл «чтобы появился в приложении». Вложенные
-    папки шаблона (_Проект, _Программа, Фото и т.п.) не трогаем — файлы там
-    разложены осмысленно, и сваливать их в плоский список документов означало бы
+    Сканируется только сама папка «_Руководство» — своя для проекта (корень
+    категории) и для каждого его ШУ (_Руководство/{ШУ}), её путь передаёт
+    вызывающий код. Именно туда кладёт зеркалирование, и именно там человек
+    оставляет файл «чтобы появился в приложении». Остальные подпапки шаблона
+    (_Проект, _Программа, Фото и т.п.) не трогаем — файлы там разложены
+    осмысленно вручную, и сваливать их в плоский список документов означало бы
     потерять эту структуру.
 
     Заводится как is_internal=True — файл попал в приложение в обход админской
@@ -635,9 +649,9 @@ async def import_new_files_from_nas(
     known_names |= {d.nas_filename for d in known_docs if d.nas_filename}
 
     try:
-        entries = await asyncio.to_thread(lambda: sorted(root.iterdir(), key=lambda p: p.name))
+        entries = await asyncio.to_thread(lambda: sorted(dest_dir.iterdir(), key=lambda p: p.name))
     except OSError:
-        logger.exception("Не удалось прочитать папку проекта %s", project.id)
+        logger.exception("Не удалось прочитать папку «_Руководство» %s", dest_dir)
         return 0
 
     doc_repo = DocumentRepository(session)
@@ -654,8 +668,8 @@ async def import_new_files_from_nas(
             continue
 
         await doc_repo.create(
-            project_id=project.id,
-            cabinet_id=None,
+            project_id=project_id,
+            cabinet_id=cabinet_id,
             title=entry.stem or entry.name,
             doc_type=info.doc_type,
             file_url=info.url,
@@ -669,8 +683,8 @@ async def import_new_files_from_nas(
         )
         imported += 1
         logger.info(
-            "Подхвачен файл из папки проекта %s: %s (заведён как is_internal=True, "
-            "требует ручного открытия администратором)", project.id, entry.name,
+            "Подхвачен файл из папки «_Руководство» %s: %s (заведён как is_internal=True, "
+            "требует ручного открытия администратором)", dest_dir, entry.name,
         )
 
     if imported:
@@ -822,34 +836,69 @@ def schedule_request_chat_export(chat_id: int) -> None:
     asyncio.create_task(_task())
 
 
-def schedule_document_mirror(project_id: int, document_id: int) -> None:
+def schedule_document_mirror(document_id: int) -> None:
+    """Зеркалит документ в «_Руководство» — корень категории для документов
+    проекта в целом, «_Руководство/{ШУ}» для документов конкретного ШУ (см.
+    Document.project_id/cabinet_id — ровно одно из двух)."""
     async def _task():
+        if not settings.project_folders_root:
+            return
         async with AsyncSessionLocal() as session:
-            project_repo = ProjectRepository(session)
-            project = await project_repo.get_by_id(project_id)
             doc = await DocumentRepository(session).get_by_id(document_id)
-            if project is None or doc is None:
+            if doc is None:
                 return
-            try:
-                root = await _project_root_path(project, project_repo)
-                await mirror_document_to_nas(root, doc)
-            except Exception:
-                logger.exception("Не удалось зеркалить документ %s в папку проекта %s на NAS", document_id, project_id)
-    asyncio.create_task(_task())
-
-
-def schedule_document_removal(project_id: int, title: str, file_url: str | None) -> None:
-    async def _task():
-        async with AsyncSessionLocal() as session:
             project_repo = ProjectRepository(session)
-            project = await project_repo.get_by_id(project_id)
+            cabinet = None
+            project = None
+            if doc.project_id is not None:
+                project = await project_repo.get_by_id(doc.project_id)
+            elif doc.cabinet_id is not None:
+                cabinet = await CabinetRepository(session).get_by_id(doc.cabinet_id)
+                if cabinet is not None and cabinet.project_id is not None:
+                    project = await project_repo.get_by_id(cabinet.project_id)
             if project is None:
                 return
             try:
                 root = await _project_root_path(project, project_repo)
-                await remove_document_from_nas(root, title, file_url)
+                guide_dir = root / "_Руководство"
+                if cabinet is not None:
+                    guide_dir = guide_dir / _cabinet_folder_name(cabinet)
+                await asyncio.to_thread(guide_dir.mkdir, parents=True, exist_ok=True)
+                await mirror_document_to_nas(guide_dir, doc)
             except Exception:
-                logger.exception("Не удалось убрать зеркало документа из папки проекта %s на NAS", project_id)
+                logger.exception("Не удалось зеркалить документ %s в «_Руководство» на NAS", document_id)
+    asyncio.create_task(_task())
+
+
+def schedule_document_removal(
+    *, cabinet_id: int | None, project_id: int | None, title: str, file_url: str | None,
+) -> None:
+    async def _task():
+        if not settings.project_folders_root:
+            return
+        async with AsyncSessionLocal() as session:
+            project_repo = ProjectRepository(session)
+            project = None
+            cabinet = None
+            if project_id is not None:
+                project = await project_repo.get_by_id(project_id)
+            elif cabinet_id is not None:
+                cabinet = await CabinetRepository(session).get_by_id(cabinet_id)
+                if cabinet is not None and cabinet.project_id is not None:
+                    project = await project_repo.get_by_id(cabinet.project_id)
+            if project is None:
+                return
+            try:
+                root = await _project_root_path(project, project_repo)
+                guide_dir = root / "_Руководство"
+                if cabinet is not None:
+                    guide_dir = guide_dir / _cabinet_folder_name(cabinet)
+                await remove_document_from_nas(guide_dir, title, file_url)
+            except Exception:
+                logger.exception(
+                    "Не удалось убрать зеркало документа из «_Руководство» на NAS (cabinet_id=%s, project_id=%s)",
+                    cabinet_id, project_id,
+                )
     asyncio.create_task(_task())
 
 
