@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user, get_session
@@ -42,3 +42,14 @@ async def add_by_qr(
     service = UserProjectService(session)
     result = await service.add_by_qr(user_id=current_user.id, unique_code=payload.parse_unique_code())
     return AddProjectByQrOut(**result)
+
+# Покинуть проект — теряет доступ разом ко всем его шкафам (доступ выводится
+# из членства, точечно выйти из одного ШУ нельзя)
+@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def leave_project(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    service = UserProjectService(session)
+    await service.leave_project(current_user.id, project_id)

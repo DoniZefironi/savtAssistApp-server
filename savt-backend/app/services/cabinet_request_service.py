@@ -3,16 +3,16 @@ from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AlreadyExistsError, NotFoundError
-from app.repositories.cabinet import CabinetRepository, CabinetRequestRepository, UserCabinetRepository
+from app.repositories.cabinet import CabinetRepository, CabinetRequestRepository
+from app.repositories.project import ProjectRepository, UserProjectRepository
 from app.schemas.pagination import PageOut, make_page
 from app.schemas.requests import (
     AdditionRequestOut,
     ApproveAdditionIn,
-    ApproveShareIn,
     RejectRequestIn,
-    ShareRequestOut,
 )
 from app.services.audit_service import AuditLogger
+from app.services.project_reconciliation import ensure_cabinet_chats
 
 
 class CabinetRequestService:
@@ -20,7 +20,8 @@ class CabinetRequestService:
         self.session = session
         self.request_repo = CabinetRequestRepository(session)
         self.cabinet_repo = CabinetRepository(session)
-        self.user_cabinet_repo = UserCabinetRepository(session)
+        self.project_repo = ProjectRepository(session)
+        self.user_project_repo = UserProjectRepository(session)
         self.audit = AuditLogger(session)
 
     # Заявитель узнаёт о решении, а не выясняет его, заходя в приложение.
@@ -45,6 +46,8 @@ class CabinetRequestService:
             sort_by=sort_by, sort_order=sort_order,
             offset=(page - 1) * size, limit=size,
         )
+        project_ids = list({req.project_id for req, _ in rows if req.project_id is not None})
+        project_names = await self.project_repo.get_names_by_ids(project_ids)
         items = [
             AdditionRequestOut(
                 id=req.id,
@@ -55,6 +58,8 @@ class CabinetRequestService:
                 organization_name=user.organization_name,
                 user_is_verified=user.is_verified,
                 user_registered_at=user.created_at,
+                project_id=req.project_id,
+                project_name=project_names.get(req.project_id) if req.project_id is not None else None,
                 photo_url=req.photo_url,
                 user_comment=req.user_comment,
                 status=req.status,
@@ -68,7 +73,12 @@ class CabinetRequestService:
         ]
         return make_page(items, total, page, size)
 
-    # Апрув заявки
+    # Апрув заявки — админ подтверждает, что фото соответствует конкретному ШУ.
+    # Если у заявки указан project_id (заявитель уже состоит в этом проекте —
+    # см. UserCabinetService.add_by_photo), тем же действием чинится и
+    # принадлежность шкафа: ничейный ШУ привязывается к этому проекту, и все
+    # его участники сразу получают доступ (шкаф уже в чужом проекте — 409,
+    # переносить самовольно нельзя, сначала отвязать вручную).
     async def approve_addition(
         self, request_id: int, data: ApproveAdditionIn, admin_id: int, actor_role: str
     ) -> None:
@@ -82,17 +92,22 @@ class CabinetRequestService:
         if cabinet is None or cabinet.deleted_at is not None:
             raise NotFoundError("ШУ не найден")
 
-        existing = await self.user_cabinet_repo.find(req.user_id, data.cabinet_id)
-        if existing is not None:
-            raise AlreadyExistsError("Пользователь уже привязан к этому ШУ")
-
-        await self.user_cabinet_repo.create(
-            user_id=req.user_id,
-            cabinet_id=data.cabinet_id,
-            is_primary=True,
-        )
-        from app.services.chat_service import ChatService, chat_summary_dict
-        chat = await ChatService(self.session).ensure_cabinet_chat(req.user_id, data.cabinet_id)
+        created_chats = []
+        if req.project_id is not None:
+            if cabinet.project_id is not None and cabinet.project_id != req.project_id:
+                raise AlreadyExistsError(
+                    "Этот ШУ уже принадлежит другому проекту — сначала отвяжите его вручную"
+                )
+            if cabinet.project_id is None:
+                cabinet.project_id = req.project_id
+                member_ids = await self.user_project_repo.list_member_ids(req.project_id)
+                created_chats = await ensure_cabinet_chats(self.session, member_ids, [cabinet.id])
+            else:
+                created_chats = await ensure_cabinet_chats(self.session, [req.user_id], [cabinet.id])
+        else:
+            # Старые заявки, поданные до перехода на проектную модель — без
+            # project_id перенести шкаф некуда, заводим чат только заявителю
+            created_chats = await ensure_cabinet_chats(self.session, [req.user_id], [cabinet.id])
 
         req.status = "approved"
         req.cabinet_id = data.cabinet_id
@@ -103,8 +118,12 @@ class CabinetRequestService:
         self.audit.log("cabinet_request.approve_addition", "cabinet_addition_request", request_id,
                        admin_id, actor_role, {"user_id": req.user_id, "cabinet_id": data.cabinet_id})
         await self.session.commit()
-        from app.services.realtime_events import publish_chat_created
-        await publish_chat_created(chat.id, chat_summary_dict(chat))
+
+        if created_chats:
+            from app.services.chat_service import chat_summary_dict
+            from app.services.realtime_events import publish_chat_created
+            for chat in created_chats:
+                await publish_chat_created(chat.id, chat_summary_dict(chat))
         await self._notify(req.user_id, "Заявка на добавление ШУ одобрена",
                            f"ШУ {cabinet.object_number} добавлен в ваш список",
                            {"type": "cabinet_request", "cabinet_id": str(data.cabinet_id)})
@@ -128,103 +147,4 @@ class CabinetRequestService:
                        admin_id, actor_role, {"user_id": req.user_id, "reason": data.admin_response})
         await self.session.commit()
         await self._notify(req.user_id, "Заявка на добавление ШУ отклонена",
-                           data.admin_response, {"type": "cabinet_request"})
-
-    # Все заявки на добавление
-    async def list_shares(
-        self, status: str | None = None, resolved_by_admin_id: int | None = None,
-        search: str | None = None,
-        sort_by: str = "created_at", sort_order: str = "desc",
-        page: int = 1, size: int = 20,
-    ) -> PageOut[ShareRequestOut]:
-        rows, total = await self.request_repo.list_shares(
-            status=status, resolved_by_admin_id=resolved_by_admin_id, search=search,
-            sort_by=sort_by, sort_order=sort_order,
-            offset=(page - 1) * size, limit=size,
-        )
-        items = [
-            ShareRequestOut(
-                id=req.id,
-                user_id=req.user_id,
-                user_full_name=user.full_name,
-                user_phone=user.phone,
-                user_type=user.user_type,
-                organization_name=user.organization_name,
-                user_is_verified=user.is_verified,
-                user_registered_at=user.created_at,
-                cabinet_id=req.cabinet_id,
-                cabinet_type=cabinet.type,
-                cabinet_object_number=cabinet.object_number,
-                user_comment=req.user_comment,
-                status=req.status,
-                admin_response=req.admin_response,
-                resolved_by_admin_id=req.resolved_by_admin_id,
-                created_at=req.created_at,
-                resolved_at=req.resolved_at,
-            )
-            for req, user, cabinet in rows
-        ]
-        return make_page(items, total, page, size)
-
-    # Апрув заявки
-    async def approve_share(
-        self, request_id: int, data: ApproveShareIn, admin_id: int, actor_role: str
-    ) -> None:
-        req = await self.request_repo.get_share(request_id)
-        if req is None:
-            raise NotFoundError("Заявка не найдена")
-        if req.status != "pending":
-            raise AlreadyExistsError("Заявка уже обработана")
-
-        # ШУ мог быть удалён администратором уже после создания заявки —
-        # проверяем на момент апрува, а не только на момент подачи
-        cabinet = await self.cabinet_repo.get_by_id(req.cabinet_id)
-        if cabinet is None or cabinet.deleted_at is not None:
-            raise NotFoundError("ШУ не найден")
-
-        existing = await self.user_cabinet_repo.find(req.user_id, req.cabinet_id)
-        if existing is not None:
-            raise AlreadyExistsError("Пользователь уже привязан к этому ШУ")
-
-        await self.user_cabinet_repo.create(
-            user_id=req.user_id,
-            cabinet_id=req.cabinet_id,
-            is_primary=False,
-        )
-        from app.services.chat_service import ChatService, chat_summary_dict
-        chat = await ChatService(self.session).ensure_cabinet_chat(req.user_id, req.cabinet_id)
-
-        req.status = "approved"
-        req.admin_response = data.admin_response
-        req.resolved_by_admin_id = admin_id
-        req.resolved_at = datetime.now(timezone.utc)
-
-        self.audit.log("cabinet_request.approve_share", "cabinet_share_request", request_id,
-                       admin_id, actor_role, {"user_id": req.user_id, "cabinet_id": req.cabinet_id})
-        await self.session.commit()
-        from app.services.realtime_events import publish_chat_created
-        await publish_chat_created(chat.id, chat_summary_dict(chat))
-        await self._notify(req.user_id, "Доступ к ШУ открыт",
-                           f"ШУ {cabinet.object_number} добавлен в ваш список",
-                           {"type": "cabinet_request", "cabinet_id": str(req.cabinet_id)})
-
-    # Не апрув заявки
-    async def reject_share(
-        self, request_id: int, data: RejectRequestIn, admin_id: int, actor_role: str
-    ) -> None:
-        req = await self.request_repo.get_share(request_id)
-        if req is None:
-            raise NotFoundError("Заявка не найдена")
-        if req.status != "pending":
-            raise AlreadyExistsError("Заявка уже обработана")
-
-        req.status = "rejected"
-        req.admin_response = data.admin_response
-        req.resolved_by_admin_id = admin_id
-        req.resolved_at = datetime.now(timezone.utc)
-
-        self.audit.log("cabinet_request.reject_share", "cabinet_share_request", request_id,
-                       admin_id, actor_role, {"user_id": req.user_id, "reason": data.admin_response})
-        await self.session.commit()
-        await self._notify(req.user_id, "Заявка на доступ к ШУ отклонена",
                            data.admin_response, {"type": "cabinet_request"})

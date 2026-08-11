@@ -16,10 +16,11 @@ _SORT = "^(created_at|action|entity_type|actor_role|actor_id)$"
 _SEARCH_IN = "^(all|action|entity_type|actor_name|payload)$"
 
 # ADMIN/OPERATOR видят только логи по заявкам (создание/одобрение/отклонение) —
-# CUD по шкафам/проектам/документам/пользователям видит только SUPERADMIN
+# CUD по шкафам/проектам/документам/пользователям видит только SUPERADMIN.
+# cabinet_share_request сюда больше не попадает: заявок на доступ к отдельному
+# ШУ больше нет, доступ выводится из проекта (см. project_share_request)
 _REQUEST_ENTITY_TYPES = [
     "cabinet_addition_request",
-    "cabinet_share_request",
     "document_request",
     "project_share_request",
     "service_request",

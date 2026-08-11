@@ -7,7 +7,7 @@ from app.repositories.project import ProjectRepository, ProjectRequestRepository
 from app.schemas.pagination import PageOut, make_page
 from app.schemas.requests import ApproveShareIn, ProjectShareRequestOut, RejectRequestIn
 from app.services.audit_service import AuditLogger
-from app.services.project_reconciliation import reconcile_cabinet_access
+from app.services.project_reconciliation import ensure_cabinet_chats_for_project
 
 
 class ProjectRequestService:
@@ -53,9 +53,9 @@ class ProjectRequestService:
         ]
         return make_page(items, total, page, size)
 
-    # Апрув заявки — сразу даёт доступ ко всем шкафам проекта, включая занятые
-    # посторонними (одно одобрение админа закрывает всё, второй заявки на
-    # конкретный шкаф не требуется — см. project_reconciliation.reconcile_cabinet_access)
+    # Апрув заявки — сразу даёт доступ ко всем шкафам проекта: доступ выводится
+    # из членства (см. общую идею), второй заявки на конкретный шкаф не
+    # требуется — тут только заводим чаты (project_reconciliation.ensure_cabinet_chats_for_project)
     async def approve_share(
         self, request_id: int, data: ApproveShareIn, admin_id: int, actor_role: str
     ) -> None:
@@ -75,8 +75,8 @@ class ProjectRequestService:
 
         await self.user_project_repo.create(user_id=req.user_id, project_id=req.project_id, is_primary=False)
 
-        created_chats = await reconcile_cabinet_access(
-            self.session, req.project_id, [req.user_id], bypass_request=True,
+        created_chats = await ensure_cabinet_chats_for_project(
+            self.session, req.project_id, [req.user_id],
         )
 
         req.status = "approved"

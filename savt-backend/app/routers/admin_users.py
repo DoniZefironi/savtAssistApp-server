@@ -11,7 +11,6 @@ from app.schemas.admin_users import (
     CabinetUserOut,
     CreateAdminIn,
     CreateOperatorIn,
-    RemoveUserFromCabinetIn,
 )
 from app.schemas.pagination import PageOut
 from app.services.admin_user_service import AdminUserService
@@ -225,7 +224,9 @@ async def unban_user(
 ):
     await AdminUserService(session).unban_user(user_id, actor.id, actor_role)
 
-# Все пользователи подвязанные к шкафу
+# Все пользователи с доступом к шкафу (на деле участники проекта, которому он
+# принадлежит — доступ выводится из проекта). Убрать конкретного пользователя
+# можно только из проекта целиком — см. DELETE /admin/projects/{id}/users/{uid}.
 @router.get("/admin/cabinets/{cabinet_id}/users", response_model=list[CabinetUserOut])
 async def list_cabinet_users(
     cabinet_id: int,
@@ -233,18 +234,3 @@ async def list_cabinet_users(
     session: AsyncSession = Depends(get_session),
 ):
     return await AdminUserService(session).list_cabinet_users(cabinet_id)
-
-# Удалить пользователя со шкафа
-@router.delete(
-    "/admin/cabinets/{cabinet_id}/users/{user_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
-async def remove_user_from_cabinet(
-    cabinet_id: int,
-    user_id: int,
-    payload: RemoveUserFromCabinetIn,
-    actor: User = Depends(require_role(RoleName.ADMIN)),
-    actor_role: str = Depends(get_role_from_token),
-    session: AsyncSession = Depends(get_session),
-):
-    await AdminUserService(session).remove_user_from_cabinet(cabinet_id, user_id, payload.reason, actor.id, actor_role)

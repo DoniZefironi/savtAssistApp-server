@@ -3,7 +3,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import NotFoundError, PermissionDeniedError
 from app.models.audit_log import AuditLog
 from app.models.role import Role
-from app.repositories.cabinet import CabinetRepository, UserCabinetRepository
+from app.repositories.cabinet import CabinetRepository, CabinetUserSettingsRepository
+from app.repositories.project import ProjectRepository
 from app.repositories.user import UserRepository
 from app.schemas.admin_users import (
     AdminUserCabinetItem,
@@ -21,8 +22,9 @@ class AdminUserService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.user_repo = UserRepository(session)
-        self.user_cabinet_repo = UserCabinetRepository(session)
         self.cabinet_repo = CabinetRepository(session)
+        self.project_repo = ProjectRepository(session)
+        self.settings_repo = CabinetUserSettingsRepository(session)
 
     # Список пользователей
     async def list_users(
@@ -74,7 +76,10 @@ class AdminUserService:
         if role.name not in allowed_roles:
             raise NotFoundError("Пользователь не найден")
 
-        cabinet_rows = await self.user_cabinet_repo.list_for_user(user_id)
+        cabinet_list = await self.cabinet_repo.list_accessible_for_user(user_id)
+        settings_map = await self.settings_repo.get_map_for_user(user_id, [c.id for c in cabinet_list])
+        project_ids = list({c.project_id for c in cabinet_list if c.project_id is not None})
+        project_names = await self.project_repo.get_names_by_ids(project_ids)
         cabinets = [
             AdminUserCabinetItem(
                 cabinet_id=cab.id,
@@ -82,11 +87,15 @@ class AdminUserService:
                 object_number=cab.object_number,
                 warranty_ends_at=cab.warranty_ends_at,
                 warranty_status=_warranty_status(cab.warranty_ends_at),
-                custom_name=uc.custom_name or cab.admin_internal_name or cab.object_number,
-                is_primary=uc.is_primary,
-                added_at=uc.added_at,
+                custom_name=(
+                    settings_map[cab.id].custom_name
+                    if cab.id in settings_map and settings_map[cab.id].custom_name
+                    else cab.admin_internal_name or cab.object_number
+                ),
+                project_id=cab.project_id,
+                project_name=project_names.get(cab.project_id) if cab.project_id is not None else None,
             )
-            for uc, cab in cabinet_rows
+            for cab in cabinet_list
         ]
 
         return AdminUserDetailOut(
@@ -288,38 +297,32 @@ class AdminUserService:
         await self._log(actor_id, actor_role, "user.unban", "user", user_id, {})
         await self.session.commit()
 
-    # Все пользователи у шкафа
+    # Все пользователи с доступом к шкафу — на деле участники проекта, которому
+    # он принадлежит (доступ выводится из проекта). Убрать конкретного
+    # пользователя отсюда нельзя — см. ProjectService.remove_user_from_project,
+    # убирает из проекта целиком, тем самым и из всех его шкафов разом.
     async def list_cabinet_users(self, cabinet_id: int) -> list[CabinetUserOut]:
         cabinet = await self.cabinet_repo.get_by_id(cabinet_id)
         if cabinet is None:
             raise NotFoundError("ШУ не найден")
-        rows = await self.user_cabinet_repo.list_cabinet_users(cabinet_id)
+        rows = await self.cabinet_repo.list_users_with_access(cabinet_id)
+        settings_map = await self.settings_repo.get_map_for_cabinet(cabinet_id, [user.id for user, _ in rows])
         return [
             CabinetUserOut(
                 user_id=user.id,
                 full_name=user.full_name,
                 phone=user.phone,
                 user_type=user.user_type,
-                is_primary=uc.is_primary,
-                custom_name=uc.custom_name or cabinet.admin_internal_name or cabinet.object_number,
-                added_at=uc.added_at,
+                is_primary=up.is_primary,
+                custom_name=(
+                    settings_map[user.id].custom_name
+                    if user.id in settings_map and settings_map[user.id].custom_name
+                    else cabinet.admin_internal_name or cabinet.object_number
+                ),
+                added_at=up.added_at,
             )
-            for uc, user in rows
+            for user, up in rows
         ]
-
-    # удаление пользователя с ШУ
-    async def remove_user_from_cabinet(
-        self, cabinet_id: int, user_id: int, reason: str, actor_id: int, actor_role: str
-    ) -> None:
-        uc = await self.user_cabinet_repo.find(user_id, cabinet_id)
-        if uc is None:
-            raise NotFoundError("Пользователь не привязан к этому ШУ")
-        await self.user_cabinet_repo.delete(uc)
-        await self._log(
-            actor_id, actor_role, "user_cabinet.remove", "user_cabinet", uc.id,
-            {"user_id": user_id, "cabinet_id": cabinet_id, "reason": reason},
-        )
-        await self.session.commit()
 
     # Подтвердить аккаунт
     async def verify_user(self, user_id: int, actor_id: int, actor_role: str) -> None:

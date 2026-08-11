@@ -4,8 +4,8 @@ from sqlalchemy import delete, exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.cabinet_addition_request import CabinetAdditionRequest
-from app.models.cabinet_share_request import CabinetShareRequest
 from app.models.cabinet_tag import CabinetTag
+from app.models.cabinet_user_settings import CabinetUserSettings
 from app.models.cabinets import Cabinet
 from app.models.cabinet_photo import CabinetPhoto
 from app.models.document import Document
@@ -13,7 +13,7 @@ from app.models.service_request import ServiceRequest
 from app.models.tag import Tag
 from app.utils.db import escape_like, fuzzy_condition
 from app.models.user import User
-from app.models.user_cabinet import UserCabinet
+from app.models.user_project import UserProject
 from app.repositories.base import BaseRepository
 
 
@@ -51,8 +51,10 @@ def cabinet_match_conditions(
         conditions.append(photo_exists if has_photos else ~photo_exists)
 
     if has_users is not None:
+        # Доступ выводится из проекта: "у ШУ есть пользователи" значит "у
+        # проекта, которому принадлежит ШУ, есть хотя бы один участник"
         user_exists = exists(
-            select(UserCabinet.id).where(UserCabinet.cabinet_id == Cabinet.id)
+            select(UserProject.id).where(UserProject.project_id == Cabinet.project_id)
         )
         conditions.append(user_exists if has_users else ~user_exists)
 
@@ -229,57 +231,98 @@ class CabinetRepository(BaseRepository[Cabinet]):
             self.session.add(CabinetTag(cabinet_id=cabinet_id, tag_id=tag_id))
         await self.session.flush()
 
+    # --- Доступ, выведенный из проекта (см. app/services/project_reconciliation.py) ---
+    # Доступа "напрямую к ШУ" больше нет: пользователь видит шкаф тогда и только
+    # тогда, когда состоит в user_projects проекта, которому принадлежит этот
+    # шкаф (Cabinet.project_id). У ШУ без project_id доступа нет ни у кого,
+    # кроме админа/оператора.
 
-class UserCabinetRepository(BaseRepository[UserCabinet]):
-    def __init__(self, session: AsyncSession):
-        super().__init__(UserCabinet, session)
-
-    async def find(self, user_id: int, cabinet_id: int) -> UserCabinet | None:
+    async def list_accessible_for_user(self, user_id: int) -> list[Cabinet]:
         result = await self.session.execute(
-            select(UserCabinet).where(
-                UserCabinet.user_id == user_id,
-                UserCabinet.cabinet_id == cabinet_id,
+            select(Cabinet)
+            .join(UserProject, UserProject.project_id == Cabinet.project_id)
+            .where(UserProject.user_id == user_id, Cabinet.deleted_at.is_(None))
+            .order_by(Cabinet.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    async def get_accessible_for_user(self, user_id: int, cabinet_id: int) -> Cabinet | None:
+        result = await self.session.execute(
+            select(Cabinet)
+            .join(UserProject, UserProject.project_id == Cabinet.project_id)
+            .where(
+                UserProject.user_id == user_id,
+                Cabinet.id == cabinet_id,
+                Cabinet.deleted_at.is_(None),
             )
         )
         return result.scalar_one_or_none()
 
-    async def list_for_user(self, user_id: int) -> list:
+    async def user_has_access(self, user_id: int, cabinet_id: int) -> bool:
+        return await self.get_accessible_for_user(user_id, cabinet_id) is not None
+
+    # Пользователи с доступом к ШУ — участники проекта, которому принадлежит
+    # шкаф (пусто, если у ШУ нет проекта). Primary-участник проекта — первым.
+    async def list_users_with_access(self, cabinet_id: int) -> list[tuple[User, UserProject]]:
+        cabinet = await self.get_by_id(cabinet_id)
+        if cabinet is None or cabinet.project_id is None:
+            return []
         result = await self.session.execute(
-            select(UserCabinet, Cabinet)
-            .join(Cabinet, Cabinet.id == UserCabinet.cabinet_id)
-            .where(UserCabinet.user_id == user_id)
-            .order_by(UserCabinet.is_primary.desc(), UserCabinet.added_at.desc())
+            select(User, UserProject)
+            .join(UserProject, UserProject.user_id == User.id)
+            .where(UserProject.project_id == cabinet.project_id)
+            .order_by(UserProject.is_primary.desc(), UserProject.added_at)
         )
         return result.all()
 
-    async def get_with_cabinet(self, user_id: int, cabinet_id: int):
+
+class CabinetUserSettingsRepository:
+    """Личная персонализация ШУ (custom_name/custom_comment) — без семантики
+    доступа, см. app/models/cabinet_user_settings.py."""
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def get(self, user_id: int, cabinet_id: int) -> CabinetUserSettings | None:
         result = await self.session.execute(
-            select(UserCabinet, Cabinet)
-            .join(Cabinet, Cabinet.id == UserCabinet.cabinet_id)
-            .where(
-                UserCabinet.user_id == user_id,
-                UserCabinet.cabinet_id == cabinet_id,
+            select(CabinetUserSettings).where(
+                CabinetUserSettings.user_id == user_id,
+                CabinetUserSettings.cabinet_id == cabinet_id,
             )
         )
-        return result.one_or_none()
+        return result.scalar_one_or_none()
 
-    async def list_cabinet_users(self, cabinet_id: int) -> list:
+    async def get_map_for_user(self, user_id: int, cabinet_ids: list[int]) -> dict[int, CabinetUserSettings]:
+        if not cabinet_ids:
+            return {}
         result = await self.session.execute(
-            select(UserCabinet, User)
-            .join(User, User.id == UserCabinet.user_id)
-            .where(UserCabinet.cabinet_id == cabinet_id)
-            .order_by(UserCabinet.is_primary.desc(), UserCabinet.added_at)
-        )
-        return result.all()
-
-    async def has_primary(self, cabinet_id: int) -> bool:
-        result = await self.session.execute(
-            select(UserCabinet).where(
-                UserCabinet.cabinet_id == cabinet_id,
-                UserCabinet.is_primary == True,
+            select(CabinetUserSettings).where(
+                CabinetUserSettings.user_id == user_id,
+                CabinetUserSettings.cabinet_id.in_(cabinet_ids),
             )
         )
-        return result.scalar_one_or_none() is not None
+        return {s.cabinet_id: s for s in result.scalars().all()}
+
+    async def get_map_for_cabinet(self, cabinet_id: int, user_ids: list[int]) -> dict[int, CabinetUserSettings]:
+        if not user_ids:
+            return {}
+        result = await self.session.execute(
+            select(CabinetUserSettings).where(
+                CabinetUserSettings.cabinet_id == cabinet_id,
+                CabinetUserSettings.user_id.in_(user_ids),
+            )
+        )
+        return {s.user_id: s for s in result.scalars().all()}
+
+    async def upsert(self, user_id: int, cabinet_id: int, data: dict) -> CabinetUserSettings:
+        obj = await self.get(user_id, cabinet_id)
+        if obj is None:
+            obj = CabinetUserSettings(user_id=user_id, cabinet_id=cabinet_id, **data)
+            self.session.add(obj)
+        else:
+            for k, v in data.items():
+                setattr(obj, k, v)
+        await self.session.flush()
+        return obj
 
 
 class CabinetRequestRepository:
@@ -295,33 +338,12 @@ class CabinetRequestRepository:
         )
         return result.scalar_one_or_none()
 
-    async def find_pending_share(self, user_id: int, cabinet_id: int) -> CabinetShareRequest | None:
-        result = await self.session.execute(
-            select(CabinetShareRequest).where(
-                CabinetShareRequest.user_id == user_id,
-                CabinetShareRequest.cabinet_id == cabinet_id,
-                CabinetShareRequest.status == "pending",
-            )
-        )
-        return result.scalar_one_or_none()
-
-    async def create_share(
-        self, user_id: int, cabinet_id: int, user_comment: str | None = None
-    ) -> CabinetShareRequest:
-        obj = CabinetShareRequest(
-            user_id=user_id,
-            cabinet_id=cabinet_id,
-            user_comment=user_comment,
-        )
-        self.session.add(obj)
-        await self.session.flush()
-        return obj
-
     async def create_addition(
-        self, user_id: int, photo_url: str, user_comment: str | None = None
+        self, user_id: int, project_id: int, photo_url: str, user_comment: str | None = None
     ) -> CabinetAdditionRequest:
         obj = CabinetAdditionRequest(
             user_id=user_id,
+            project_id=project_id,
             photo_url=photo_url,
             user_comment=user_comment,
         )
@@ -332,12 +354,6 @@ class CabinetRequestRepository:
     async def get_addition(self, request_id: int) -> CabinetAdditionRequest | None:
         result = await self.session.execute(
             select(CabinetAdditionRequest).where(CabinetAdditionRequest.id == request_id)
-        )
-        return result.scalar_one_or_none()
-
-    async def get_share(self, request_id: int) -> CabinetShareRequest | None:
-        result = await self.session.execute(
-            select(CabinetShareRequest).where(CabinetShareRequest.id == request_id)
         )
         return result.scalar_one_or_none()
 
@@ -377,57 +393,6 @@ class CabinetRequestRepository:
         order = _sort_col.asc() if sort_order == "asc" else _sort_col.desc()
 
         stmt = select(CabinetAdditionRequest, User).join(User, User.id == CabinetAdditionRequest.user_id)
-        if conditions:
-            stmt = stmt.where(*conditions)
-        result = await self.session.execute(stmt.order_by(order).offset(offset).limit(limit))
-        return result.all(), total
-
-    async def list_shares(
-        self,
-        status: str | None = None,
-        resolved_by_admin_id: int | None = None,
-        search: str | None = None,
-        sort_by: str = "created_at",
-        sort_order: str = "desc",
-        offset: int = 0,
-        limit: int = 20,
-    ) -> tuple[list, int]:
-        conditions = []
-        if status:
-            conditions.append(CabinetShareRequest.status == status)
-        if resolved_by_admin_id is not None:
-            conditions.append(CabinetShareRequest.resolved_by_admin_id == resolved_by_admin_id)
-        if search:
-            conditions.append(fuzzy_condition(
-                search,
-                User.full_name, User.phone, User.organization_name,
-                Cabinet.type, Cabinet.object_number, Cabinet.admin_internal_name,
-                CabinetShareRequest.user_comment, CabinetShareRequest.admin_response,
-            ))
-
-        count_stmt = (
-            select(func.count(CabinetShareRequest.id))
-            .join(User, User.id == CabinetShareRequest.user_id)
-            .join(Cabinet, Cabinet.id == CabinetShareRequest.cabinet_id)
-        )
-        if conditions:
-            count_stmt = count_stmt.where(*conditions)
-        total = (await self.session.execute(count_stmt)).scalar() or 0
-
-        _sort_col = {
-            "created_at": CabinetShareRequest.created_at,
-            "resolved_at": CabinetShareRequest.resolved_at,
-            "status": CabinetShareRequest.status,
-            "user_full_name": User.full_name,
-            "cabinet_object_number": Cabinet.object_number,
-        }.get(sort_by, CabinetShareRequest.created_at)
-        order = _sort_col.asc() if sort_order == "asc" else _sort_col.desc()
-
-        stmt = (
-            select(CabinetShareRequest, User, Cabinet)
-            .join(User, User.id == CabinetShareRequest.user_id)
-            .join(Cabinet, Cabinet.id == CabinetShareRequest.cabinet_id)
-        )
         if conditions:
             stmt = stmt.where(*conditions)
         result = await self.session.execute(stmt.order_by(order).offset(offset).limit(limit))

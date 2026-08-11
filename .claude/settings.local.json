@@ -37,7 +37,23 @@
       "PowerShell(python -m py_compile app/schemas/project.py app/schemas/cabinet.py app/routers/admin_projects.py app/services/project_service.py app/services/cabinet_service.py; echo \"compile exit: $LASTEXITCODE\")",
       "PowerShell(Set-Location savt-backend; python -m py_compile app/schemas/project.py app/schemas/cabinet.py app/routers/admin_projects.py app/services/project_service.py app/services/cabinet_service.py; echo \"compile exit: $LASTEXITCODE\")",
       "PowerShell(python -m py_compile app/repositories/project.py app/services/bitrix_webhook_service.py app/models/project.py; echo \"compile exit: $LASTEXITCODE\")",
-      "PowerShell(python -m py_compile app/repositories/project.py app/services/bitrix_webhook_service.py app/models/project.py app/schemas/project.py app/schemas/cabinet.py app/routers/admin_projects.py app/services/project_service.py app/services/cabinet_service.py; echo \"compile exit: $LASTEXITCODE\")"
+      "PowerShell(python -m py_compile app/repositories/project.py app/services/bitrix_webhook_service.py app/models/project.py app/schemas/project.py app/schemas/cabinet.py app/routers/admin_projects.py app/services/project_service.py app/services/cabinet_service.py; echo \"compile exit: $LASTEXITCODE\")",
+      "PowerShell(Remove-Item \"app\\\\models\\\\user_cabinet.py\" -Confirm:$false)",
+      "PowerShell(Remove-Item \"app\\\\models\\\\cabinet_share_request.py\" -Confirm:$false)",
+      "PowerShell(python -m py_compile app/repositories/cabinet.py; echo \"exit $LASTEXITCODE\")",
+      "PowerShell(python -m py_compile app/services/user_cabinet_service.py app/services/admin_user_service.py; echo \"exit $LASTEXITCODE\")",
+      "PowerShell(python -m py_compile app/services/cabinet_request_service.py; echo \"exit $LASTEXITCODE\")",
+      "PowerShell(python -m py_compile app/services/service_request_service.py app/services/chat_service.py; echo \"exit $LASTEXITCODE\")",
+      "PowerShell(python -m py_compile app/services/user_project_service.py; echo \"exit $LASTEXITCODE\")",
+      "PowerShell(python -m py_compile app/services/project_service.py; echo \"exit $LASTEXITCODE\")",
+      "PowerShell(python -m py_compile app/services/project_request_service.py; echo \"exit $LASTEXITCODE\")",
+      "PowerShell(python -m py_compile app/services/dashboard_service.py app/schemas/dashboard.py; echo \"exit $LASTEXITCODE\")",
+      "PowerShell(python -m py_compile app/services/warranty_scheduler.py; echo \"exit $LASTEXITCODE\")",
+      "PowerShell(python -m py_compile app/routers/admin_cabinet_requests.py app/routers/cabinets.py app/routers/projects.py app/routers/admin_users.py app/routers/admin_projects.py; echo \"exit $LASTEXITCODE\")",
+      "PowerShell(python -m py_compile app/services/cabinet_service.py; echo \"exit $LASTEXITCODE\")",
+      "PowerShell(python -m compileall -q app; echo \"exit $LASTEXITCODE\")",
+      "PowerShell(python -m py_compile app/routers/admin_audit.py; echo \"exit $LASTEXITCODE\")",
+      "PowerShell(Set-Location savt-backend; python -m py_compile app/routers/admin_audit.py; echo \"exit $LASTEXITCODE\")"
     ]
   }
 }

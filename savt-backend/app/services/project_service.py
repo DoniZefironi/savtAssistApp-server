@@ -19,7 +19,7 @@ from app.schemas.project import (
 )
 from app.services import project_folder_service
 from app.services.audit_service import AuditLogger
-from app.services.project_reconciliation import reconcile_cabinet_access
+from app.services.project_reconciliation import ensure_cabinet_chats, ensure_cabinet_chats_for_project
 
 logger = logging.getLogger(__name__)
 
@@ -259,11 +259,9 @@ class ProjectService:
             ))
         return make_page(items, total, page, size)
 
-    # Привязка/отвязка ШУ к проекту — чисто админская группировка, владельцы
-    # шкафа (user_cabinets) этим действием не меняются. Если у проекта уже есть
-    # участники — каждому из них сразу выдаётся доступ к привязываемому шкафу
-    # (в т.ч. если он уже занят посторонним), без дополнительных заявок —
-    # админское действие само по себе достаточное разрешение.
+    # Привязка/отвязка ШУ к проекту — доступ к шкафу выводится из проекта, так
+    # что привязка сама по себе и есть выдача доступа: все текущие участники
+    # проекта сразу видят этот шкаф, без каких-либо дополнительных заявок.
     async def set_cabinet_project(
         self, cabinet_id: int, data: CabinetProjectPatchIn, actor_id: int, actor_role: str
     ) -> None:
@@ -283,10 +281,7 @@ class ProjectService:
         created_chats = []
         if data.project_id is not None:
             member_ids = await self.user_project_repo.list_member_ids(data.project_id)
-            if member_ids:
-                created_chats = await reconcile_cabinet_access(
-                    self.session, data.project_id, member_ids, bypass_request=True,
-                )
+            created_chats = await ensure_cabinet_chats(self.session, member_ids, [cabinet_id])
 
         await self.session.commit()
 
@@ -300,3 +295,39 @@ class ProjectService:
             from app.services.realtime_events import publish_chat_created
             for chat in created_chats:
                 await publish_chat_created(chat.id, chat_summary_dict(chat))
+
+    # Участники проекта — единственное место, где теперь хранится доступ к
+    # шкафам (Cabinet.project_id + членство здесь). Заменяет прежний
+    # "пользователи ШУ" на уровне отдельного шкафа.
+    async def list_project_users(self, project_id: int) -> list["ProjectUserOut"]:
+        from app.schemas.admin_users import ProjectUserOut
+
+        project = await self.repo.get_by_id(project_id)
+        if project is None or project.deleted_at is not None:
+            raise NotFoundError("Проект не найден")
+        rows = await self.user_project_repo.list_members(project_id)
+        return [
+            ProjectUserOut(
+                user_id=user.id,
+                full_name=user.full_name,
+                phone=user.phone,
+                user_type=user.user_type,
+                is_primary=up.is_primary,
+                added_at=up.added_at,
+            )
+            for up, user in rows
+        ]
+
+    # Убрать пользователя из проекта — теряет доступ разом ко всем его шкафам
+    async def remove_user_from_project(
+        self, project_id: int, user_id: int, reason: str, actor_id: int, actor_role: str
+    ) -> None:
+        up = await self.user_project_repo.find(user_id, project_id)
+        if up is None:
+            raise NotFoundError("Пользователь не состоит в этом проекте")
+        await self.user_project_repo.delete(up)
+        self.audit.log(
+            "user_project.remove", "user_project", up.id, actor_id, actor_role,
+            {"user_id": user_id, "project_id": project_id, "reason": reason},
+        )
+        await self.session.commit()

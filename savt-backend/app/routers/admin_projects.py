@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.constants import RoleName
 from app.core.dependencies import get_role_from_token, get_session, require_role
 from app.models.user import User
+from app.schemas.admin_users import ProjectUserOut, RemoveUserFromProjectIn
 from app.schemas.pagination import PageOut
 from app.schemas.project import (
     DecodeProjectCodeIn,
@@ -159,3 +160,25 @@ async def delete_project(
     session: AsyncSession = Depends(get_session),
 ):
     await ProjectService(session).delete(project_id, actor.id, actor_role)
+
+# Участники проекта — единственное место, где теперь хранится доступ к
+# шкафам (доступ выводится из проекта целиком, не по отдельным ШУ)
+@router.get("/{project_id}/users", response_model=list[ProjectUserOut])
+async def list_project_users(
+    project_id: int,
+    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    session: AsyncSession = Depends(get_session),
+):
+    return await ProjectService(session).list_project_users(project_id)
+
+# Убрать пользователя из проекта — теряет доступ разом ко всем его шкафам
+@router.delete("/{project_id}/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_user_from_project(
+    project_id: int,
+    user_id: int,
+    payload: RemoveUserFromProjectIn,
+    actor: User = Depends(require_role(RoleName.ADMIN)),
+    actor_role: str = Depends(get_role_from_token),
+    session: AsyncSession = Depends(get_session),
+):
+    await ProjectService(session).remove_user_from_project(project_id, user_id, payload.reason, actor.id, actor_role)

@@ -8,7 +8,7 @@ from app.schemas.cabinet import CabinetCreateIn, CabinetGeoItem, CabinetListOut,
 from app.schemas.tags import TagOut
 from app.schemas.pagination import PageOut, make_page
 from app.services.audit_service import AuditLogger
-from app.services.project_reconciliation import reconcile_cabinet_access
+from app.services.project_reconciliation import ensure_cabinet_chats
 from app.utils.warranty import warranty_status as _warranty_status
 
 
@@ -33,9 +33,10 @@ class CabinetService:
         self.audit = AuditLogger(session)
 
     # Создание ШУ — только внутри существующего проекта (см. CabinetCreateIn.project_id).
-    # Даёт доступ участникам проекта и создаёт папку на NAS сразу же — то же самое,
-    # что делает PATCH /admin/cabinets/{id}/project при привязке уже существующего ШУ
-    # (см. ProjectService.set_cabinet_project), просто на один шаг раньше.
+    # Доступ участникам проекта не выдаётся отдельно — он и так есть самим
+    # членством в проекте; здесь только заводятся чаты и папка на NAS сразу же,
+    # не дожидаясь первого обращения — то же самое, что делает
+    # PATCH /admin/cabinets/{id}/project при привязке уже существующего ШУ.
     async def create(self, data: CabinetCreateIn, actor_id: int, actor_role: str) -> CabinetOut:
         project = await self.project_repo.get_by_id(data.project_id)
         if project is None or project.deleted_at is not None:
@@ -59,10 +60,7 @@ class CabinetService:
                        {"object_number": cabinet.object_number, "type": cabinet.type})
 
         member_ids = await self.user_project_repo.list_member_ids(data.project_id)
-        created_chats = (
-            await reconcile_cabinet_access(self.session, data.project_id, member_ids, bypass_request=True)
-            if member_ids else []
-        )
+        created_chats = await ensure_cabinet_chats(self.session, member_ids, [cabinet.id])
 
         await self.session.commit()
 

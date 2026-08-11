@@ -44,17 +44,11 @@ async def update_cabinet(
     service = UserCabinetService(session)
     return await service.update_cabinet(current_user.id, cabinet_id, payload)
 
-# Удаление ШУ
-@router.delete("/{cabinet_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def remove_cabinet(
-    cabinet_id: int,
-    current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-):
-    service = UserCabinetService(session)
-    await service.remove_cabinet(current_user.id, cabinet_id)
+# Отвязки одного ШУ больше нет — доступ выводится из проекта целиком, см.
+# DELETE /projects/{project_id} (выйти из проекта — теряет доступ разом ко
+# всем его шкафам)
 
-# Добавить ШУ по фото(пользователь)
+# Добавить ШУ по фото(пользователь) — "в моём проекте не хватает шкафа"
 @router.post("/add-by-photo", response_model=AddByPhotoOut, status_code=status.HTTP_201_CREATED)
 async def add_by_photo(
     payload: AddByPhotoIn,
@@ -64,6 +58,7 @@ async def add_by_photo(
     service = UserCabinetService(session)
     request_id = await service.add_by_photo(
         user_id=current_user.id,
+        project_id=payload.project_id,
         photo_url=payload.photo_url,
         user_comment=payload.user_comment,
     )

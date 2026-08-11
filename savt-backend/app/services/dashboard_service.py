@@ -2,8 +2,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.cabinet_addition_request import CabinetAdditionRequest
-from app.models.cabinet_share_request import CabinetShareRequest
 from app.models.document_request import DocumentRequest
+from app.models.project_share_request import ProjectShareRequest
 from app.models.service_request import ServiceRequest
 from app.models.user import User
 from app.repositories.chat import ChatRepository
@@ -26,7 +26,7 @@ class DashboardService:
         )).scalar() or 0
 
         pending_share = (await self.session.execute(
-            select(func.count(CabinetShareRequest.id)).where(CabinetShareRequest.status == "pending")
+            select(func.count(ProjectShareRequest.id)).where(ProjectShareRequest.status == "pending")
         )).scalar() or 0
 
         pending_addition = (await self.session.execute(
@@ -40,8 +40,8 @@ class DashboardService:
                 unread_chats=unread_chats,
                 open_service_requests=open_service,
                 pending_document_requests=pending_docs,
-                pending_share_requests=pending_share,
                 pending_addition_requests=pending_addition,
+                pending_project_share_requests=pending_share,
             ),
             recent_activity=recent,
         )
@@ -76,16 +76,16 @@ class DashboardService:
             ))
 
         rows = (await self.session.execute(
-            select(CabinetShareRequest, User)
-            .outerjoin(User, User.id == CabinetShareRequest.user_id)
-            .order_by(CabinetShareRequest.created_at.desc())
+            select(ProjectShareRequest, User)
+            .outerjoin(User, User.id == ProjectShareRequest.user_id)
+            .order_by(ProjectShareRequest.created_at.desc())
             .limit(10)
         )).all()
         for req, user in rows:
             items.append(RecentActivityItem(
                 id=req.id, type="share", status=req.status,
                 user_id=req.user_id, user_full_name=user.full_name if user else None,
-                cabinet_id=req.cabinet_id, created_at=req.created_at,
+                project_id=req.project_id, created_at=req.created_at,
             ))
 
         rows = (await self.session.execute(

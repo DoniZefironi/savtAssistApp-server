@@ -24,8 +24,8 @@ class AdminUserCabinetItem(BaseModel):
     warranty_ends_at: datetime | None
     warranty_status: str
     custom_name: str | None
-    is_primary: bool
-    added_at: datetime
+    project_id: int | None
+    project_name: str | None
 
 
 class AdminUserDetailOut(BaseModel):
@@ -76,6 +76,9 @@ class BanUserIn(BaseModel):
 
 
 class CabinetUserOut(BaseModel):
+    """Пользователь с доступом к ШУ — на самом деле участник проекта, которому
+    принадлежит шкаф (доступ выводится из проекта, не хранится по-шкафно).
+    is_primary/added_at — тоже проектные, не привязаны к конкретному ШУ."""
     user_id: int
     full_name: str | None
     phone: str | None
@@ -85,5 +88,14 @@ class CabinetUserOut(BaseModel):
     added_at: datetime
 
 
-class RemoveUserFromCabinetIn(BaseModel):
+class ProjectUserOut(BaseModel):
+    user_id: int
+    full_name: str | None
+    phone: str | None
+    user_type: str | None
+    is_primary: bool
+    added_at: datetime
+
+
+class RemoveUserFromProjectIn(BaseModel):
     reason: str = Field(..., min_length=1, max_length=1000)

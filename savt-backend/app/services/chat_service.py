@@ -281,8 +281,8 @@ class ChatService:
         return {r.id: r for r in result.scalars().all()}
 
     async def get_cabinet_chat(self, user_id: int, cabinet_id: int) -> ChatOut:
-        from app.repositories.cabinet import UserCabinetRepository
-        if not await UserCabinetRepository(self.session).find(user_id, cabinet_id):
+        from app.repositories.cabinet import CabinetRepository
+        if not await CabinetRepository(self.session).user_has_access(user_id, cabinet_id):
             raise PermissionDeniedError("У вас нет доступа к этому ШУ")
         chat = await self.chat_repo.find(user_id, "cabinet", cabinet_id)
         if chat is None:

@@ -105,7 +105,6 @@ class UserCabinetListItemOut(BaseModel):
     warranty_ends_at: datetime | None
     warranty_status: str
     custom_name: str | None
-    is_primary: bool
     unread_count: int
     project_id: int | None
     project_name: str | None
@@ -124,7 +123,6 @@ class UserCabinetDetailOut(BaseModel):
     longitude: float | None
     custom_name: str | None
     custom_comment: str | None
-    is_primary: bool
     project_id: int | None
     project_name: str | None
 
@@ -135,6 +133,10 @@ class UserCabinetPatchIn(BaseModel):
 
 
 class AddByPhotoIn(BaseModel):
+    # Проект, в котором заявителю не хватает этого ШУ — заявитель должен уже
+    # состоять в нём (см. CabinetRequestService.create_addition). Это не "добавь
+    # меня к неизвестному ШУ", а "в моём проекте не хватает шкафа, вот фото".
+    project_id: int = Field(..., gt=0)
     photo_url: str = Field(..., min_length=1, max_length=500)
     user_comment: str | None = Field(None, min_length=1, max_length=1000)
 

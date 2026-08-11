@@ -3,11 +3,10 @@ from app.models.user import User
 from app.models.refresh_token import RefreshToken
 from app.models.phone_verification_code import PhoneVerificationCode
 from app.models.cabinets import Cabinet
-from app.models.user_cabinet import UserCabinet
+from app.models.cabinet_user_settings import CabinetUserSettings
 from app.models.cabinet_block import CabinetBlock
 from app.models.cabinet_photo import CabinetPhoto
 from app.models.cabinet_addition_request import CabinetAdditionRequest
-from app.models.cabinet_share_request import CabinetShareRequest
 from app.models.document import Document
 from app.models.document_request import DocumentRequest
 from app.models.document_access import DocumentAccess
@@ -44,8 +43,8 @@ from app.models.pending_registration import PendingRegistration
 
 __all__ = [
     "Role", "User", "RefreshToken", "PhoneVerificationCode",
-    "Cabinet", "UserCabinet", "CabinetBlock", "CabinetPhoto",
-    "CabinetAdditionRequest", "CabinetShareRequest",
+    "Cabinet", "CabinetUserSettings", "CabinetBlock", "CabinetPhoto",
+    "CabinetAdditionRequest",
     "Document", "DocumentRequest", "DocumentAccess", "ServiceRequest",
     "Chat", "Message", "MessageAttachment", "MessageReaction",
     "Tag", "KbCategory", "KbArticle", "FaqCategory", "FaqEntry",

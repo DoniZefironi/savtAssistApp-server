@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError, PermissionDeniedError
 from app.repositories.service_request import ServiceRequestRepository
-from app.repositories.cabinet import UserCabinetRepository
+from app.repositories.cabinet import CabinetRepository
 from app.schemas.pagination import PageOut, make_page
 from app.schemas.service_requests import (
     ServiceRequestCreateIn,
@@ -292,7 +292,7 @@ class ServiceRequestService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.repo = ServiceRequestRepository(session)
-        self.user_cabinet_repo = UserCabinetRepository(session)
+        self.cabinet_repo = CabinetRepository(session)
         self.audit = AuditLogger(session)
 
     async def _existing_by_client_token(self, user_id: int, client_token: str) -> ServiceRequestOut | None:
@@ -306,8 +306,7 @@ class ServiceRequestService:
         return _to_out(existing, cabinet, chat.id if chat else None)
 
     async def create(self, user_id: int, data: ServiceRequestCreateIn) -> ServiceRequestOut:
-        link = await self.user_cabinet_repo.find(user_id, data.cabinet_id)
-        if link is None:
+        if not await self.cabinet_repo.user_has_access(user_id, data.cabinet_id):
             raise PermissionDeniedError("У вас нет доступа к этому ШУ")
 
         if data.client_token:

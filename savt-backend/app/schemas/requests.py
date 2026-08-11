@@ -13,30 +13,12 @@ class AdditionRequestOut(BaseModel):
     organization_name: str | None
     user_is_verified: bool
     user_registered_at: datetime
+    project_id: int | None
+    project_name: str | None
     photo_url: SignedUrl
     user_comment: str | None
     status: str
     cabinet_id: int | None
-    admin_response: str | None
-    resolved_by_admin_id: int | None
-    created_at: datetime
-    resolved_at: datetime | None
-
-
-class ShareRequestOut(BaseModel):
-    id: int
-    user_id: int
-    user_full_name: str | None
-    user_phone: str | None
-    user_type: str | None
-    organization_name: str | None
-    user_is_verified: bool
-    user_registered_at: datetime
-    cabinet_id: int
-    cabinet_type: str
-    cabinet_object_number: str
-    user_comment: str | None
-    status: str
     admin_response: str | None
     resolved_by_admin_id: int | None
     created_at: datetime

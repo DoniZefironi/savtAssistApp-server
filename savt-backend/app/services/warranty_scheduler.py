@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
 from app.models.cabinets import Cabinet
-from app.models.user_cabinet import UserCabinet
+from app.models.user_project import UserProject
 from app.models.warranty_notif_log import WarrantyNotifLog
 from app.services.notification_service import NotificationService
 
@@ -50,9 +50,11 @@ async def _process_threshold(
         session.add(WarrantyNotifLog(cabinet_id=cabinet.id, days_before=days_before))
         await session.commit()
 
-        user_ids = (
+        # Доступ выводится из проекта — уведомляем всех участников проекта,
+        # которому принадлежит шкаф (у ШУ без проекта уведомлять некого)
+        user_ids = [] if cabinet.project_id is None else (
             await session.execute(
-                select(UserCabinet.user_id).where(UserCabinet.cabinet_id == cabinet.id)
+                select(UserProject.user_id).where(UserProject.project_id == cabinet.project_id)
             )
         ).scalars().all()
 
