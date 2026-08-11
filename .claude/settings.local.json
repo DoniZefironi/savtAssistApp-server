@@ -53,7 +53,10 @@
       "PowerShell(python -m py_compile app/services/cabinet_service.py; echo \"exit $LASTEXITCODE\")",
       "PowerShell(python -m compileall -q app; echo \"exit $LASTEXITCODE\")",
       "PowerShell(python -m py_compile app/routers/admin_audit.py; echo \"exit $LASTEXITCODE\")",
-      "PowerShell(Set-Location savt-backend; python -m py_compile app/routers/admin_audit.py; echo \"exit $LASTEXITCODE\")"
+      "PowerShell(Set-Location savt-backend; python -m py_compile app/routers/admin_audit.py; echo \"exit $LASTEXITCODE\")",
+      "PowerShell(Set-Location c:\\\\Users\\\\ShaboldaV\\\\Documents\\\\GitHub\\\\savtAssistApp-server\\\\savt-backend; python -m py_compile app/services/admin_user_service.py app/schemas/admin_users.py; echo \"exit $LASTEXITCODE\")",
+      "PowerShell(Set-Location savt-backend; python -m compileall -q app; echo \"exit $LASTEXITCODE\")",
+      "PowerShell(Set-Location c:\\\\Users\\\\ShaboldaV\\\\Documents\\\\GitHub\\\\savtAssistApp-server\\\\savt-backend; python -m compileall -q app; \"exit:$LASTEXITCODE\")"
     ]
   }
 }

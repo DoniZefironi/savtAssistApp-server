@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
@@ -32,6 +34,25 @@ from app.schemas.chat import (
 )
 
 MAX_PINS_PER_CHAT = 10
+logger = logging.getLogger(__name__)
+
+
+def _schedule_attachment_cleanup(file_urls: list[str]) -> None:
+    """Фоновая best-effort зачистка файлов вложений после жёсткого удаления
+    чата — CASCADE в БД уже убрал строки, но сами файлы на диске никто не
+    трогал (см. ChatService.delete_chat/operator_delete_chat)."""
+    if not file_urls:
+        return
+
+    async def _task():
+        from app.services.upload_service import delete_uploaded_file
+        for url in file_urls:
+            try:
+                await asyncio.to_thread(delete_uploaded_file, url)
+            except Exception:
+                logger.exception("Не удалось удалить файл вложения %s при удалении чата", url)
+
+    asyncio.create_task(_task())
 
 
 class ChatService:
@@ -100,6 +121,39 @@ class ChatService:
         await self.session.commit()
         await publish_chat_updated(chat_id, chat_summary_dict(chat))
         return chat
+
+    # Архивирует чаты ШУ (и его заявок) сразу у всех пользователей, у кого они
+    # есть — вызывается при удалении ШУ (см. CabinetService.delete/delete_for_project).
+    # Не коммитит сессию и не публикует события — вызывающий код делает это
+    # вместе с остальными изменениями (soft-delete самого ШУ), после общего commit.
+    async def archive_cabinet_chats(self, cabinet_id: int) -> list[Chat]:
+        chats = await self.chat_repo.list_by_cabinet(cabinet_id)
+        now = datetime.now(timezone.utc)
+        for chat in chats:
+            chat.archived_at = now
+        return chats
+
+    # Архивирует чаты проекта (chat_type="project") сразу у всех участников —
+    # вызывается при удалении проекта (см. ProjectService.delete). Та же
+    # неcommit-семантика, что у archive_cabinet_chats.
+    async def archive_project_chats(self, project_id: int) -> list[Chat]:
+        chats = await self.chat_repo.list_by_project(project_id)
+        now = datetime.now(timezone.utc)
+        for chat in chats:
+            chat.archived_at = now
+        return chats
+
+    # Архивирует чаты ОДНОГО пользователя (его чат проекта + чаты/заявки по
+    # шкафам этого проекта) — вызывается при выходе/исключении пользователя из
+    # проекта: доступ теряет только он, чаты остальных участников не трогаются.
+    async def archive_user_project_chats(
+        self, user_id: int, project_id: int, cabinet_ids: list[int],
+    ) -> list[Chat]:
+        chats = await self.chat_repo.list_user_chats_for_project(user_id, project_id, cabinet_ids)
+        now = datetime.now(timezone.utc)
+        for chat in chats:
+            chat.archived_at = now
+        return chats
 
     async def list_chats(
         self, user_id: int, chat_type: str | None = None, archived: bool = False,
@@ -295,7 +349,7 @@ class ChatService:
     ) -> MessageOut:
         chat = await self._get_chat_or_403(chat_id, sender_id)
         if chat.archived_at is not None:
-            raise PermissionDeniedError("Чат архивирован — заявка закрыта, отправка сообщений недоступна")
+            raise PermissionDeniedError("Чат архивирован, отправка сообщений недоступна")
 
         if data.client_token:
             existing = await self.msg_repo.find_by_client_token(sender_id, data.client_token)
@@ -540,8 +594,10 @@ class ChatService:
             raise PermissionDeniedError("Нет доступа к этому чату")
         if chat.chat_type == "support":
             raise PermissionDeniedError("Чат поддержки нельзя удалить")
+        attachment_urls = await self.msg_repo.list_all_attachment_urls(chat_id)
         await self.session.delete(chat)
         await self.session.commit()
+        _schedule_attachment_cleanup(attachment_urls)
 
     async def set_wallpaper(self, chat_id: int, user_id: int, wallpaper_url: str | None) -> ChatSettingsOut:
         chat = await self.chat_repo.get_by_id(chat_id)
@@ -631,8 +687,10 @@ class ChatService:
         chat = await self.chat_repo.get_by_id(chat_id)
         if chat is None:
             raise NotFoundError("Чат не найден")
+        attachment_urls = await self.msg_repo.list_all_attachment_urls(chat_id)
         await self.session.delete(chat)
         await self.session.commit()
+        _schedule_attachment_cleanup(attachment_urls)
 
     async def clear_chat_messages(self, chat_id: int) -> None:
         from sqlalchemy import update as sa_update

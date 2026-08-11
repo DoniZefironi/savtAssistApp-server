@@ -183,14 +183,29 @@ class ProjectService:
         await self.session.refresh(project)
         return await self.get(project_id)
 
-    # Удаление проекта (soft-delete, как у Cabinet)
+    # Удаление проекта (soft-delete, как у Cabinet). Каскадом удаляются (тем же
+    # soft-delete) все ещё живые ШУ проекта, и архивируются чаты — и по этим ШУ
+    # (и их заявкам), и собственные чаты проекта. Без этого "удалённый" проект
+    # оставался бы полностью живым везде, кроме списка проектов.
     async def delete(self, project_id: int, actor_id: int, actor_role: str) -> None:
         project = await self.repo.get_by_id(project_id)
         if project is None or project.deleted_at is not None:
             raise NotFoundError("Проект не найден")
         self.audit.log("project.delete", "project", project_id, actor_id, actor_role, {"name": project.name})
         await self.repo.soft_delete(project)
+
+        from app.services.cabinet_service import CabinetService
+        from app.services.chat_service import ChatService
+        archived_chats = await CabinetService(self.session).delete_for_project(project_id, actor_id, actor_role)
+        archived_chats += await ChatService(self.session).archive_project_chats(project_id)
+
         await self.session.commit()
+
+        if archived_chats:
+            from app.services.chat_service import chat_summary_dict
+            from app.services.realtime_events import publish_chat_updated
+            for chat in archived_chats:
+                await publish_chat_updated(chat.id, chat_summary_dict(chat))
 
     # Все проекты. Два независимых набора фильтров:
     #  - по шкафам проекта (tag_ids/has_documents/... /cabinet_warranty_status) —
@@ -318,7 +333,11 @@ class ProjectService:
             for up, user in rows
         ]
 
-    # Убрать пользователя из проекта — теряет доступ разом ко всем его шкафам
+    # Убрать пользователя из проекта — теряет доступ разом ко всем его шкафам.
+    # Заодно архивирует его чаты по этому проекту и его шкафам (и заявкам) —
+    # иначе доступ на запись пропадал бы только для новых чатов, а в уже
+    # открытых пользователь мог бы писать и дальше (см. _get_chat_or_403,
+    # который проверяет только владение чатом, не текущее членство в проекте).
     async def remove_user_from_project(
         self, project_id: int, user_id: int, reason: str, actor_id: int, actor_role: str
     ) -> None:
@@ -330,4 +349,15 @@ class ProjectService:
             "user_project.remove", "user_project", up.id, actor_id, actor_role,
             {"user_id": user_id, "project_id": project_id, "reason": reason},
         )
+
+        cabinet_ids = [c.id for c in await self.cabinet_repo.list_by_project(project_id)]
+        from app.services.chat_service import ChatService
+        archived_chats = await ChatService(self.session).archive_user_project_chats(user_id, project_id, cabinet_ids)
+
         await self.session.commit()
+
+        if archived_chats:
+            from app.services.chat_service import chat_summary_dict
+            from app.services.realtime_events import publish_chat_updated
+            for chat in archived_chats:
+                await publish_chat_updated(chat.id, chat_summary_dict(chat))

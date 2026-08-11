@@ -21,20 +21,26 @@ from app.utils.project_year import project_year
 
 logger = logging.getLogger(__name__)
 
-# Шаблонная структура папок проекта (см. README) — пути относительно корня проекта
+# Шаблонная структура папок проекта (см. README) — пути относительно корня проекта.
+# _Проект, _Программа и _Доп.информация — чисто проектные, без подпапок ШУ.
 TEMPLATE_SUBFOLDERS = [
     "_Проект",
     "_Программа/SCADA",
     "_Программа/ПЛК",
     "_Программа/HMI",
-    "_Маркировка/Облако",
-    "_Маркировка/Coral",
-    "_Маркировка/Wago",
+    "_Маркировка",
     "_Руководство",
     "Фото",
     "_Доп.информация",
     "Переписка",
 ]
+
+# Категории, у которых внутри — своя подпапка для каждого ШУ проекта (имя папки —
+# _cabinet_folder_name). Единой папки-дубликата всего шаблона на ШУ, как раньше,
+# больше нет: подпапки ШУ разбросаны по этим четырём проектным категориям.
+CABINET_CATEGORIES = ["_Маркировка", "_Руководство", "Фото", "Переписка"]
+# Ещё один уровень внутри _Маркировка/{ШУ} — типы установленной маркировки
+_MARKING_SUBTYPES = ["Coral", "Облако", "Wago"]
 
 _CHAT_TITLES = {
     "project": "Чат проекта",
@@ -128,6 +134,18 @@ async def _ensure_structure(root: Path) -> None:
     await asyncio.to_thread(root.mkdir, parents=True, exist_ok=True)
     for sub in TEMPLATE_SUBFOLDERS:
         await asyncio.to_thread((root / sub).mkdir, parents=True, exist_ok=True)
+
+
+async def _ensure_cabinet_structure(root: Path, cabinet: Cabinet) -> None:
+    """Заводит подпапку ШУ там, где она положена по шаблону: внутри каждой из
+    CABINET_CATEGORIES (_Маркировка/{ШУ}, _Руководство/{ШУ}, Фото/{ШУ},
+    Переписка/{ШУ}), плюс типы маркировки внутри _Маркировка/{ШУ}. Пустая, пока
+    в неё не попадёт содержимое — до появления ШУ этих подпапок просто нет."""
+    name = _cabinet_folder_name(cabinet)
+    for category in CABINET_CATEGORIES:
+        await asyncio.to_thread((root / category / name).mkdir, parents=True, exist_ok=True)
+    for subtype in _MARKING_SUBTYPES:
+        await asyncio.to_thread((root / "_Маркировка" / name / subtype).mkdir, parents=True, exist_ok=True)
 
 
 async def mirror_document_to_nas(root: Path, document: Document) -> None:
@@ -264,20 +282,23 @@ async def sync_project_folder(session: AsyncSession, project: Project) -> None:
     # Чаты, где с прошлой сверки ничего не писали, перечитывать не нужно
     since = project.folder_synced_at
 
-    # Уровень проекта: его собственные фото и переписка
-    project_photos = await export_photos(session, root, project_id=project.id)
-    await import_new_photos_from_nas(session, root / "Фото", project_photos, project_id=project.id)
-    await export_chats(session, root, project_id=project.id, since=since)
+    # Уровень проекта: его собственные фото и переписка — прямо в «Фото»/«Переписка»
+    project_photo_dir = root / "Фото"
+    project_photos = await export_photos(session, project_photo_dir, project_id=project.id)
+    await import_new_photos_from_nas(session, project_photo_dir, project_photos, project_id=project.id)
+    await export_chats(session, root / "Переписка", project_id=project.id, since=since)
 
-    # Уровень ШУ: у каждого шкафа проекта своя папка с тем же шаблоном
+    # Уровень ШУ: у каждого шкафа — подпапка внутри «Фото», «Переписка», «_Маркировка»,
+    # «_Руководство» (без отдельной папки-дубликата шаблона на ШУ, см. _ensure_cabinet_structure)
     for cabinet in await CabinetRepository(session).list_by_project(project.id):
-        cabinet_root = root / _cabinet_folder_name(cabinet)
-        await _ensure_structure(cabinet_root)
-        cabinet_photos = await export_photos(session, cabinet_root, cabinet_id=cabinet.id)
+        await _ensure_cabinet_structure(root, cabinet)
+        cabinet_name = _cabinet_folder_name(cabinet)
+        cabinet_photo_dir = root / "Фото" / cabinet_name
+        cabinet_photos = await export_photos(session, cabinet_photo_dir, cabinet_id=cabinet.id)
         await import_new_photos_from_nas(
-            session, cabinet_root / "Фото", cabinet_photos, cabinet_id=cabinet.id,
+            session, cabinet_photo_dir, cabinet_photos, cabinet_id=cabinet.id,
         )
-        await export_chats(session, cabinet_root, cabinet_id=cabinet.id, since=since)
+        await export_chats(session, root / "Переписка" / cabinet_name, cabinet_id=cabinet.id, since=since)
 
     project.folder_synced_at = datetime.now(timezone.utc)
     await session.commit()
@@ -292,12 +313,13 @@ def _cabinet_folder_name(cabinet: Cabinet) -> str:
 
 
 async def export_photos(
-    session: AsyncSession, root: Path, *,
+    session: AsyncSession, dest_dir: Path, *,
     cabinet_id: int | None = None, project_id: int | None = None,
 ) -> list["CabinetPhoto"]:
-    """Раскладывает фотографии в подпапку «Фото» и возвращает список оставшихся
-    фото (без удалённых по ходу сверки) — вызывающий код передаёт его в
-    import_new_photos_from_nas, чтобы не запрашивать те же строки из БД второй раз.
+    """Раскладывает фотографии в готовую папку «Фото» (её путь передаёт вызывающий
+    код: сама «Фото» — для проекта, «Фото/{ШУ}» — для конкретного ШУ) и возвращает
+    список оставшихся фото (без удалённых по ходу сверки) — вызывающий код передаёт
+    его в import_new_photos_from_nas, чтобы не запрашивать те же строки из БД второй раз.
 
     Имя на NAS фото получает один раз (при первом экспорте) и дальше сверяется
     по нему (CabinetPhoto.nas_filename), а не пересчитывается из caption заново —
@@ -324,7 +346,6 @@ async def export_photos(
     if not photos:
         return photos
 
-    dest_dir = root / "Фото"
     # Была ли папка уже на месте ДО этого прогона — критично для решения "файл
     # пропал = удалили вручную" ниже. Если папку только что создали мы сами
     # (relocate/переименование проекта не нашёл старую папку, NAS был временно
@@ -480,12 +501,13 @@ def _format_message(msg, sender_name: str | None, attachments: list) -> str:
 
 
 async def export_chats(
-    session: AsyncSession, root: Path, *,
+    session: AsyncSession, dest_dir: Path, *,
     cabinet_id: int | None = None, project_id: int | None = None,
     since: datetime | None = None, only_chat_id: int | None = None,
 ) -> int:
-    """Выгружает переписку в подпапку «Переписка»: по файлу на чат, вложения —
-    в «Переписка/вложения» рядом.
+    """Выгружает переписку в готовую папку «Переписка» (её путь передаёт вызывающий
+    код: сама «Переписка» — для проекта, «Переписка/{ШУ}» — для конкретного ШУ):
+    по файлу на чат, вложения — в подпапку «вложения» рядом.
 
     Стенограммы перезаписываются на каждой сверке: переписка растёт, и дописывать
     хвост было бы сложнее и ненадёжнее, чем просто собрать файл заново. Вложения
@@ -513,7 +535,6 @@ async def export_chats(
     if not chats:
         return 0
 
-    dest_dir = root / "Переписка"
     att_dir = dest_dir / "вложения"
     await asyncio.to_thread(dest_dir.mkdir, parents=True, exist_ok=True)
 
@@ -723,11 +744,12 @@ def schedule_folder_sync(project_id: int) -> None:
 
 
 def schedule_cabinet_folder(cabinet_id: int) -> None:
-    """Папка ШУ внутри папки проекта — с тем же шаблоном подпапок.
+    """Подпапки ШУ разбросаны по проектным категориям (см. _ensure_cabinet_structure),
+    единой папки-дубликата шаблона на ШУ больше нет.
 
-    При отвязке или переносе ШУ в другой проект старая папка НЕ переносится и не
-    удаляется: в ней могут лежать файлы, положенные людьми вручную. Новая просто
-    создаётся на новом месте, старую при необходимости переносят руками — так же,
+    При отвязке или переносе ШУ в другой проект старые подпапки НЕ переносятся и не
+    удаляются: в них могут лежать файлы, положенные людьми вручную. Новые просто
+    создаются на новом месте, старые при необходимости переносят руками — так же,
     как со сменой родителя у проекта."""
     async def _task():
         if not settings.project_folders_root:
@@ -741,7 +763,7 @@ def schedule_cabinet_folder(cabinet_id: int) -> None:
                 return
             try:
                 root = await _project_root_path(project, ProjectRepository(session))
-                await _ensure_structure(root / _cabinet_folder_name(cabinet))
+                await _ensure_cabinet_structure(root, cabinet)
             except Exception:
                 logger.exception("Не удалось создать папку ШУ %s на NAS", cabinet_id)
     asyncio.create_task(_task())
@@ -777,11 +799,12 @@ def schedule_request_chat_export(chat_id: int) -> None:
 
             try:
                 root = await _project_root_path(project, project_repo)
+                dest_dir = root / "Переписка"
                 if cabinet is not None:
-                    root = root / _cabinet_folder_name(cabinet)
-                await _ensure_structure(root)
+                    dest_dir = dest_dir / _cabinet_folder_name(cabinet)
+                await asyncio.to_thread(dest_dir.mkdir, parents=True, exist_ok=True)
                 await export_chats(
-                    session, root,
+                    session, dest_dir,
                     cabinet_id=chat.cabinet_id, project_id=chat.project_id,
                     only_chat_id=chat_id,
                 )
@@ -847,9 +870,10 @@ def schedule_photo_removal(
                 return
             try:
                 root = await _project_root_path(project, project_repo)
+                photo_dir = root / "Фото"
                 if cabinet is not None:
-                    root = root / _cabinet_folder_name(cabinet)
-                dest = root / "Фото" / nas_filename
+                    photo_dir = photo_dir / _cabinet_folder_name(cabinet)
+                dest = photo_dir / nas_filename
                 if await asyncio.to_thread(dest.exists):
                     await asyncio.to_thread(dest.unlink)
             except Exception:

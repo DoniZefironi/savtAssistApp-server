@@ -97,10 +97,23 @@ class UserProjectService:
 
     # Пользователь сам покидает проект — теряет доступ разом ко всем его
     # шкафам (доступ выводится из членства, точечно выйти из одного ШУ нельзя,
-    # см. общую идею проектного доступа)
+    # см. общую идею проектного доступа). Заодно архивирует его чаты по этому
+    # проекту и его шкафам (и заявкам) — та же причина, что и у
+    # ProjectService.remove_user_from_project (симметричное действие).
     async def leave_project(self, user_id: int, project_id: int) -> None:
         up = await self.user_project_repo.find(user_id, project_id)
         if up is None:
             raise NotFoundError("Проект не найден")
         await self.user_project_repo.delete(up)
+
+        cabinet_ids = [c.id for c in await self.cabinet_repo.list_by_project(project_id)]
+        from app.services.chat_service import ChatService
+        archived_chats = await ChatService(self.session).archive_user_project_chats(user_id, project_id, cabinet_ids)
+
         await self.session.commit()
+
+        if archived_chats:
+            from app.services.chat_service import chat_summary_dict
+            from app.services.realtime_events import publish_chat_updated
+            for chat in archived_chats:
+                await publish_chat_updated(chat.id, chat_summary_dict(chat))

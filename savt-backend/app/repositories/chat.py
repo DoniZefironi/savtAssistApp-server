@@ -1,4 +1,4 @@
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -60,6 +60,50 @@ class ChatRepository:
             select(Chat).where(Chat.service_request_id == service_request_id)
         )
         return result.scalar_one_or_none()
+
+    # Чаты ШУ по всем пользователям сразу (не по одному) — нужно при удалении
+    # ШУ, чтобы архивировать разом чаты всех, у кого он был, а не только
+    # текущего вызывающего. Без фильтра по chat_type: cabinet_id ставится и
+    # обычным чатам ШУ, и чатам заявок по этому ШУ — оба должны архивироваться
+    # вместе с ним. Уже архивированные пропускаются.
+    async def list_by_cabinet(self, cabinet_id: int) -> list[Chat]:
+        result = await self.session.execute(
+            select(Chat).where(
+                Chat.cabinet_id == cabinet_id,
+                Chat.archived_at.is_(None),
+            )
+        )
+        return list(result.scalars().all())
+
+    # Чаты проекта по всем пользователям сразу — тот же принцип, что у
+    # list_by_cabinet, для архивации при удалении проекта.
+    async def list_by_project(self, project_id: int) -> list[Chat]:
+        result = await self.session.execute(
+            select(Chat).where(
+                Chat.project_id == project_id,
+                Chat.archived_at.is_(None),
+            )
+        )
+        return list(result.scalars().all())
+
+    # Чаты ОДНОГО пользователя, относящиеся к проекту (его чат проекта плюс
+    # чаты/заявки по шкафам этого проекта) — для архивации при выходе или
+    # исключении пользователя из проекта: доступ теряет только он, чаты
+    # остальных участников не трогаются.
+    async def list_user_chats_for_project(
+        self, user_id: int, project_id: int, cabinet_ids: list[int],
+    ) -> list[Chat]:
+        scope = [Chat.project_id == project_id]
+        if cabinet_ids:
+            scope.append(Chat.cabinet_id.in_(cabinet_ids))
+        result = await self.session.execute(
+            select(Chat).where(
+                Chat.user_id == user_id,
+                Chat.archived_at.is_(None),
+                or_(*scope),
+            )
+        )
+        return list(result.scalars().all())
 
     async def list_for_user(
         self, user_id: int, chat_type: str | None = None, archived: bool = False,
@@ -293,6 +337,18 @@ class MessageRepository:
         self.session.add(rxn)
         await self.session.flush()
         return rxn
+
+    # Все файлы вложений чата, включая вложения удалённых (soft-delete)
+    # сообщений — для очистки файлов на диске перед жёстким удалением чата
+    # (см. ChatService.delete_chat/operator_delete_chat): CASCADE в БД уберёт
+    # сами строки, а физические файлы сам по себе не тронет.
+    async def list_all_attachment_urls(self, chat_id: int) -> list[str]:
+        result = await self.session.execute(
+            select(MessageAttachment.file_url)
+            .join(Message, Message.id == MessageAttachment.message_id)
+            .where(Message.chat_id == chat_id, MessageAttachment.file_url.isnot(None))
+        )
+        return [url for (url,) in result.all()]
 
     async def get_chat_attachments(
         self, chat_id: int, attachment_type: str | None = None

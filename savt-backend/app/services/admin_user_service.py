@@ -4,10 +4,8 @@ from app.core.exceptions import NotFoundError, PermissionDeniedError
 from app.models.audit_log import AuditLog
 from app.models.role import Role
 from app.repositories.cabinet import CabinetRepository, CabinetUserSettingsRepository
-from app.repositories.project import ProjectRepository
 from app.repositories.user import UserRepository
 from app.schemas.admin_users import (
-    AdminUserCabinetItem,
     AdminUserDetailOut,
     AdminUserListOut,
     CabinetUserOut,
@@ -15,7 +13,6 @@ from app.schemas.admin_users import (
     CreateOperatorIn,
 )
 from app.schemas.pagination import PageOut, make_page
-from app.utils.warranty import warranty_status as _warranty_status
 
 
 class AdminUserService:
@@ -23,7 +20,6 @@ class AdminUserService:
         self.session = session
         self.user_repo = UserRepository(session)
         self.cabinet_repo = CabinetRepository(session)
-        self.project_repo = ProjectRepository(session)
         self.settings_repo = CabinetUserSettingsRepository(session)
 
     # Список пользователей
@@ -76,27 +72,8 @@ class AdminUserService:
         if role.name not in allowed_roles:
             raise NotFoundError("Пользователь не найден")
 
-        cabinet_list = await self.cabinet_repo.list_accessible_for_user(user_id)
-        settings_map = await self.settings_repo.get_map_for_user(user_id, [c.id for c in cabinet_list])
-        project_ids = list({c.project_id for c in cabinet_list if c.project_id is not None})
-        project_names = await self.project_repo.get_names_by_ids(project_ids)
-        cabinets = [
-            AdminUserCabinetItem(
-                cabinet_id=cab.id,
-                type=cab.type,
-                object_number=cab.object_number,
-                warranty_ends_at=cab.warranty_ends_at,
-                warranty_status=_warranty_status(cab.warranty_ends_at),
-                custom_name=(
-                    settings_map[cab.id].custom_name
-                    if cab.id in settings_map and settings_map[cab.id].custom_name
-                    else cab.admin_internal_name or cab.object_number
-                ),
-                project_id=cab.project_id,
-                project_name=project_names.get(cab.project_id) if cab.project_id is not None else None,
-            )
-            for cab in cabinet_list
-        ]
+        from app.services.user_project_service import UserProjectService
+        projects = await UserProjectService(self.session).list_projects(user_id)
 
         return AdminUserDetailOut(
             id=user.id,
@@ -112,7 +89,7 @@ class AdminUserService:
             is_phone_verified=user.is_phone_verified,
             is_verified=user.is_verified,
             created_at=user.created_at,
-            cabinets=cabinets,
+            projects=projects,
         )
 
     # Создание администратора (только суперадмин)

@@ -172,6 +172,14 @@ def save_local_file(source: Path) -> FileInfo:
     )
 
 
+def delete_uploaded_file(file_url: str | None) -> None:
+    """Удаляет файл из /uploads по его публичному URL (`/static/...`).
+    Best-effort: отсутствие файла не считается ошибкой."""
+    if not file_url:
+        return
+    (UPLOAD_ROOT / file_url.removeprefix("/static/")).unlink(missing_ok=True)
+
+
 _CHUNK_SIZE = 1024 * 1024  # 1 МБ
 
 

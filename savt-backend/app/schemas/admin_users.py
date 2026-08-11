@@ -1,6 +1,8 @@
 from datetime import datetime
 from pydantic import BaseModel, Field, field_validator
 
+from app.schemas.project import UserProjectListItemOut
+
 
 class AdminUserListOut(BaseModel):
     id: int
@@ -17,17 +19,6 @@ class AdminUserListOut(BaseModel):
     created_at: datetime
 
 
-class AdminUserCabinetItem(BaseModel):
-    cabinet_id: int
-    type: str
-    object_number: str
-    warranty_ends_at: datetime | None
-    warranty_status: str
-    custom_name: str | None
-    project_id: int | None
-    project_name: str | None
-
-
 class AdminUserDetailOut(BaseModel):
     id: int
     phone: str | None
@@ -42,7 +33,10 @@ class AdminUserDetailOut(BaseModel):
     is_phone_verified: bool
     is_verified: bool
     created_at: datetime
-    cabinets: list[AdminUserCabinetItem]
+    # Проекты, в которых состоит пользователь — не отдельные ШУ: доступ к
+    # шкафам выводится из проекта целиком, показывать его по-шкафно больше не
+    # имеет смысла (щёлкнули по строке — переход на карточку проекта, не ШУ)
+    projects: list[UserProjectListItemOut]
 
 
 class CreateOperatorIn(BaseModel):

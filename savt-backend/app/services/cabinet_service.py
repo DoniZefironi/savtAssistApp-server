@@ -1,6 +1,8 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
+from app.models.cabinets import Cabinet
+from app.models.chat import Chat
 from app.repositories.cabinet import CabinetRepository
 from app.repositories.project import ProjectRepository, UserProjectRepository
 from app.repositories.tag import TagRepository
@@ -118,16 +120,46 @@ class CabinetService:
         await self.session.refresh(cabinet)
         return await self.get(cabinet_id)
 
+    # Soft-delete одного ШУ + архивация его чатов (и чатов его заявок) — общая
+    # часть для delete() и каскада delete_for_project(). Не коммитит и не
+    # публикует события — это делает вызывающий код, вместе с остальными
+    # изменениями транзакции.
+    async def _soft_delete_and_archive(self, cabinet: Cabinet, actor_id: int, actor_role: str) -> list[Chat]:
+        self.audit.log("cabinet.delete", "cabinet", cabinet.id, actor_id, actor_role,
+                       {"object_number": cabinet.object_number})
+        await self.repo.soft_delete(cabinet)
+        from app.services.chat_service import ChatService
+        return await ChatService(self.session).archive_cabinet_chats(cabinet.id)
+
     # Удаление ШУ (soft-delete: запись остаётся в БД, но перестаёт быть
-    # доступна для поиска, привязки и повторного использования кода)
+    # доступна для поиска, привязки и повторного использования кода).
+    # Заодно архивирует чаты этого ШУ у всех, у кого они есть — иначе
+    # выглядело бы, будто с удалённым шкафом всё ещё можно переписываться.
     async def delete(self, cabinet_id: int, actor_id: int, actor_role: str) -> None:
         cabinet = await self.repo.get_by_id(cabinet_id)
         if cabinet is None or cabinet.deleted_at is not None:
             raise NotFoundError("ШУ не найден")
-        self.audit.log("cabinet.delete", "cabinet", cabinet_id, actor_id, actor_role,
-                       {"object_number": cabinet.object_number})
-        await self.repo.soft_delete(cabinet)
+        archived_chats = await self._soft_delete_and_archive(cabinet, actor_id, actor_role)
+
         await self.session.commit()
+
+        if archived_chats:
+            from app.services.chat_service import chat_summary_dict
+            from app.services.realtime_events import publish_chat_updated
+            for chat in archived_chats:
+                await publish_chat_updated(chat.id, chat_summary_dict(chat))
+
+    # Каскад при удалении проекта (см. ProjectService.delete): все ещё живые
+    # ШУ этого проекта удаляются вместе с ним, тем же способом, что и
+    # поштучное удаление — каждый получает свою запись в аудите. Не коммитит
+    # и не публикует — вызывающий код собирает архивированные чаты со всего
+    # проекта разом и коммитит одной транзакцией.
+    async def delete_for_project(self, project_id: int, actor_id: int, actor_role: str) -> list[Chat]:
+        cabinets = await self.repo.list_by_project(project_id)
+        archived_chats: list[Chat] = []
+        for cabinet in cabinets:
+            archived_chats += await self._soft_delete_and_archive(cabinet, actor_id, actor_role)
+        return archived_chats
 
     # Все ШУ
     async def list_all(
@@ -139,7 +171,6 @@ class CabinetService:
         has_users: bool | None = None,
         has_service_requests: bool | None = None,
         warranty_status: str | None = None,
-        has_project: bool | None = None,
         project_id: int | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
@@ -151,7 +182,7 @@ class CabinetService:
             query=query, tag_ids=tag_ids,
             has_documents=has_documents, has_photos=has_photos,
             has_users=has_users, has_service_requests=has_service_requests,
-            warranty_status=warranty_status, has_project=has_project, project_id=project_id,
+            warranty_status=warranty_status, project_id=project_id,
             sort_by=sort_by, sort_order=sort_order,
             offset=offset, limit=size,
         )
