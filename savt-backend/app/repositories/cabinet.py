@@ -148,10 +148,10 @@ class CabinetRepository(BaseRepository[Cabinet]):
         result = await self.session.execute(stmt)
         return list(result.scalars().all()), total
 
-    # ШУ, привязанные к проекту. Без фильтров — для реконсиляции доступа
-    # (см. project_reconciliation.py) и подсчёта cabinet_count. С фильтрами —
-    # для GET /admin/projects/{id}, где cabinets в ответе уже должен быть
-    # отфильтрован сервером теми же параметрами, что и общий список ШУ.
+    # ШУ, привязанные к проекту. Без фильтров — для подсчёта cabinet_count и
+    # каскадных операций по всем ШУ проекта. С фильтрами — для GET
+    # /admin/projects/{id}, где cabinets в ответе уже должен быть отфильтрован
+    # сервером теми же параметрами, что и общий список ШУ.
     async def list_by_project(
         self,
         project_id: int,
@@ -227,7 +227,7 @@ class CabinetRepository(BaseRepository[Cabinet]):
             self.session.add(CabinetTag(cabinet_id=cabinet_id, tag_id=tag_id))
         await self.session.flush()
 
-    # --- Доступ, выведенный из проекта (см. app/services/project_reconciliation.py) ---
+    # --- Доступ, выведенный из проекта ---
     # Доступа "напрямую к ШУ" больше нет: пользователь видит шкаф тогда и только
     # тогда, когда состоит в user_projects проекта, которому принадлежит этот
     # шкаф (Cabinet.project_id). У ШУ без project_id доступа нет ни у кого,

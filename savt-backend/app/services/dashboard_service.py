@@ -59,7 +59,7 @@ class DashboardService:
             items.append(RecentActivityItem(
                 id=req.id, type="service", status=req.status,
                 user_id=req.user_id, user_full_name=user.full_name if user else None,
-                cabinet_id=req.cabinet_id, created_at=req.created_at,
+                cabinet_id=req.cabinet_id, project_id=req.project_id, created_at=req.created_at,
             ))
 
         rows = (await self.session.execute(

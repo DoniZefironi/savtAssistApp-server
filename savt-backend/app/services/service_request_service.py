@@ -56,12 +56,14 @@ async def _get_chat_ids(session: AsyncSession, request_ids: list[int]) -> dict[i
     return {rid: cid for rid, cid in result.all()}
 
 
-def _to_out(req, cabinet, chat_id: int | None = None) -> ServiceRequestOut:
+def _to_out(req, cabinet, project, chat_id: int | None = None) -> ServiceRequestOut:
     return ServiceRequestOut(
         id=req.id,
         user_id=req.user_id,
         cabinet_id=req.cabinet_id,
-        cabinet_object_number=cabinet.object_number,
+        cabinet_object_number=cabinet.object_number if cabinet else None,
+        project_id=req.project_id,
+        project_name=project.name if project else None,
         request_type=req.request_type,
         description=req.description,
         status=req.status,
@@ -72,12 +74,14 @@ def _to_out(req, cabinet, chat_id: int | None = None) -> ServiceRequestOut:
     )
 
 
-def _to_detail(req, user, cabinet, chat_id: int | None = None) -> ServiceRequestDetailOut:
+def _to_detail(req, user, cabinet, project, chat_id: int | None = None) -> ServiceRequestDetailOut:
     return ServiceRequestDetailOut(
         id=req.id,
         user_id=req.user_id,
         cabinet_id=req.cabinet_id,
-        cabinet_object_number=cabinet.object_number,
+        cabinet_object_number=cabinet.object_number if cabinet else None,
+        project_id=req.project_id,
+        project_name=project.name if project else None,
         request_type=req.request_type,
         description=req.description,
         status=req.status,
@@ -95,13 +99,14 @@ def _to_detail(req, user, cabinet, chat_id: int | None = None) -> ServiceRequest
 
 
 def _build_task_title(
-    object_number: str, org_or_name: str, purpose: str | None,
+    target_label: str, org_or_name: str, purpose: str | None,
     admin_internal_name: str | None, type_label: str,
 ) -> str:
     """Пример: "26_001 Могилевский водоканал ПНС Вейно (П-228) ремонт" —
-    номер объекта, организация/ФИО заявителя, назначение ШУ, рабочий код ШУ
-    в скобках (если задан) и тип заявки. Отсутствующие части просто пропускаются."""
-    parts = [object_number, org_or_name]
+    номер объекта/проекта, организация/ФИО заявителя, назначение ШУ (для заявок
+    по проекту в целом его нет), рабочий код ШУ в скобках (если задан) и тип
+    заявки. Отсутствующие части просто пропускаются."""
+    parts = [target_label, org_or_name]
     if purpose:
         parts.append(purpose)
     if admin_internal_name:
@@ -112,9 +117,12 @@ def _build_task_title(
 
 def _sync_to_bitrix(
     request_id: int, request_type: str, description: str,
-    cabinet_object_number: str, cabinet_type: str, requester: str,
-    org_or_name: str, cabinet_purpose: str | None, cabinet_admin_internal_name: str | None,
+    target_label: str, target_kind_line: str, requester: str,
+    org_or_name: str, target_purpose: str | None, target_admin_internal_name: str | None,
 ) -> None:
+    """target_label — идентификатор объекта заявки для заголовка задачи (номер
+    ШУ или номер/название проекта). target_kind_line — готовая строка для тела
+    задачи ("ШУ: 29_099 (Вентиляция)" либо "Проект: 26_170 Название")."""
     async def _task():
         from app.database import AsyncSessionLocal
         from app.models.service_request import ServiceRequest
@@ -122,11 +130,11 @@ def _sync_to_bitrix(
 
         type_label = _REQUEST_TYPE_LABELS.get(request_type, request_type)
         title = _build_task_title(
-            cabinet_object_number, org_or_name, cabinet_purpose, cabinet_admin_internal_name, type_label,
+            target_label, org_or_name, target_purpose, target_admin_internal_name, type_label,
         )
         body = (
             f"Заявка №{request_id} из приложения SAVT\n"
-            f"ШУ: {cabinet_object_number} ({cabinet_type})\n"
+            f"{target_kind_line}\n"
             f"Тип: {type_label}\n"
             f"От: {requester}\n\n"
             f"{description}"
@@ -301,13 +309,24 @@ class ServiceRequestService:
             return None
         from app.repositories.cabinet import CabinetRepository
         from app.repositories.chat import ChatRepository
-        cabinet = await CabinetRepository(self.session).get_by_id(existing.cabinet_id)
+        from app.repositories.project import ProjectRepository
+        cabinet = await CabinetRepository(self.session).get_by_id(existing.cabinet_id) if existing.cabinet_id else None
+        project = await ProjectRepository(self.session).get_by_id(existing.project_id) if existing.project_id else None
         chat = await ChatRepository(self.session).find_by_service_request(existing.id)
-        return _to_out(existing, cabinet, chat.id if chat else None)
+        return _to_out(existing, cabinet, project, chat.id if chat else None)
 
     async def create(self, user_id: int, data: ServiceRequestCreateIn) -> ServiceRequestOut:
-        if not await self.cabinet_repo.user_has_access(user_id, data.cabinet_id):
-            raise PermissionDeniedError("У вас нет доступа к этому ШУ")
+        cabinet = None
+        project = None
+        if data.cabinet_id is not None:
+            if not await self.cabinet_repo.user_has_access(user_id, data.cabinet_id):
+                raise PermissionDeniedError("У вас нет доступа к этому ШУ")
+            cabinet = await self.cabinet_repo.get_by_id(data.cabinet_id)
+        else:
+            from app.repositories.project import ProjectRepository, UserProjectRepository
+            if not await UserProjectRepository(self.session).find(user_id, data.project_id):
+                raise PermissionDeniedError("У вас нет доступа к этому проекту")
+            project = await ProjectRepository(self.session).get_by_id(data.project_id)
 
         if data.client_token:
             existing_out = await self._existing_by_client_token(user_id, data.client_token)
@@ -318,6 +337,7 @@ class ServiceRequestService:
             req = await self.repo.create(
                 user_id=user_id,
                 cabinet_id=data.cabinet_id,
+                project_id=data.project_id,
                 request_type=data.request_type,
                 description=data.description,
                 client_token=data.client_token,
@@ -332,10 +352,12 @@ class ServiceRequestService:
                 raise
             return existing_out
         self.audit.log("service_request.create", "service_request", req.id, user_id, "user",
-                       {"cabinet_id": data.cabinet_id, "type": data.request_type})
+                       {"cabinet_id": data.cabinet_id, "project_id": data.project_id, "type": data.request_type})
 
         from app.services.chat_service import ChatService, chat_summary_dict
-        chat = await ChatService(self.session).ensure_service_request_chat(user_id, req.id, data.cabinet_id)
+        chat = await ChatService(self.session).ensure_service_request_chat(
+            user_id, req.id, cabinet_id=data.cabinet_id, project_id=data.project_id,
+        )
 
         await self.session.commit()
         await self.session.refresh(req)
@@ -343,17 +365,29 @@ class ServiceRequestService:
         from app.services.realtime_events import publish_chat_created
         await publish_chat_created(chat.id, chat_summary_dict(chat))
 
-        from app.repositories.cabinet import CabinetRepository
         from app.repositories.user import UserRepository
-        cabinet = await CabinetRepository(self.session).get_by_id(data.cabinet_id)
         user = await UserRepository(self.session).get_by_id(user_id)
         requester = user.full_name or user.phone if user else str(user_id)
         org_or_name = (user.organization_name or user.full_name or user.phone) if user else str(user_id)
+
+        if cabinet is not None:
+            target_label = cabinet.object_number
+            target_kind_line = f"ШУ: {cabinet.object_number} ({cabinet.type})"
+            target_purpose = cabinet.purpose
+            target_internal_name = cabinet.admin_internal_name
+        else:
+            target_label = project.production_number or project.name
+            target_kind_line = "Проект: " + " ".join(
+                p for p in [project.production_number, project.name] if p
+            )
+            target_purpose = None
+            target_internal_name = None
+
         _sync_to_bitrix(
-            req.id, req.request_type, req.description, cabinet.object_number, cabinet.type, requester,
-            org_or_name, cabinet.purpose, cabinet.admin_internal_name,
+            req.id, req.request_type, req.description, target_label, target_kind_line, requester,
+            org_or_name, target_purpose, target_internal_name,
         )
-        return _to_out(req, cabinet, chat.id)
+        return _to_out(req, cabinet, project, chat.id)
 
     async def list_for_user(
         self, user_id: int, status: str | None, page: int, size: int
@@ -361,22 +395,24 @@ class ServiceRequestService:
         rows, total = await self.repo.list_for_user(
             user_id, status, offset=(page - 1) * size, limit=size
         )
-        chat_ids = await _get_chat_ids(self.session, [r.id for r, _ in rows])
-        return make_page([_to_out(r, c, chat_ids.get(r.id)) for r, c in rows], total, page, size)
+        chat_ids = await _get_chat_ids(self.session, [r.id for r, _, _ in rows])
+        return make_page([_to_out(r, c, p, chat_ids.get(r.id)) for r, c, p in rows], total, page, size)
 
     async def list_admin(
         self, status: str | None, cabinet_id: int | None, page: int, size: int,
+        project_id: int | None = None,
         request_type: str | None = None,
         search: str | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
     ) -> PageOut[ServiceRequestDetailOut]:
         rows, total = await self.repo.list_admin(
-            status, cabinet_id, request_type=request_type, search=search, sort_by=sort_by, sort_order=sort_order,
+            status, cabinet_id, project_id=project_id, request_type=request_type,
+            search=search, sort_by=sort_by, sort_order=sort_order,
             offset=(page - 1) * size, limit=size
         )
-        chat_ids = await _get_chat_ids(self.session, [r.id for r, _, _ in rows])
-        return make_page([_to_detail(r, u, c, chat_ids.get(r.id)) for r, u, c in rows], total, page, size)
+        chat_ids = await _get_chat_ids(self.session, [r.id for r, _, _, _ in rows])
+        return make_page([_to_detail(r, u, c, p, chat_ids.get(r.id)) for r, u, c, p in rows], total, page, size)
 
     async def update_status(
         self, req_id: int, data: ServiceRequestStatusIn, actor_id: int | None = None, actor_role: str = "admin",
@@ -420,8 +456,10 @@ class ServiceRequestService:
                     schedule_request_chat_export(chat.id)
 
         from app.repositories.cabinet import CabinetRepository
+        from app.repositories.project import ProjectRepository
         from app.repositories.user import UserRepository
-        cabinet = await CabinetRepository(self.session).get_by_id(req.cabinet_id)
+        cabinet = await CabinetRepository(self.session).get_by_id(req.cabinet_id) if req.cabinet_id else None
+        project = await ProjectRepository(self.session).get_by_id(req.project_id) if req.project_id else None
         user = await UserRepository(self.session).get_by_id(req.user_id)
 
         # Заявитель узнаёт о смене статуса, а не выясняет её, заходя в приложение.
@@ -440,4 +478,4 @@ class ServiceRequestService:
                 },
             )
 
-        return _to_detail(req, user, cabinet, chat_id)
+        return _to_detail(req, user, cabinet, project, chat_id)

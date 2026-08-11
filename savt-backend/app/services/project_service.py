@@ -19,7 +19,6 @@ from app.schemas.project import (
 )
 from app.services import project_folder_service
 from app.services.audit_service import AuditLogger
-from app.services.project_reconciliation import ensure_cabinet_chats, ensure_cabinet_chats_for_project
 
 logger = logging.getLogger(__name__)
 
@@ -293,23 +292,14 @@ class ProjectService:
         self.audit.log("cabinet.set_project", "cabinet", cabinet_id, actor_id, actor_role,
                        {"project_id": data.project_id})
 
-        created_chats = []
-        if data.project_id is not None:
-            member_ids = await self.user_project_repo.list_member_ids(data.project_id)
-            created_chats = await ensure_cabinet_chats(self.session, member_ids, [cabinet_id])
-
         await self.session.commit()
 
-        # Папка ШУ внутри папки проекта — с тем же шаблоном подпапок
+        # Папка ШУ внутри папки проекта — с тем же шаблоном подпапок. Чат ШУ
+        # никогда не создаётся автоматически — только сам пользователь, открыв
+        # ШУ и нажав на чат (см. ChatService.get_cabinet_chat)
         if data.project_id is not None:
             from app.services import project_folder_service
             project_folder_service.schedule_cabinet_folder(cabinet_id)
-
-        if created_chats:
-            from app.services.chat_service import chat_summary_dict
-            from app.services.realtime_events import publish_chat_created
-            for chat in created_chats:
-                await publish_chat_created(chat.id, chat_summary_dict(chat))
 
     # Участники проекта — единственное место, где теперь хранится доступ к
     # шкафам (Cabinet.project_id + членство здесь). Заменяет прежний

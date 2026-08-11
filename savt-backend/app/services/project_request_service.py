@@ -3,11 +3,11 @@ from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AlreadyExistsError, NotFoundError
+from app.repositories.chat import ChatRepository
 from app.repositories.project import ProjectRepository, ProjectRequestRepository, UserProjectRepository
 from app.schemas.pagination import PageOut, make_page
 from app.schemas.requests import ApproveShareIn, ProjectShareRequestOut, RejectRequestIn
 from app.services.audit_service import AuditLogger
-from app.services.project_reconciliation import ensure_cabinet_chats_for_project
 
 
 class ProjectRequestService:
@@ -54,8 +54,9 @@ class ProjectRequestService:
         return make_page(items, total, page, size)
 
     # Апрув заявки — сразу даёт доступ ко всем шкафам проекта: доступ выводится
-    # из членства (см. общую идею), второй заявки на конкретный шкаф не
-    # требуется — тут только заводим чаты (project_reconciliation.ensure_cabinet_chats_for_project)
+    # из членства (см. общую идею). Заводим только чат проекта — чат ШУ
+    # никогда не создаётся автоматически, только сам пользователь, открыв ШУ
+    # и нажав на чат (см. ChatService.get_cabinet_chat).
     async def approve_share(
         self, request_id: int, data: ApproveShareIn, admin_id: int, actor_role: str
     ) -> None:
@@ -75,9 +76,11 @@ class ProjectRequestService:
 
         await self.user_project_repo.create(user_id=req.user_id, project_id=req.project_id, is_primary=False)
 
-        created_chats = await ensure_cabinet_chats_for_project(
-            self.session, req.project_id, [req.user_id],
-        )
+        had_chat = await ChatRepository(self.session).find(
+            req.user_id, "project", project_id=req.project_id,
+        ) is not None
+        from app.services.chat_service import ChatService
+        project_chat = await ChatService(self.session).ensure_project_chat(req.user_id, req.project_id)
 
         req.status = "approved"
         req.admin_response = data.admin_response
@@ -88,11 +91,10 @@ class ProjectRequestService:
                        admin_id, actor_role, {"user_id": req.user_id, "project_id": req.project_id})
         await self.session.commit()
 
-        if created_chats:
+        if not had_chat:
             from app.services.chat_service import chat_summary_dict
             from app.services.realtime_events import publish_chat_created
-            for chat in created_chats:
-                await publish_chat_created(chat.id, chat_summary_dict(chat))
+            await publish_chat_created(project_chat.id, chat_summary_dict(project_chat))
 
         await self._notify(req.user_id, "Доступ к проекту открыт",
                            f"Проект «{project.name}» добавлен в ваш список",

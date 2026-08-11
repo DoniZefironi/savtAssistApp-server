@@ -49,6 +49,7 @@ async def list_my_requests(
 async def list_all_requests(
     status: str | None = Query(None, pattern=_STATUS_PATTERN),
     cabinet_id: int | None = Query(None, gt=0),
+    project_id: int | None = Query(None, gt=0),
     request_type: str | None = Query(None, pattern=_REQUEST_TYPE_PATTERN),
     search: str | None = Query(None, min_length=1, max_length=200),
     sort_by: str = Query(
@@ -62,7 +63,7 @@ async def list_all_requests(
     session: AsyncSession = Depends(get_session),
 ):
     return await ServiceRequestService(session).list_admin(
-        status, cabinet_id, page, size,
+        status, cabinet_id, page, size, project_id=project_id,
         request_type=request_type, search=search, sort_by=sort_by, sort_order=sort_order,
     )
 

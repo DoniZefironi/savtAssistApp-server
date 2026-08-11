@@ -2,9 +2,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AlreadyExistsError, NotFoundError
 from app.repositories.cabinet import CabinetRepository
+from app.repositories.chat import ChatRepository
 from app.repositories.project import ProjectRepository, ProjectRequestRepository, UserProjectRepository
 from app.schemas.project import ProjectCabinetItem, UserProjectDetailOut, UserProjectListItemOut
-from app.services.project_reconciliation import ensure_cabinet_chats_for_project
 from app.utils.warranty import warranty_status as _warranty_status
 
 
@@ -15,6 +15,7 @@ class UserProjectService:
         self.cabinet_repo = CabinetRepository(session)
         self.user_project_repo = UserProjectRepository(session)
         self.request_repo = ProjectRequestRepository(session)
+        self.chat_repo = ChatRepository(session)
 
     # Список проектов пользователя
     async def list_projects(self, user_id: int) -> list[UserProjectListItemOut]:
@@ -73,18 +74,18 @@ class UserProjectService:
 
         if not has_primary:
             await self.user_project_repo.create(user_id=user_id, project_id=project.id, is_primary=True)
-            # Доступ ко всем шкафам проекта уже есть самим членством выше —
-            # тут только заводим чаты по каждому, не дожидаясь первого открытия
-            created_chats = await ensure_cabinet_chats_for_project(self.session, project.id, [user_id])
-            # Чат самого проекта — как чат ШУ при привязке шкафа
+            # Доступ ко всем шкафам проекта уже есть самим членством выше. Чат
+            # ШУ никогда не создаётся автоматически — только сам пользователь,
+            # открыв ШУ и нажав на чат (см. ChatService.get_cabinet_chat).
+            # Чат самого проекта заводим сразу, не дожидаясь первого открытия.
+            had_chat = await self.chat_repo.find(user_id, "project", project_id=project.id) is not None
             from app.services.chat_service import ChatService
-            created_chats.append(await ChatService(self.session).ensure_project_chat(user_id, project.id))
+            project_chat = await ChatService(self.session).ensure_project_chat(user_id, project.id)
             await self.session.commit()
-            if created_chats:
+            if not had_chat:
                 from app.services.chat_service import chat_summary_dict
                 from app.services.realtime_events import publish_chat_created
-                for chat in created_chats:
-                    await publish_chat_created(chat.id, chat_summary_dict(chat))
+                await publish_chat_created(project_chat.id, chat_summary_dict(project_chat))
             return {"status": "linked", "message": "Проект успешно привязан"}
 
         pending = await self.request_repo.find_pending_share(user_id, project.id)

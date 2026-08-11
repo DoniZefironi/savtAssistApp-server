@@ -377,18 +377,8 @@ class UserProjectRepository(BaseRepository[UserProject]):
         )
         return result.scalar_one_or_none() is not None
 
-    # текущие участники проекта, primary всегда первым — важно для заведения
-    # чатов по шкафам проекта (см. project_reconciliation.ensure_cabinet_chats)
-    async def list_member_ids(self, project_id: int) -> list[int]:
-        result = await self.session.execute(
-            select(UserProject.user_id)
-            .where(UserProject.project_id == project_id)
-            .order_by(UserProject.is_primary.desc(), UserProject.added_at.asc())
-        )
-        return list(result.scalars().all())
-
-    # То же самое, но с самим пользователем — для админского списка "участники
-    # проекта" (GET /admin/projects/{id}/users)
+    # Участники проекта вместе с самим пользователем — для админского списка
+    # "участники проекта" (GET /admin/projects/{id}/users)
     async def list_members(self, project_id: int) -> list[tuple[UserProject, User]]:
         result = await self.session.execute(
             select(UserProject, User)

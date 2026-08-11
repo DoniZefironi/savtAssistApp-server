@@ -97,16 +97,18 @@ class ChatService:
             await self.session.commit()
         return _to_chat_out(chat)
 
-    # Чат заявки на обслуживание — один на заявку, привязан к тому же ШУ
-    # (для отображения контекста в списке чатов), видим и пользователю, и операторам
+    # Чат заявки на обслуживание — один на заявку, привязан к тому же ШУ или
+    # проекту, что и сама заявка (ровно один из двух, см. ServiceRequest —
+    # для отображения контекста в списке чатов), видим и пользователю, и операторам
     async def ensure_service_request_chat(
-        self, user_id: int, service_request_id: int, cabinet_id: int
+        self, user_id: int, service_request_id: int,
+        cabinet_id: int | None = None, project_id: int | None = None,
     ) -> Chat:
         existing = await self.chat_repo.find_by_service_request(service_request_id)
         if existing is None:
             # Бот в чатах заявок не участвует — там ведёт человек (см. send_message)
             existing = await self.chat_repo.create(
-                user_id, "service_request", cabinet_id=cabinet_id,
+                user_id, "service_request", cabinet_id=cabinet_id, project_id=project_id,
                 service_request_id=service_request_id, bot_active=False,
             )
         return existing

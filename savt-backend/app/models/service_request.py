@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import String, DateTime, ForeignKey, func, Index, Text, text
+from sqlalchemy import CheckConstraint, String, DateTime, ForeignKey, func, Index, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -11,8 +11,11 @@ class ServiceRequest(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     # ссылка на пользователя
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    # ссылка на ШУ
-    cabinet_id: Mapped[int] = mapped_column(ForeignKey("cabinets.id"), index=True)
+    # ссылка на ШУ — ровно одна из cabinet_id/project_id заполнена (см. CHECK
+    # ниже), как у Document/CabinetPhoto/Chat
+    cabinet_id: Mapped[int | None] = mapped_column(ForeignKey("cabinets.id"), nullable=True, index=True)
+    # ссылка на проект (заявка по проекту в целом, не привязанная к конкретному ШУ)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True, index=True)
     # тип заявки
     request_type: Mapped[str] = mapped_column(String(20), index=True)
     # описание проблемы
@@ -41,5 +44,9 @@ class ServiceRequest(Base):
             "user_id", "client_token",
             unique=True,
             postgresql_where=text("client_token IS NOT NULL"),
+        ),
+        CheckConstraint(
+            "(cabinet_id IS NOT NULL) != (project_id IS NOT NULL)",
+            name="ck_service_request_cabinet_or_project",
         ),
     )

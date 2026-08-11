@@ -2,6 +2,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.cabinets import Cabinet
+from app.models.project import Project
 from app.models.service_request import ServiceRequest
 from app.models.user import User
 from app.utils.db import fuzzy_condition
@@ -12,12 +13,14 @@ class ServiceRequestRepository:
         self.session = session
 
     async def create(
-        self, user_id: int, cabinet_id: int, request_type: str, description: str,
+        self, user_id: int, request_type: str, description: str,
+        cabinet_id: int | None = None, project_id: int | None = None,
         client_token: str | None = None,
     ) -> ServiceRequest:
         req = ServiceRequest(
             user_id=user_id,
             cabinet_id=cabinet_id,
+            project_id=project_id,
             request_type=request_type,
             description=description,
             client_token=client_token,
@@ -55,9 +58,12 @@ class ServiceRequestRepository:
         count_stmt = select(func.count(ServiceRequest.id)).where(*conditions)
         total = (await self.session.execute(count_stmt)).scalar() or 0
 
+        # outerjoin — cabinet_id/project_id взаимоисключающие, у заявки по
+        # проекту нет ШУ и наоборот (см. CHECK на модели)
         stmt = (
-            select(ServiceRequest, Cabinet)
-            .join(Cabinet, Cabinet.id == ServiceRequest.cabinet_id)
+            select(ServiceRequest, Cabinet, Project)
+            .outerjoin(Cabinet, Cabinet.id == ServiceRequest.cabinet_id)
+            .outerjoin(Project, Project.id == ServiceRequest.project_id)
             .where(*conditions)
             .order_by(ServiceRequest.created_at.desc())
             .offset(offset).limit(limit)
@@ -67,6 +73,7 @@ class ServiceRequestRepository:
 
     async def list_admin(
         self, status: str | None = None, cabinet_id: int | None = None,
+        project_id: int | None = None,
         request_type: str | None = None,
         search: str | None = None,
         sort_by: str = "created_at",
@@ -78,20 +85,23 @@ class ServiceRequestRepository:
             conditions.append(ServiceRequest.status == status)
         if cabinet_id:
             conditions.append(ServiceRequest.cabinet_id == cabinet_id)
+        if project_id:
+            conditions.append(ServiceRequest.project_id == project_id)
         if request_type:
             conditions.append(ServiceRequest.request_type == request_type)
         if search:
             conditions.append(fuzzy_condition(
                 search,
                 User.full_name, User.phone, User.organization_name,
-                Cabinet.object_number, Cabinet.admin_internal_name,
+                Cabinet.object_number, Cabinet.admin_internal_name, Project.name,
                 ServiceRequest.request_type, ServiceRequest.description,
             ))
 
         count_stmt = (
             select(func.count(ServiceRequest.id))
             .join(User, User.id == ServiceRequest.user_id)
-            .join(Cabinet, Cabinet.id == ServiceRequest.cabinet_id)
+            .outerjoin(Cabinet, Cabinet.id == ServiceRequest.cabinet_id)
+            .outerjoin(Project, Project.id == ServiceRequest.project_id)
         )
         if conditions:
             count_stmt = count_stmt.where(*conditions)
@@ -108,9 +118,10 @@ class ServiceRequestRepository:
         order = _sort_col.asc() if sort_order == "asc" else _sort_col.desc()
 
         stmt = (
-            select(ServiceRequest, User, Cabinet)
+            select(ServiceRequest, User, Cabinet, Project)
             .join(User, User.id == ServiceRequest.user_id)
-            .join(Cabinet, Cabinet.id == ServiceRequest.cabinet_id)
+            .outerjoin(Cabinet, Cabinet.id == ServiceRequest.cabinet_id)
+            .outerjoin(Project, Project.id == ServiceRequest.project_id)
         )
         if conditions:
             stmt = stmt.where(*conditions)

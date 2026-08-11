@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AlreadyExistsError, NotFoundError
 from app.repositories.cabinet import CabinetRepository, CabinetRequestRepository
-from app.repositories.project import ProjectRepository, UserProjectRepository
+from app.repositories.project import ProjectRepository
 from app.schemas.pagination import PageOut, make_page
 from app.schemas.requests import (
     AdditionRequestOut,
@@ -12,7 +12,6 @@ from app.schemas.requests import (
     RejectRequestIn,
 )
 from app.services.audit_service import AuditLogger
-from app.services.project_reconciliation import ensure_cabinet_chats
 
 
 class CabinetRequestService:
@@ -21,7 +20,6 @@ class CabinetRequestService:
         self.request_repo = CabinetRequestRepository(session)
         self.cabinet_repo = CabinetRepository(session)
         self.project_repo = ProjectRepository(session)
-        self.user_project_repo = UserProjectRepository(session)
         self.audit = AuditLogger(session)
 
     # Заявитель узнаёт о решении, а не выясняет его, заходя в приложение.
@@ -92,7 +90,6 @@ class CabinetRequestService:
         if cabinet is None or cabinet.deleted_at is not None:
             raise NotFoundError("ШУ не найден")
 
-        created_chats = []
         if req.project_id is not None:
             if cabinet.project_id is not None and cabinet.project_id != req.project_id:
                 raise AlreadyExistsError(
@@ -100,14 +97,8 @@ class CabinetRequestService:
                 )
             if cabinet.project_id is None:
                 cabinet.project_id = req.project_id
-                member_ids = await self.user_project_repo.list_member_ids(req.project_id)
-                created_chats = await ensure_cabinet_chats(self.session, member_ids, [cabinet.id])
-            else:
-                created_chats = await ensure_cabinet_chats(self.session, [req.user_id], [cabinet.id])
-        else:
-            # Старые заявки, поданные до перехода на проектную модель — без
-            # project_id перенести шкаф некуда, заводим чат только заявителю
-            created_chats = await ensure_cabinet_chats(self.session, [req.user_id], [cabinet.id])
+        # Чат ШУ никогда не создаётся автоматически — только сам пользователь,
+        # открыв ШУ и нажав на чат (см. ChatService.get_cabinet_chat)
 
         req.status = "approved"
         req.cabinet_id = data.cabinet_id
@@ -119,11 +110,6 @@ class CabinetRequestService:
                        admin_id, actor_role, {"user_id": req.user_id, "cabinet_id": data.cabinet_id})
         await self.session.commit()
 
-        if created_chats:
-            from app.services.chat_service import chat_summary_dict
-            from app.services.realtime_events import publish_chat_created
-            for chat in created_chats:
-                await publish_chat_created(chat.id, chat_summary_dict(chat))
         await self._notify(req.user_id, "Заявка на добавление ШУ одобрена",
                            f"ШУ {cabinet.object_number} добавлен в ваш список",
                            {"type": "cabinet_request", "cabinet_id": str(data.cabinet_id)})
