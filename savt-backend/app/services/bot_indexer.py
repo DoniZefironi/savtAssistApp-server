@@ -203,6 +203,20 @@ async def index_kb_article(session: AsyncSession, article: KbArticle) -> None:
 
 
 async def index_document(session: AsyncSession, doc: Document) -> None:
+    # Служебный документ (is_internal) не должен быть виден пользователю вообще —
+    # значит, и в поиске бота его содержимое всплывать не должно. Чистим любые
+    # уже существующие эмбеддинги (документ мог быть проиндексирован раньше, до
+    # того как его закрыли) и не создаём новые — это же убирает из поиска файлы,
+    # подхваченные с NAS напрямую (см. import_new_files_from_nas), у них
+    # is_internal=True с самого создания.
+    if doc.is_internal:
+        await session.execute(
+            delete(Embedding).where(
+                Embedding.source_type == "document",
+                Embedding.source_id == doc.id,
+            )
+        )
+        return
     text = await _extract_text(doc.file_url)
     if not text.strip():
         text = doc.title or ""
@@ -210,6 +224,24 @@ async def index_document(session: AsyncSession, doc: Document) -> None:
         session, "document", doc.id, _chunks(text),
         {"title": doc.title, "cabinet_id": doc.cabinet_id},
     )
+
+
+def schedule_reindex_document(doc_id: int) -> None:
+    """Фоновая (best-effort) переиндексация одного документа — после создания
+    через форму загрузки или после смены is_internal через PATCH. Отдельная
+    сессия — вызывается уже после commit основного запроса, не должна его
+    блокировать/ронять."""
+    async def _task():
+        from app.database import AsyncSessionLocal
+        try:
+            async with AsyncSessionLocal() as s:
+                doc = await s.get(Document, doc_id)
+                if doc:
+                    await index_document(s, doc)
+                    await s.commit()
+        except Exception:
+            logger.exception("Фоновая переиндексация документа %s не удалась", doc_id)
+    asyncio.create_task(_task())
 
 
 async def reindex_all(session: AsyncSession, force: bool = False) -> dict:

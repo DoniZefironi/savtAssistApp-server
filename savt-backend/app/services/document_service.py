@@ -15,6 +15,7 @@ from app.schemas.documents import (
     ApproveDocumentRequestIn,
     DocumentOut,
     DocumentRequestOut,
+    DocumentUpdateIn,
     PhotoOut,
     PhotoUpdateIn,
     RejectDocumentRequestIn,
@@ -71,6 +72,31 @@ class AdminDocumentService:
         await self.session.refresh(doc)
         if project_id is not None:
             project_folder_service.schedule_document_mirror(project_id, doc.id)
+        return DocumentOut.model_validate(doc)
+
+    # Единственный способ изменить requires_approval/is_internal после создания —
+    # нужно, в частности, чтобы разобрать документы, автоматически подхваченные
+    # с NAS как is_internal=True (см. project_folder_service.import_new_files_from_nas):
+    # без этого их некому было бы вручную открыть.
+    async def update_document(
+        self, doc_id: int, data: DocumentUpdateIn, actor_id: int = 0, actor_role: str = "admin",
+    ) -> DocumentOut:
+        doc = await self.doc_repo.get_by_id(doc_id)
+        if doc is None:
+            raise NotFoundError("Документ не найден")
+        changed = data.model_dump(exclude_unset=True)
+        for field, value in changed.items():
+            setattr(doc, field, value)
+        if changed:
+            self.audit.log("document.update", "document", doc_id, actor_id, actor_role, {"fields": list(changed.keys())})
+            await self.session.commit()
+            await self.session.refresh(doc)
+            if "is_internal" in changed:
+                # Открыли — переиндексировать, чтобы стал находиться поиском бота.
+                # Закрыли — переиндексировать тоже: index_document для is_internal
+                # сам чистит уже существующие эмбеддинги (см. bot_indexer.py).
+                from app.services.bot_indexer import schedule_reindex_document
+                schedule_reindex_document(doc_id)
         return DocumentOut.model_validate(doc)
 
     async def list_documents(

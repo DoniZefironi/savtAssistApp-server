@@ -620,7 +620,12 @@ async def import_new_files_from_nas(
     и именно там человек оставляет файл «чтобы появился в приложении». Вложенные
     папки шаблона (_Проект, _Программа, Фото и т.п.) не трогаем — файлы там
     разложены осмысленно, и сваливать их в плоский список документов означало бы
-    потерять эту структуру."""
+    потерять эту структуру.
+
+    Заводится как is_internal=True — файл попал в приложение в обход админской
+    формы загрузки, где уровень доступа выбирают осознанно, поэтому по умолчанию
+    он не должен быть виден вообще никому из пользователей, пока администратор
+    вручную не откроет его через PATCH /admin/documents/{id} (см. Document.is_internal)."""
     if not settings.project_folders_root:
         return 0
 
@@ -657,12 +662,16 @@ async def import_new_files_from_nas(
             file_size_bytes=info.file_size_bytes,
             mime_type=info.mime_type,
             requires_approval=False,
+            is_internal=True,
             # Запоминаем имя как оно есть на диске — иначе следующая сверка
             # снова сочтёт файл новым (см. комментарий у Document.nas_filename)
             nas_filename=entry.name,
         )
         imported += 1
-        logger.info("Подхвачен файл из папки проекта %s: %s", project.id, entry.name)
+        logger.info(
+            "Подхвачен файл из папки проекта %s: %s (заведён как is_internal=True, "
+            "требует ручного открытия администратором)", project.id, entry.name,
+        )
 
     if imported:
         await session.commit()

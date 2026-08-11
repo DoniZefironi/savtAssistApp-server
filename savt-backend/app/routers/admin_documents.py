@@ -1,42 +1,24 @@
-import asyncio
-import logging
-
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleName
 from app.core.dependencies import get_role_from_token, get_session, require_role
-from app.database import AsyncSessionLocal
 from app.models.user import User
 from app.schemas.documents import (
     ApproveDocumentRequestIn,
     DocumentOut,
     DocumentRequestOut,
+    DocumentUpdateIn,
     PhotoOut,
     PhotoUpdateIn,
     RejectDocumentRequestIn,
 )
 from app.schemas.pagination import PageOut
+from app.services.bot_indexer import schedule_reindex_document
 from app.services.document_service import AdminDocumentService
 
 router = APIRouter(tags=["admin: documents"])
 
-_log = logging.getLogger(__name__)
-
-
-def _reindex_document(doc_id: int) -> None:
-    async def _task():
-        from app.models.document import Document
-        from app.services.bot_indexer import index_document
-        try:
-            async with AsyncSessionLocal() as s:
-                doc = await s.get(Document, doc_id)
-                if doc:
-                    await index_document(s, doc)
-                    await s.commit()
-        except Exception:
-            _log.exception("Фоновая переиндексация документа %s не удалась", doc_id)
-    asyncio.create_task(_task())
 
 # Загрузить документ
 @router.post("/admin/documents", response_model=DocumentOut, status_code=status.HTTP_201_CREATED)
@@ -70,7 +52,7 @@ async def create_document(
         actor_id=actor.id,
         actor_role=actor_role,
     )
-    _reindex_document(doc.id)
+    schedule_reindex_document(doc.id)
     return doc
 
 # Все документы
@@ -95,6 +77,18 @@ async def list_documents(
         sort_by=sort_by, sort_order=sort_order,
         page=page, size=size,
     )
+
+# Изменить уровень доступа (requires_approval/is_internal) — единственный способ
+# открыть документ, автоматически подхваченный с NAS как is_internal=True
+@router.patch("/admin/documents/{doc_id}", response_model=DocumentOut)
+async def update_document(
+    doc_id: int,
+    payload: DocumentUpdateIn,
+    actor: User = Depends(require_role(RoleName.ADMIN)),
+    actor_role: str = Depends(get_role_from_token),
+    session: AsyncSession = Depends(get_session),
+):
+    return await AdminDocumentService(session).update_document(doc_id, payload, actor.id, actor_role)
 
 # Удалить документ
 @router.delete("/admin/documents/{doc_id}", status_code=status.HTTP_204_NO_CONTENT)

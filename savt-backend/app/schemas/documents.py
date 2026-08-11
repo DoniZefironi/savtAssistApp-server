@@ -59,6 +59,11 @@ class PhotoUpdateIn(BaseModel):
     sort_order: int | None = Field(None, ge=0, le=9999)
 
 
+class DocumentUpdateIn(BaseModel):
+    requires_approval: bool | None = None
+    is_internal: bool | None = None
+
+
 class DocumentRequestCreateIn(BaseModel):
     user_message: str | None = Field(None, min_length=1, max_length=1000)
 

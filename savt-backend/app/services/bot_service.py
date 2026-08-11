@@ -130,8 +130,14 @@ async def _retrieve_context(
     from app.models.document import Document as DocumentModel
     vec = cast(await yandex_service.embed_query(query), Vector(256))
 
-    # Подзапрос: ID документов с ограниченным доступом (не давать боту)
-    restricted_ids = select(DocumentModel.id).where(DocumentModel.requires_approval == True).scalar_subquery()
+    # Подзапрос: ID документов с ограниченным или служебным доступом (не давать боту).
+    # is_internal сюда попадает для подстраховки — сами эмбеддинги для таких
+    # документов и не должны существовать (см. bot_indexer.index_document), но
+    # если индексация когда-то отстала/сбойнула, этот фильтр не даст утечки.
+    from sqlalchemy import or_
+    restricted_ids = select(DocumentModel.id).where(
+        or_(DocumentModel.requires_approval == True, DocumentModel.is_internal == True)
+    ).scalar_subquery()
 
     # Общий пул: только FAQ и KB (без документов конкретных ШУ)
     general_stmt = (
