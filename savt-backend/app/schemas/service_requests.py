@@ -32,6 +32,10 @@ class ServiceRequestOut(BaseModel):
     project_id: int | None
     project_name: str | None
     request_type: str
+    # Снимок статуса гарантии ШУ/проекта на момент СОЗДАНИЯ заявки — платно или
+    # бесплатно обслуживание. Не пересчитывается задним числом при изменении
+    # гарантии; сервер вычисляет сам, клиент это поле не передаёт.
+    is_under_warranty: bool
     description: str
     status: str
     bitrix_task_id: str | None = None

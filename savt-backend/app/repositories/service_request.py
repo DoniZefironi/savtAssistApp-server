@@ -13,7 +13,7 @@ class ServiceRequestRepository:
         self.session = session
 
     async def create(
-        self, user_id: int, request_type: str, description: str,
+        self, user_id: int, request_type: str, description: str, is_under_warranty: bool,
         cabinet_id: int | None = None, project_id: int | None = None,
         client_token: str | None = None,
     ) -> ServiceRequest:
@@ -22,6 +22,7 @@ class ServiceRequestRepository:
             cabinet_id=cabinet_id,
             project_id=project_id,
             request_type=request_type,
+            is_under_warranty=is_under_warranty,
             description=description,
             client_token=client_token,
         )
@@ -75,6 +76,7 @@ class ServiceRequestRepository:
         self, status: str | None = None, cabinet_id: int | None = None,
         project_id: int | None = None,
         request_type: str | None = None,
+        is_under_warranty: bool | None = None,
         search: str | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
@@ -89,6 +91,8 @@ class ServiceRequestRepository:
             conditions.append(ServiceRequest.project_id == project_id)
         if request_type:
             conditions.append(ServiceRequest.request_type == request_type)
+        if is_under_warranty is not None:
+            conditions.append(ServiceRequest.is_under_warranty == is_under_warranty)
         if search:
             conditions.append(fuzzy_condition(
                 search,

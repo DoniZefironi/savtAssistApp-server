@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import CheckConstraint, String, DateTime, ForeignKey, func, Index, Text, text
+from sqlalchemy import Boolean, CheckConstraint, String, DateTime, ForeignKey, func, Index, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -16,8 +16,13 @@ class ServiceRequest(Base):
     cabinet_id: Mapped[int | None] = mapped_column(ForeignKey("cabinets.id"), nullable=True, index=True)
     # ссылка на проект (заявка по проекту в целом, не привязанная к конкретному ШУ)
     project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True, index=True)
-    # тип заявки
+    # тип заявки (вид работ — не путать с гарантией, см. is_under_warranty)
     request_type: Mapped[str] = mapped_column(String(20), index=True)
+    # Гарантийная ли заявка — снимок статуса гарантии ШУ/проекта на момент
+    # СОЗДАНИЯ заявки, дальше никогда не пересчитывается: если администратор
+    # позже продлит гарантию задним числом, уже созданная негарантийная заявка
+    # должна остаться негарантийной (важно для биллинга — платно/бесплатно).
+    is_under_warranty: Mapped[bool] = mapped_column(Boolean, index=True)
     # описание проблемы
     description: Mapped[str] = mapped_column(Text)
     # статус

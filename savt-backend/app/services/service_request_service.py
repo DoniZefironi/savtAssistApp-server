@@ -65,6 +65,7 @@ def _to_out(req, cabinet, project, chat_id: int | None = None) -> ServiceRequest
         project_id=req.project_id,
         project_name=project.name if project else None,
         request_type=req.request_type,
+        is_under_warranty=req.is_under_warranty,
         description=req.description,
         status=req.status,
         bitrix_task_id=req.bitrix_task_id,
@@ -83,6 +84,7 @@ def _to_detail(req, user, cabinet, project, chat_id: int | None = None) -> Servi
         project_id=req.project_id,
         project_name=project.name if project else None,
         request_type=req.request_type,
+        is_under_warranty=req.is_under_warranty,
         description=req.description,
         status=req.status,
         bitrix_task_id=req.bitrix_task_id,
@@ -119,23 +121,30 @@ def _sync_to_bitrix(
     request_id: int, request_type: str, description: str,
     target_label: str, target_kind_line: str, requester: str,
     org_or_name: str, target_purpose: str | None, target_admin_internal_name: str | None,
+    is_under_warranty: bool,
 ) -> None:
     """target_label — идентификатор объекта заявки для заголовка задачи (номер
     ШУ или номер/название проекта). target_kind_line — готовая строка для тела
-    задачи ("ШУ: 29_099 (Вентиляция)" либо "Проект: 26_170 Название")."""
+    задачи ("ШУ: 29_099 (Вентиляция)" либо "Проект: 26_170 Название").
+
+    is_under_warranty вынесен и в заголовок, и в тело задачи — от него зависит,
+    платное обслуживание или нет, это должно бросаться в глаза тому, кто берёт
+    задачу в работу, а не потеряться где-то в описании."""
     async def _task():
         from app.database import AsyncSessionLocal
         from app.models.service_request import ServiceRequest
         from app.services import bitrix_service
 
         type_label = _REQUEST_TYPE_LABELS.get(request_type, request_type)
-        title = _build_task_title(
+        warranty_label = "Гарантия" if is_under_warranty else "ПЛАТНО"
+        title = f"[{warranty_label}] " + _build_task_title(
             target_label, org_or_name, target_purpose, target_admin_internal_name, type_label,
         )
         body = (
             f"Заявка №{request_id} из приложения SAVT\n"
             f"{target_kind_line}\n"
             f"Тип: {type_label}\n"
+            f"Гарантия: {'да' if is_under_warranty else 'нет (платное обслуживание)'}\n"
             f"От: {requester}\n\n"
             f"{description}"
         )
@@ -328,6 +337,12 @@ class ServiceRequestService:
                 raise PermissionDeniedError("У вас нет доступа к этому проекту")
             project = await ProjectRepository(self.session).get_by_id(data.project_id)
 
+        # Снимок гарантии на момент создания — платно или бесплатно будет
+        # обслуживание, зафиксировано раз и навсегда (см. ServiceRequest.is_under_warranty).
+        from app.utils.warranty import warranty_status
+        warranty_ends_at = cabinet.warranty_ends_at if cabinet is not None else project.warranty_ends_at
+        is_under_warranty = warranty_status(warranty_ends_at) not in ("expired", "none")
+
         if data.client_token:
             existing_out = await self._existing_by_client_token(user_id, data.client_token)
             if existing_out is not None:
@@ -339,6 +354,7 @@ class ServiceRequestService:
                 cabinet_id=data.cabinet_id,
                 project_id=data.project_id,
                 request_type=data.request_type,
+                is_under_warranty=is_under_warranty,
                 description=data.description,
                 client_token=data.client_token,
             )
@@ -352,7 +368,8 @@ class ServiceRequestService:
                 raise
             return existing_out
         self.audit.log("service_request.create", "service_request", req.id, user_id, "user",
-                       {"cabinet_id": data.cabinet_id, "project_id": data.project_id, "type": data.request_type})
+                       {"cabinet_id": data.cabinet_id, "project_id": data.project_id,
+                        "type": data.request_type, "is_under_warranty": is_under_warranty})
 
         from app.services.chat_service import ChatService, chat_summary_dict
         chat = await ChatService(self.session).ensure_service_request_chat(
@@ -385,7 +402,7 @@ class ServiceRequestService:
 
         _sync_to_bitrix(
             req.id, req.request_type, req.description, target_label, target_kind_line, requester,
-            org_or_name, target_purpose, target_internal_name,
+            org_or_name, target_purpose, target_internal_name, is_under_warranty,
         )
         return _to_out(req, cabinet, project, chat.id)
 
@@ -402,12 +419,14 @@ class ServiceRequestService:
         self, status: str | None, cabinet_id: int | None, page: int, size: int,
         project_id: int | None = None,
         request_type: str | None = None,
+        is_under_warranty: bool | None = None,
         search: str | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
     ) -> PageOut[ServiceRequestDetailOut]:
         rows, total = await self.repo.list_admin(
             status, cabinet_id, project_id=project_id, request_type=request_type,
+            is_under_warranty=is_under_warranty,
             search=search, sort_by=sort_by, sort_order=sort_order,
             offset=(page - 1) * size, limit=size
         )

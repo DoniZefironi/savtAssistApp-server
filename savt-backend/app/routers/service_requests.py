@@ -51,6 +51,7 @@ async def list_all_requests(
     cabinet_id: int | None = Query(None, gt=0),
     project_id: int | None = Query(None, gt=0),
     request_type: str | None = Query(None, pattern=_REQUEST_TYPE_PATTERN),
+    is_under_warranty: bool | None = Query(None),
     search: str | None = Query(None, min_length=1, max_length=200),
     sort_by: str = Query(
         "created_at",
@@ -64,7 +65,8 @@ async def list_all_requests(
 ):
     return await ServiceRequestService(session).list_admin(
         status, cabinet_id, page, size, project_id=project_id,
-        request_type=request_type, search=search, sort_by=sort_by, sort_order=sort_order,
+        request_type=request_type, is_under_warranty=is_under_warranty,
+        search=search, sort_by=sort_by, sort_order=sort_order,
     )
 
 
