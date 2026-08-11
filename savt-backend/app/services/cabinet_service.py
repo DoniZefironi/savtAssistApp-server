@@ -1,5 +1,3 @@
-import secrets
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
@@ -34,9 +32,7 @@ class CabinetService:
 
     # Создание ШУ
     async def create(self, data: CabinetCreateIn, actor_id: int, actor_role: str) -> CabinetOut:
-        unique_code = await self._generate_unique_code()
         cabinet = await self.repo.create(
-            unique_code=unique_code,
             type=await _resolve_type(self.session, data.type),
             object_number=data.object_number,
             description=data.description,
@@ -65,7 +61,6 @@ class CabinetService:
         )
         return CabinetOut(
             id=cabinet.id,
-            unique_code=cabinet.unique_code,
             type=cabinet.type,
             object_number=cabinet.object_number,
             description=cabinet.description,
@@ -142,7 +137,6 @@ class CabinetService:
         items = [
             CabinetListOut(
                 id=c.id,
-                unique_code=c.unique_code,
                 type=c.type,
                 object_number=c.object_number,
                 purpose=c.purpose,
@@ -185,10 +179,3 @@ class CabinetService:
             )
             for row in rows
         ]
-
-    # Генерация уникального кода(хранится в кур-коде)
-    async def _generate_unique_code(self) -> str:
-        while True:
-            code = secrets.token_hex(8).upper()
-            if await self.repo.find_by_code(code) is None:
-                return code

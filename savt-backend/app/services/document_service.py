@@ -6,7 +6,6 @@ from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AlreadyExistsError, NotFoundError, PermissionDeniedError
-from app.repositories.cabinet import UserCabinetRepository
 from app.repositories.document import DocumentRepository, DocumentRequestRepository, PhotoRepository
 from app.repositories.tag import TagRepository
 from app.services import project_folder_service
@@ -257,10 +256,8 @@ class UserDocumentService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.doc_repo = DocumentRepository(session)
-        self.photo_repo = PhotoRepository(session)
         self.request_repo = DocumentRequestRepository(session)
         self.tag_repo = TagRepository(session)
-        self.user_cabinet_repo = UserCabinetRepository(session)
 
     async def list_documents(
         self,
@@ -355,30 +352,9 @@ class UserDocumentService:
         file_path = UPLOAD_ROOT / doc.file_url.removeprefix("/static/")
         return file_path, doc.mime_type, doc.title
 
-    # user_id обязателен: фото ШУ видны только тем, к чьему аккаунту он привязан.
-    # Проверка та же, что в ChatService.get_cabinet_chat — привязка в user_cabinets.
-    # Одноимённый метод AdminDocumentService доступен админам без этого ограничения.
-    async def list_photos(
-        self, user_id: int, cabinet_id: int, page: int = 1, size: int = 50
-    ) -> PageOut[PhotoOut]:
-        if not await self.user_cabinet_repo.find(user_id, cabinet_id):
-            raise PermissionDeniedError("У вас нет доступа к этому ШУ")
-        items, total = await self.photo_repo.list_all(
-            cabinet_id=cabinet_id, offset=(page - 1) * size, limit=size
-        )
-        return make_page([PhotoOut.model_validate(p) for p in items], total, page, size)
-
-    # Фотографии проекта в целом — отдельный список от фото ШУ, как и с документами
-    async def list_project_photos(
-        self, user_id: int, project_id: int, page: int = 1, size: int = 50
-    ) -> PageOut[PhotoOut]:
-        from app.repositories.project import UserProjectRepository
-        if not await UserProjectRepository(self.session).find(user_id, project_id):
-            raise PermissionDeniedError("У вас нет доступа к этому проекту")
-        items, total = await self.photo_repo.list_all(
-            project_id=project_id, offset=(page - 1) * size, limit=size
-        )
-        return make_page([PhotoOut.model_validate(p) for p in items], total, page, size)
+    # Фото пользователю не показываются вообще — см. AdminDocumentService.list_photos,
+    # им пользуются только GET /cabinets/{id}/photos и GET /projects/{id}/photos
+    # под require_role(ADMIN, OPERATOR) (см. routers/documents.py).
 
     async def request_access(
         self, user_id: int, doc_id: int, user_message: str | None

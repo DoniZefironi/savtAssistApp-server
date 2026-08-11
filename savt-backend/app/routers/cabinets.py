@@ -6,8 +6,6 @@ from app.models.user import User
 from app.schemas.cabinet import (
     AddByPhotoIn,
     AddByPhotoOut,
-    AddByQrIn,
-    AddByQrOut,
     UserCabinetDetailOut,
     UserCabinetListItemOut,
     UserCabinetPatchIn,
@@ -55,17 +53,6 @@ async def remove_cabinet(
 ):
     service = UserCabinetService(session)
     await service.remove_cabinet(current_user.id, cabinet_id)
-
-# Добавить ШУ по кур-коду
-@router.post("/add-by-qr", response_model=AddByQrOut)
-async def add_by_qr(
-    payload: AddByQrIn,
-    current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-):
-    service = UserCabinetService(session)
-    result = await service.add_by_qr(user_id=current_user.id, unique_code=payload.parse_unique_code())
-    return AddByQrOut(**result)
 
 # Добавить ШУ по фото(пользователь)
 @router.post("/add-by-photo", response_model=AddByPhotoOut, status_code=status.HTTP_201_CREATED)

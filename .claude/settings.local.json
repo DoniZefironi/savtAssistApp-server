@@ -26,7 +26,14 @@
       "PowerShell(cd savt-backend; python -m py_compile app/schemas/chat.py app/services/chat_service.py app/routers/chats.py; echo \"compile exit: $LASTEXITCODE\")",
       "PowerShell(cd savt-backend; python -m py_compile app/services/project_folder_service.py app/services/project_service.py app/schemas/project.py app/routers/admin_projects.py; echo \"compile exit: $LASTEXITCODE\")",
       "PowerShell(cd savt-backend; python -m py_compile app/services/project_folder_service.py app/services/document_service.py; echo \"compile exit: $LASTEXITCODE\")",
-      "PowerShell(cd savt-backend; python -m py_compile app/models/cabinet_photo.py app/services/project_folder_service.py alembic/versions/a29e6c4d8f13_add_cabinet_photo_nas_mtime.py; echo \"compile exit: $LASTEXITCODE\")"
+      "PowerShell(cd savt-backend; python -m py_compile app/models/cabinet_photo.py app/services/project_folder_service.py alembic/versions/a29e6c4d8f13_add_cabinet_photo_nas_mtime.py; echo \"compile exit: $LASTEXITCODE\")",
+      "PowerShell(Get-ChildItem -Path . -Recurse -Directory -Depth 3 | Where-Object { $_.FullName -notmatch 'node_modules|\\\\.git' } | Select-Object -ExpandProperty FullName)",
+      "mcp__claude_ai_Figma__whoami",
+      "mcp__claude_ai_Figma__generate_diagram",
+      "PowerShell(cd savt-backend; python -m py_compile app/services/project_folder_service.py; echo \"compile exit: $LASTEXITCODE\")",
+      "PowerShell(cd savt-backend; python -m py_compile app/models/cabinets.py app/models/project.py app/schemas/cabinet.py app/repositories/cabinet.py app/services/cabinet_service.py app/services/user_cabinet_service.py app/routers/cabinets.py app/routers/qr.py app/routers/documents.py app/services/document_service.py alembic/versions/b6e1d5a94c72_drop_cabinet_unique_code.py; echo \"compile exit: $LASTEXITCODE\")",
+      "PowerShell(python -m py_compile app/models/cabinets.py app/models/project.py app/schemas/cabinet.py app/repositories/cabinet.py app/services/cabinet_service.py app/services/user_cabinet_service.py app/routers/cabinets.py app/routers/qr.py app/routers/documents.py app/services/document_service.py alembic/versions/b6e1d5a94c72_drop_cabinet_unique_code.py; echo \"compile exit: $LASTEXITCODE\")",
+      "PowerShell(python -m py_compile app/routers/documents.py app/services/document_service.py app/models/cabinets.py app/models/project.py app/schemas/cabinet.py app/repositories/cabinet.py app/services/cabinet_service.py app/services/user_cabinet_service.py app/routers/cabinets.py app/routers/qr.py; echo \"compile exit: $LASTEXITCODE\")"
     ]
   }
 }

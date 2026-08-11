@@ -13,7 +13,7 @@ class Project(Base):
     name: Mapped[str] = mapped_column(String(200))
     # секретный кур-код — для проектов из Bitrix это Fernet-токен (номер проекта,
     # зашифрованный обратимо, см. app/services/project_code_service.py), поэтому
-    # шире, чем у Cabinet.unique_code
+    # длиннее простого случайного кода
     unique_code: Mapped[str] = mapped_column(String(200), unique=True, index=True)
     # открытый номер проекта из Bitrix (например "26_138") — для поиска "уже есть
     # ли проект с таким номером" при повторных вызовах вебхука. unique_code для
@@ -61,7 +61,7 @@ class Project(Base):
         onupdate=func.now(),
     )
     # soft-delete: если не NULL - проект считается удалённым.
-    # unique_code при этом остаётся занятым навсегда, как и у Cabinet.
+    # unique_code при этом остаётся занятым навсегда.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 
     def __repr__(self) -> str:

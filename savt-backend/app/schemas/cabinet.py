@@ -57,7 +57,6 @@ class CabinetUpdateIn(BaseModel):
 
 class CabinetOut(BaseModel):
     id: int
-    unique_code: str
     type: str
     object_number: str
     description: str | None
@@ -79,7 +78,6 @@ class CabinetOut(BaseModel):
 
 class CabinetListOut(BaseModel):
     id: int
-    unique_code: str
     type: str
     object_number: str
     purpose: str | None
@@ -130,21 +128,6 @@ class UserCabinetDetailOut(BaseModel):
 class UserCabinetPatchIn(BaseModel):
     custom_name: str | None = Field(None, min_length=1, max_length=200)
     custom_comment: str | None = Field(None, max_length=2000)
-
-
-class AddByQrIn(BaseModel):
-    qr_data: str = Field(..., min_length=1, max_length=200)
-
-    def parse_unique_code(self) -> str:
-        prefix = "savt://cabinet/"
-        if self.qr_data.startswith(prefix):
-            return self.qr_data[len(prefix):]
-        return self.qr_data
-
-
-class AddByQrOut(BaseModel):
-    status: str
-    message: str
 
 
 class AddByPhotoIn(BaseModel):

@@ -85,17 +85,7 @@ def cabinet_match_conditions(
 class CabinetRepository(BaseRepository[Cabinet]):
     def __init__(self, session: AsyncSession):
         super().__init__(Cabinet, session)
-    # поиск кода (удалённые ШУ не находятся — их код больше нельзя использовать)
-    async def find_by_code(self, unique_code: str) -> Cabinet | None:
-        result = await self.session.execute(
-            select(Cabinet).where(
-                Cabinet.unique_code == unique_code,
-                Cabinet.deleted_at.is_(None),
-            )
-        )
-        return result.scalar_one_or_none()
-
-    # Soft-delete: строка остаётся в БД (код и история сохраняются),
+    # Soft-delete: строка остаётся в БД (история сохраняется),
     # но перестаёт быть видна в поиске/списках/гео и не может быть привязана заново.
     async def soft_delete(self, cabinet: Cabinet) -> None:
         cabinet.deleted_at = datetime.now(timezone.utc)

@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import AlreadyExistsError, NotFoundError
 from app.models.chat import Chat
 from app.models.message import Message
-from app.repositories.cabinet import CabinetRepository, CabinetRequestRepository, UserCabinetRepository
+from app.repositories.cabinet import CabinetRequestRepository, UserCabinetRepository
 from app.repositories.project import ProjectRepository
 from app.schemas.cabinet import UserCabinetDetailOut, UserCabinetListItemOut, UserCabinetPatchIn
 from app.utils.warranty import warranty_status as _warranty_status
@@ -13,7 +13,6 @@ from app.utils.warranty import warranty_status as _warranty_status
 class UserCabinetService:
     def __init__(self, session: AsyncSession):
         self.session = session
-        self.cabinet_repo = CabinetRepository(session)
         self.project_repo = ProjectRepository(session)
         self.user_cabinet_repo = UserCabinetRepository(session)
         self.request_repo = CabinetRequestRepository(session)
@@ -91,39 +90,6 @@ class UserCabinetService:
             raise NotFoundError("ШУ не найден")
         await self.user_cabinet_repo.delete(uc)
         await self.session.commit()
-
-    # Добавление ШУ по кур-коду
-    async def add_by_qr(self, user_id: int, unique_code: str) -> dict:
-        cabinet = await self.cabinet_repo.find_by_code(unique_code)
-        if cabinet is None:
-            raise NotFoundError("ШУ с таким кодом не найден")
-
-        existing = await self.user_cabinet_repo.find(user_id, cabinet.id)
-        if existing is not None:
-            raise AlreadyExistsError("Этот ШУ уже привязан к вашему аккаунту")
-
-        has_primary = await self.user_cabinet_repo.has_primary(cabinet.id)
-
-        if not has_primary:
-            await self.user_cabinet_repo.create(
-                user_id=user_id,
-                cabinet_id=cabinet.id,
-                is_primary=True,
-            )
-            from app.services.chat_service import ChatService, chat_summary_dict
-            chat = await ChatService(self.session).ensure_cabinet_chat(user_id, cabinet.id)
-            await self.session.commit()
-            from app.services.realtime_events import publish_chat_created
-            await publish_chat_created(chat.id, chat_summary_dict(chat))
-            return {"status": "linked", "message": "ШУ успешно привязан"}
-
-        pending = await self.request_repo.find_pending_share(user_id, cabinet.id)
-        if pending is not None:
-            raise AlreadyExistsError("Заявка на доступ к этому ШУ уже отправлена")
-
-        await self.request_repo.create_share(user_id=user_id, cabinet_id=cabinet.id)
-        await self.session.commit()
-        return {"status": "request_submitted", "message": "Заявка отправлена администратору на рассмотрение"}
 
     # Добавление ШУ по фото
     async def add_by_photo(self, user_id: int, photo_url: str, user_comment: str | None) -> int:

@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_current_user, get_session
+from app.core.constants import RoleName
+from app.core.dependencies import get_current_user, get_session, require_role
 from app.models.user import User
 from app.schemas.documents import (
     DocumentRequestCreateIn,
@@ -10,7 +11,7 @@ from app.schemas.documents import (
     UserDocumentOut,
 )
 from app.schemas.pagination import PageOut
-from app.services.document_service import UserDocumentService
+from app.services.document_service import AdminDocumentService, UserDocumentService
 
 router = APIRouter(tags=["documents"])
 
@@ -70,16 +71,18 @@ async def download_document(
     return FileResponse(path=str(file_path), media_type=mime_type, filename=title)
 
 
+# Фото пользователю в приложении не показываются — только админ/оператор
+# (см. обсуждение: фото убраны из пользовательской части намеренно).
 @router.get("/cabinets/{cabinet_id}/photos", response_model=PageOut[PhotoOut])
 async def list_cabinet_photos(
     cabinet_id: int,
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
-    current_user: User = Depends(get_current_user),
+    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
-    return await UserDocumentService(session).list_photos(
-        user_id=current_user.id, cabinet_id=cabinet_id, page=page, size=size
+    return await AdminDocumentService(session).list_photos(
+        cabinet_id=cabinet_id, page=page, size=size
     )
 
 
@@ -88,11 +91,11 @@ async def list_project_photos(
     project_id: int,
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
-    current_user: User = Depends(get_current_user),
+    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
-    return await UserDocumentService(session).list_project_photos(
-        user_id=current_user.id, project_id=project_id, page=page, size=size
+    return await AdminDocumentService(session).list_photos(
+        cabinet_id=None, project_id=project_id, page=page, size=size
     )
 
 

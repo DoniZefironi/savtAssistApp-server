@@ -325,6 +325,12 @@ async def export_photos(
         return photos
 
     dest_dir = root / "Фото"
+    # Была ли папка уже на месте ДО этого прогона — критично для решения "файл
+    # пропал = удалили вручную" ниже. Если папку только что создали мы сами
+    # (relocate/переименование проекта не нашёл старую папку, NAS был временно
+    # недоступен и т.п.), все "пропавшие" файлы в ней — ложные, не реальное
+    # удаление, и трогать фото в БД в этом прогоне нельзя.
+    dest_dir_existed = await asyncio.to_thread(dest_dir.is_dir)
     await asyncio.to_thread(dest_dir.mkdir, parents=True, exist_ok=True)
 
     remaining: list[CabinetPhoto] = []
@@ -333,6 +339,15 @@ async def export_photos(
         if photo.nas_filename:
             dest = dest_dir / photo.nas_filename
             if not await asyncio.to_thread(dest.exists):
+                if not dest_dir_existed:
+                    logger.warning(
+                        "Фото %s: файл %s не найден, но подпапка «Фото» только что "
+                        "создана этим прогоном — не удаляю, похоже на проблему с "
+                        "переездом/доступностью папки, а не на реальное удаление",
+                        photo.id, dest,
+                    )
+                    remaining.append(photo)
+                    continue
                 await session.delete(photo)
                 changed = True
                 logger.info("Фото %s удалено вручную с NAS (%s) — убрано и в приложении", photo.id, dest)
