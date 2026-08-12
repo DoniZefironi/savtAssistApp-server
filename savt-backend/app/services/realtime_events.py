@@ -61,3 +61,14 @@ async def _publish_chat_event(chat_id: int, event_type: str, data: dict[str, Any
     await event_bus.publish(f"chat:{chat_id}", {
         "type": event_type, "chat_id": chat_id, "data": data,
     })
+
+
+# Сигнал участникам проекта, что появился новый ШУ — без него мобильный клиент
+# узнаёт об этом только при следующем самостоятельном рефетче GET /cabinets
+# (см. README, раздел Realtime). Минимальный payload: сам список ШУ у каждого
+# пользователя свой (персонализация, unread), поэтому клиент перезапрашивает
+# его через REST, а не получает готовым в событии.
+async def publish_cabinet_created(cabinet_id: int, project_id: int, user_ids: list[int]) -> None:
+    envelope = {"type": "cabinet.created", "cabinet_id": cabinet_id, "project_id": project_id}
+    for user_id in user_ids:
+        await event_bus.publish(f"user_cabinets:{user_id}", envelope)

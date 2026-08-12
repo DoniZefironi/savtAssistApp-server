@@ -712,9 +712,7 @@ class ChatService:
 
     async def get_chat_settings(self, user_id: int, chat_id: int | None) -> ChatSettingsOut:
         if chat_id is not None:
-            chat = await self.chat_repo.get_by_id(chat_id)
-            if chat is None:
-                raise NotFoundError("Чат не найден")
+            await self._get_chat_or_403(chat_id, user_id)
         repo = ChatSettingsRepository(self.session)
         obj = await repo.get(user_id, chat_id)
         if obj is None and chat_id is not None:
@@ -728,18 +726,14 @@ class ChatService:
         self, user_id: int, chat_id: int | None, data: ChatSettingsIn
     ) -> ChatSettingsOut:
         if chat_id is not None:
-            chat = await self.chat_repo.get_by_id(chat_id)
-            if chat is None:
-                raise NotFoundError("Чат не найден")
+            await self._get_chat_or_403(chat_id, user_id)
         repo = ChatSettingsRepository(self.session)
         obj = await repo.upsert(user_id, chat_id, data.model_dump(exclude_unset=True))
         await self.session.commit()
         return ChatSettingsOut.model_validate(obj)
 
     async def reset_chat_settings(self, user_id: int, chat_id: int) -> None:
-        chat = await self.chat_repo.get_by_id(chat_id)
-        if chat is None:
-            raise NotFoundError("Чат не найден")
+        await self._get_chat_or_403(chat_id, user_id)
         repo = ChatSettingsRepository(self.session)
         await repo.delete_chat_override(user_id, chat_id)
         await self.session.commit()

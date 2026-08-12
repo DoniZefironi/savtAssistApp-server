@@ -84,3 +84,15 @@ async def ws_chat(websocket: WebSocket, chat_id: int, ticket: str):
         return
 
     await _ws_stream(websocket, f"chat:{chat_id}")
+
+
+# Сигнал о новых ШУ в проектах пользователя - замена поллинга GET /cabinets.
+# Несёт только cabinet_id/project_id (см. publish_cabinet_created), сам список
+# клиент перезапрашивает через REST - он персонален (custom_name, unread и т.п.)
+@router.websocket("/cabinets")
+async def ws_cabinets(websocket: WebSocket, ticket: str):
+    user_id = consume_ticket(ticket, SCOPE_USER)
+    if user_id is None:
+        await websocket.close(code=4401)
+        return
+    await _ws_stream(websocket, f"user_cabinets:{user_id}")

@@ -64,6 +64,10 @@ class CabinetService:
         from app.services import project_folder_service
         project_folder_service.schedule_cabinet_folder(cabinet.id)
 
+        from app.services.realtime_events import publish_cabinet_created
+        members = await self.repo.list_users_with_access(cabinet.id)
+        await publish_cabinet_created(cabinet.id, data.project_id, [u.id for u, _ in members])
+
         return await self.get(cabinet.id)
 
     # Получение ШУ с тегами
