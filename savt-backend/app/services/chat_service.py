@@ -581,6 +581,9 @@ class ChatService:
         self, chat_id: int, msg_id: int, user_id: int, emoji: str
     ) -> None:
         await self._get_chat_or_403(chat_id, user_id)
+        msg = await self.msg_repo.get_by_id(msg_id)
+        if msg is None or msg.chat_id != chat_id:
+            raise NotFoundError("Сообщение не найдено")
         rxn = await self.msg_repo.find_reaction(msg_id, user_id, emoji)
         if rxn is None:
             raise NotFoundError("Реакция не найдена")

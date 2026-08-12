@@ -112,8 +112,23 @@ async def lifespan(app: FastAPI):
 # Создание приложения с названием SAVT Assist API и привязка к lifespan
 app = FastAPI(title="SAVT Assist API", lifespan=lifespan)
 
-# Читаем реальный IP из X-Forwarded-For (Nginx proxy)
-app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+# Читаем реальный IP из X-Forwarded-For (Nginx proxy).
+#
+# НЕ "*": при "*" uvicorn берёт ПЕРВОЕ (самое левое) значение из
+# X-Forwarded-For — а это ровно то, что прислал клиент, nginx его не
+# перезаписывает, только дописывает свой $remote_addr в конец
+# ($proxy_add_x_forwarded_for в nginx.conf). С "*" любой снаружи мог послать
+# X-Forwarded-For: 1.2.3.4 и получить видимость с этого IP — вплоть до
+# обхода per-IP rate limiting (slowapi берёт client.host, который эта
+# миддлварь и подменяет) на /auth/login, /auth/register/* и т.д.
+#
+# 172.16.0.0/12 — весь диапазон приватных адресов, которые Docker обычно
+# использует под bridge-сети (в т.ч. дефолтную сеть docker-compose для этого
+# проекта). api-контейнер снаружи не публикуется (только nginx, см.
+# docker-compose.yml) — единственный, кто физически может достучаться до
+# него напрямую, это другой контейнер на той же docker-сети хоста. Так что
+# доверяем только адресам из этого диапазона, а не любому X-Forwarded-For.
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="172.16.0.0/12")
 
 # Rate limiting. Свой обработчик вместо slowapi-шного _rate_limit_exceeded_handler:
 # дефолтный отдаёт {"error": "..."}, а весь остальной API — {"detail": "..."}

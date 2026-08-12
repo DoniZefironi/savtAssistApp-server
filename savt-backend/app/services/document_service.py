@@ -296,6 +296,14 @@ class UserDocumentService:
         page: int = 1,
         size: int = 20,
     ) -> PageOut[UserDocumentOut]:
+        # Без этой проверки список документов чужого ШУ (тайтлы, теги, и —
+        # для документов без requires_approval — прямые ссылки на скачивание)
+        # был бы виден любому авторизованному пользователю по одному только ID
+        # ШУ в пути, в обход всей остальной модели доступа проекта.
+        if cabinet_id is not None:
+            from app.repositories.cabinet import CabinetRepository
+            if not await CabinetRepository(self.session).user_has_access(user_id, cabinet_id):
+                raise PermissionDeniedError("У вас нет доступа к этому ШУ")
         rows, total = await self.doc_repo.list_for_user(
             user_id=user_id, cabinet_id=cabinet_id,
             tag_ids=tag_ids, doc_type=doc_type,
@@ -338,6 +346,11 @@ class UserDocumentService:
         page: int = 1,
         size: int = 20,
     ) -> PageOut[UserDocumentOut]:
+        # Та же причина, что и в list_documents выше — без проверки членства
+        # в проекте список документов чужого проекта был бы виден по ID в пути.
+        from app.repositories.project import UserProjectRepository
+        if not await UserProjectRepository(self.session).find(user_id, project_id):
+            raise PermissionDeniedError("У вас нет доступа к этому проекту")
         rows, total = await self.doc_repo.list_for_project(
             user_id=user_id, project_id=project_id,
             tag_ids=tag_ids, doc_type=doc_type,
