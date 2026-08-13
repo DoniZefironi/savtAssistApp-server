@@ -51,6 +51,8 @@ from app.routers import admin_project_requests as admin_project_requests_router
 from app.routers import bitrix_webhooks as bitrix_webhooks_router
 from app.routers import messenger_webhooks as messenger_webhooks_router
 from app.routers import admin_phone_change_requests as admin_phone_change_requests_router
+from app.routers import telemetry_webhooks as telemetry_webhooks_router
+from app.routers import admin_telemetry as admin_telemetry_router
 from app.services.messenger_service import MessengerSendError
 from app.core.firebase import init_firebase
 from app.services.warranty_scheduler import check_warranty_expiry
@@ -228,6 +230,8 @@ app.include_router(admin_project_requests_router.router)
 app.include_router(bitrix_webhooks_router.router)
 app.include_router(messenger_webhooks_router.router)
 app.include_router(admin_phone_change_requests_router.router)
+app.include_router(telemetry_webhooks_router.router)
+app.include_router(admin_telemetry_router.router)
 app.mount("/static", StaticFiles(directory="/code/uploads"), name="static")
 
 # Бэзик эндпоинты

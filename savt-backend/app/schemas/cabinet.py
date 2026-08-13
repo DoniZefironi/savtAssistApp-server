@@ -50,6 +50,9 @@ class CabinetUpdateIn(BaseModel):
     purpose: str | None = Field(None, min_length=1, max_length=200)
     latitude: float | None = Field(None, ge=-90.0, le=90.0)
     longitude: float | None = Field(None, ge=-180.0, le=180.0)
+    # Топик MQTT-контроллера этого ШУ ("26_001/1/data") — прокси на C# шлёт вебхук
+    # телеметрии с этим топиком как есть, по нему находим cabinet_id
+    mqtt_topic: str | None = Field(None, max_length=200)
 
     @model_validator(mode="after")
     def validate_warranty_dates(self) -> "CabinetUpdateIn":
@@ -71,6 +74,7 @@ class CabinetOut(BaseModel):
     purpose: str | None
     latitude: float | None
     longitude: float | None
+    mqtt_topic: str | None
     tags: list[TagOut] = []
     project_id: int | None
     project_name: str | None

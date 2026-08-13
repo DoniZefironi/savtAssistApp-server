@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user, get_session
@@ -10,6 +10,9 @@ from app.schemas.cabinet import (
     UserCabinetListItemOut,
     UserCabinetPatchIn,
 )
+from app.schemas.pagination import PageOut
+from app.schemas.telemetry import TelemetryEventOut
+from app.services.telemetry_service import UserTelemetryService
 from app.services.user_cabinet_service import UserCabinetService
 
 router = APIRouter(prefix="/cabinets", tags=["cabinets"])
@@ -47,6 +50,19 @@ async def update_cabinet(
 # Отвязки одного ШУ больше нет — доступ выводится из проекта целиком, см.
 # DELETE /projects/{project_id} (выйти из проекта — теряет доступ разом ко
 # всем его шкафам)
+
+# Лента событий с MQTT-контроллера ШУ (аварии/сообщения) — регистры уже
+# расшифрованы по карте (стандартная + добавки этого ШУ, см. AdminRegisterMapService)
+@router.get("/{cabinet_id}/telemetry", response_model=PageOut[TelemetryEventOut])
+async def get_cabinet_telemetry(
+    cabinet_id: int,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    service = UserTelemetryService(session)
+    return await service.list_for_cabinet(current_user.id, cabinet_id, page, size)
 
 # Добавить ШУ по фото(пользователь) — "в моём проекте не хватает шкафа"
 @router.post("/add-by-photo", response_model=AddByPhotoOut, status_code=status.HTTP_201_CREATED)

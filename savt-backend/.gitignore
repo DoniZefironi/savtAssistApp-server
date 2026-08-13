@@ -11,3 +11,5 @@ postgres_data/
 uploads/
 backups/
 certbot-www/
+telemetry-proxy/bin/
+telemetry-proxy/obj/

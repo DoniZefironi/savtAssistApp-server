@@ -32,6 +32,9 @@ class Cabinet(Base):
     # геолокация ШУ
     latitude: Mapped[float | None] = mapped_column(Double)
     longitude: Mapped[float | None] = mapped_column(Double)
+    # MQTT-топик контроллера этого ШУ (например "26_001/1/data") — прокси на C#
+    # не знает cabinet_id, шлёт вебхук с этим топиком как есть, по нему и ищем ШУ
+    mqtt_topic: Mapped[str | None] = mapped_column(String(200), unique=True, nullable=True, index=True)
     # дата создания
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

@@ -40,6 +40,9 @@ from app.models.project_contact import ProjectContact
 from app.models.messenger_link import MessengerLink
 from app.models.phone_change_request import PhoneChangeRequest
 from app.models.pending_registration import PendingRegistration
+from app.models.register_definition import RegisterDefinition
+from app.models.cabinet_register_override import CabinetRegisterOverride
+from app.models.cabinet_telemetry_event import CabinetTelemetryEvent
 
 __all__ = [
     "Role", "User", "RefreshToken", "PhoneVerificationCode",
@@ -53,4 +56,5 @@ __all__ = [
     "WarrantyNotifLog", "Embedding", "ChatUserSettings", "ChatPinnedMessage",
     "Project", "UserProject", "ProjectShareRequest", "ProjectContact",
     "MessengerLink", "PhoneChangeRequest", "PendingRegistration",
+    "RegisterDefinition", "CabinetRegisterOverride", "CabinetTelemetryEvent",
 ]

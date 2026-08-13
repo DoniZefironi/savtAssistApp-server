@@ -91,6 +91,14 @@ class CabinetRepository(BaseRepository[Cabinet]):
     # но перестаёт быть видна в поиске/списках/гео и не может быть привязана заново.
     async def soft_delete(self, cabinet: Cabinet) -> None:
         cabinet.deleted_at = datetime.now(timezone.utc)
+
+    # Поиск ШУ по топику MQTT-контроллера — вебхук телеметрии не знает cabinet_id,
+    # только топик как есть (см. Cabinet.mqtt_topic)
+    async def get_by_mqtt_topic(self, topic: str) -> Cabinet | None:
+        result = await self.session.execute(
+            select(Cabinet).where(Cabinet.mqtt_topic == topic, Cabinet.deleted_at.is_(None))
+        )
+        return result.scalar_one_or_none()
         await self.session.flush()
     # поиск ШУ
     async def search(

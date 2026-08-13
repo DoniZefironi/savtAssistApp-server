@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import AlreadyExistsError, NotFoundError
 from app.models.cabinets import Cabinet
 from app.models.chat import Chat
 from app.repositories.cabinet import CabinetRepository
@@ -91,6 +91,7 @@ class CabinetService:
             purpose=cabinet.purpose,
             latitude=cabinet.latitude,
             longitude=cabinet.longitude,
+            mqtt_topic=cabinet.mqtt_topic,
             tags=[TagOut.model_validate(t) for t in tags_map.get(cabinet_id, [])],
             project_id=cabinet.project_id,
             project_name=project_names.get(cabinet.project_id) if cabinet.project_id is not None else None,
@@ -106,6 +107,12 @@ class CabinetService:
         changed = data.model_dump(exclude_unset=True)
         if "type" in changed and changed["type"]:
             changed["type"] = await _resolve_type(self.session, changed["type"])
+        if changed.get("mqtt_topic"):
+            existing = await self.repo.get_by_mqtt_topic(changed["mqtt_topic"])
+            if existing is not None and existing.id != cabinet_id:
+                raise AlreadyExistsError(
+                    f"Топик '{changed['mqtt_topic']}' уже привязан к другому ШУ (id={existing.id})"
+                )
         for field, value in changed.items():
             setattr(cabinet, field, value)
         self.audit.log("cabinet.update", "cabinet", cabinet_id, actor_id, actor_role, {"fields": list(changed.keys())})
