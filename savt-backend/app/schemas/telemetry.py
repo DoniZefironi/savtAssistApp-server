@@ -25,6 +25,17 @@ class TelemetryEventOut(BaseModel):
     registers: list[TelemetryRegisterOut]
 
 
+# Один элемент ответа GET /webhooks/telemetry/targets — "куда подключаться и что
+# слушать" для конкретного ШУ. Отдаётся только прокси (по секрету), не пользователю
+class TelemetryTargetOut(BaseModel):
+    cabinet_id: int
+    host: str
+    port: int
+    topic: str
+    username: str | None
+    password: str | None
+
+
 # Стандартная карта регистров (админ, общая для всех ШУ)
 class RegisterDefinitionIn(BaseModel):
     address: int = Field(..., ge=0, le=65534)

@@ -53,6 +53,12 @@ class CabinetUpdateIn(BaseModel):
     # Топик MQTT-контроллера этого ШУ ("26_001/1/data") — прокси на C# шлёт вебхук
     # телеметрии с этим топиком как есть, по нему находим cabinet_id
     mqtt_topic: str | None = Field(None, max_length=200)
+    # Брокер конкретно этого ШУ (свой у каждого контроллера) — прокси узнаёт про
+    # него через GET /webhooks/telemetry/targets, не хранит в своём конфиге
+    mqtt_host: str | None = Field(None, max_length=255)
+    mqtt_port: int | None = Field(None, ge=1, le=65535)
+    mqtt_username: str | None = Field(None, max_length=200)
+    mqtt_password: str | None = Field(None, max_length=200)
 
     @model_validator(mode="after")
     def validate_warranty_dates(self) -> "CabinetUpdateIn":
@@ -75,6 +81,10 @@ class CabinetOut(BaseModel):
     latitude: float | None
     longitude: float | None
     mqtt_topic: str | None
+    mqtt_host: str | None
+    mqtt_port: int | None
+    mqtt_username: str | None
+    # mqtt_password намеренно не отдаётся обратно клиенту — write-only, как обычный пароль
     tags: list[TagOut] = []
     project_id: int | None
     project_name: str | None

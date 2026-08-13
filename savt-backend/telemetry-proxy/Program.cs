@@ -18,18 +18,15 @@ builder.Services.AddHostedService<Worker>();
 var host = builder.Build();
 
 // Fail-fast при незаполненном конфиге — без этого забытая переменная окружения
-// (TELEMETRY_MQTT_HOST/TELEMETRY_WEBHOOK_SECRET) привела бы не к понятной ошибке
-// при старте, а к бесконечному циклу реконнекта с общим Exception в логах
-var mqttOptions = host.Services.GetRequiredService<IOptions<MqttOptions>>().Value;
+// (TELEMETRY_WEBHOOK_SECRET и т.п.) привела бы не к понятной ошибке при старте,
+// а к бесконечному циклу "не могу получить список брокеров" в логах.
+// Про Mqtt:Host/Port валидировать здесь уже нечего — они больше не тут, а в
+// GET /webhooks/telemetry/targets, свои у каждого ШУ (см. Options/MqttOptions.cs)
 var webhookOptions = host.Services.GetRequiredService<IOptions<WebhookOptions>>().Value;
 
-if (string.IsNullOrWhiteSpace(mqttOptions.Host))
+if (string.IsNullOrWhiteSpace(webhookOptions.BaseUrl))
 {
-    throw new InvalidOperationException("Mqtt:Host (переменная окружения Mqtt__Host / TELEMETRY_MQTT_HOST) не задан");
-}
-if (string.IsNullOrWhiteSpace(webhookOptions.Url))
-{
-    throw new InvalidOperationException("Webhook:Url (переменная окружения Webhook__Url) не задан");
+    throw new InvalidOperationException("Webhook:BaseUrl (переменная окружения Webhook__BaseUrl) не задан");
 }
 if (string.IsNullOrWhiteSpace(webhookOptions.Secret))
 {

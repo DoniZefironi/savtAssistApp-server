@@ -99,6 +99,19 @@ class CabinetRepository(BaseRepository[Cabinet]):
             select(Cabinet).where(Cabinet.mqtt_topic == topic, Cabinet.deleted_at.is_(None))
         )
         return result.scalar_one_or_none()
+
+    # Полностью настроенные под телеметрию ШУ (есть и брокер, и топик) — список
+    # "куда подключаться", который забирает C#-прокси (см. GET /webhooks/telemetry/targets)
+    async def list_telemetry_targets(self) -> list[Cabinet]:
+        result = await self.session.execute(
+            select(Cabinet).where(
+                Cabinet.deleted_at.is_(None),
+                Cabinet.mqtt_host.is_not(None),
+                Cabinet.mqtt_port.is_not(None),
+                Cabinet.mqtt_topic.is_not(None),
+            )
+        )
+        return list(result.scalars().all())
         await self.session.flush()
     # поиск ШУ
     async def search(

@@ -10,7 +10,13 @@ namespace TelemetryProxy;
 
 // BackgroundService — базовый класс .NET для фонового процесса, живущего всё
 // время работы хоста: ExecuteAsync стартует при запуске и работает, пока
-// приложение не остановят (или пока сам метод не завершится/не упадёт)
+// приложение не остановят (или пока сам метод не завершится/не упадёт).
+//
+// У каждого ШУ — свой брокер (свой IP), общего на всех нет. Поэтому вместо
+// одного статичного MQTT-подключения из конфига держим ПУЛ подключений — по
+// одному на cabinet_id, — который периодически сверяется со списком из
+// GET /webhooks/telemetry/targets: появился ШУ с указанным брокером — открываем
+// новое подключение, пропал/поменялись данные — закрываем старое.
 public class Worker(
     ILogger<Worker> logger,
     IOptions<MqttOptions> mqttOptions,
@@ -21,58 +27,183 @@ public class Worker(
     private readonly MqttOptions _mqtt = mqttOptions.Value;
     private readonly WebhookOptions _webhook = webhookOptions.Value;
 
+    // Проверка обрыва связи — на каждой итерации (раз в 5с), а список брокеров
+    // перезапрашивается реже (TargetsPollIntervalSeconds) — не долбить сервер
+    // тем же вопросом, пока подключения и так живы
+    private static readonly TimeSpan ReconnectCheckInterval = TimeSpan.FromSeconds(5);
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var mqttClient = new MqttClientFactory().CreateMqttClient();
-
-        var clientOptions = new MqttClientOptionsBuilder()
-            .WithTcpServer(_mqtt.Host, _mqtt.Port)
-            .WithClientId(_mqtt.ClientId)
-            .WithCredentials(_mqtt.Username, _mqtt.Password)
-            .Build();
-
-        mqttClient.ApplicationMessageReceivedAsync += HandleMessageAsync;
+        var connections = new Dictionary<int, (IMqttClient Client, TelemetryTarget Target)>();
+        var lastDiscovery = DateTimeOffset.MinValue;
 
         try
         {
-            // Свой цикл переподключения вместо ManagedMqttClient (отдельный пакет) —
-            // при разрыве просто пробуем законнектиться заново раз в 5 секунд
             while (!stoppingToken.IsCancellationRequested)
             {
-                try
+                if (DateTimeOffset.UtcNow - lastDiscovery >= TimeSpan.FromSeconds(_webhook.TargetsPollIntervalSeconds))
                 {
-                    if (!mqttClient.IsConnected)
-                    {
-                        logger.LogInformation("Подключаюсь к MQTT {Host}:{Port}...", _mqtt.Host, _mqtt.Port);
-                        await mqttClient.ConnectAsync(clientOptions, stoppingToken);
-
-                        // AtLeastOnce (QoS 1), не дефолтный AtMostOnce (QoS 0) — с QoS 0 брокер
-                        // не гарантирует доставку при разрыве связи, сообщение об аварии могло бы
-                        // молча потеряться именно тогда, когда оно важнее всего
-                        await mqttClient.SubscribeAsync(
-                            _mqtt.TopicFilter, MqttQualityOfServiceLevel.AtLeastOnce, cancellationToken: stoppingToken
-                        );
-                        logger.LogInformation("Подписан на {TopicFilter}", _mqtt.TopicFilter);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError(ex, "Не удалось подключиться к MQTT-брокеру, повтор через 5с");
+                    await RefreshTargetsAsync(connections, stoppingToken);
+                    lastDiscovery = DateTimeOffset.UtcNow;
                 }
 
-                await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                await ReconnectStaleAsync(connections, stoppingToken);
+
+                await Task.Delay(ReconnectCheckInterval, stoppingToken);
             }
         }
         finally
         {
-            // Аккуратное отключение при остановке хоста (docker compose stop и т.п.) —
-            // CancellationToken.None: stoppingToken к этому моменту уже отменён
-            if (mqttClient.IsConnected)
+            foreach (var (client, _) in connections.Values)
             {
-                logger.LogInformation("Останавливаюсь, отключаюсь от MQTT...");
-                await mqttClient.DisconnectAsync(cancellationToken: CancellationToken.None);
+                if (client.IsConnected)
+                {
+                    await client.DisconnectAsync(cancellationToken: CancellationToken.None);
+                }
+                client.Dispose();
             }
         }
+    }
+
+    // Сверяет актуальный список брокеров с уже открытыми подключениями:
+    // закрывает лишние/изменившиеся, открывает новые
+    private async Task RefreshTargetsAsync(
+        Dictionary<int, (IMqttClient Client, TelemetryTarget Target)> connections, CancellationToken stoppingToken
+    )
+    {
+        List<TelemetryTarget> targets;
+        try
+        {
+            targets = await FetchTargetsAsync(stoppingToken);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Не удалось получить список брокеров с сервера");
+            return;
+        }
+
+        var targetsById = targets.ToDictionary(t => t.CabinetId);
+
+        // закрыть то, чего больше нет в списке, или у чего сменился брокер/топик/логин
+        foreach (var cabinetId in connections.Keys.ToList())
+        {
+            var (client, oldTarget) = connections[cabinetId];
+            var stillValid = targetsById.TryGetValue(cabinetId, out var current) && TargetEquals(current, oldTarget);
+            if (stillValid)
+            {
+                continue;
+            }
+
+            logger.LogInformation(
+                "Отключаюсь от ШУ {CabinetId} ({Host}:{Port}) — конфиг изменился или ШУ убран",
+                cabinetId, oldTarget.Host, oldTarget.Port
+            );
+            if (client.IsConnected)
+            {
+                await client.DisconnectAsync(cancellationToken: CancellationToken.None);
+            }
+            client.Dispose();
+            connections.Remove(cabinetId);
+        }
+
+        // открыть то, чего ещё нет
+        foreach (var target in targets)
+        {
+            if (connections.ContainsKey(target.CabinetId))
+            {
+                continue;
+            }
+            await ConnectAsync(connections, target, stoppingToken);
+        }
+    }
+
+    private static bool TargetEquals(TelemetryTarget a, TelemetryTarget b) =>
+        a.Host == b.Host && a.Port == b.Port && a.Topic == b.Topic
+        && a.Username == b.Username && a.Password == b.Password;
+
+    // Переподключение к тем брокерам, у которых связь оборвалась, но конфиг
+    // не менялся — не трогаем список целиком, только то, что реально отвалилось
+    private async Task ReconnectStaleAsync(
+        Dictionary<int, (IMqttClient Client, TelemetryTarget Target)> connections, CancellationToken stoppingToken
+    )
+    {
+        foreach (var (cabinetId, (client, target)) in connections.ToList())
+        {
+            if (client.IsConnected)
+            {
+                continue;
+            }
+            try
+            {
+                logger.LogInformation(
+                    "Переподключаюсь к ШУ {CabinetId} ({Host}:{Port})...", cabinetId, target.Host, target.Port
+                );
+                await client.ConnectAsync(BuildClientOptions(target), stoppingToken);
+                await client.SubscribeAsync(
+                    target.Topic, MqttQualityOfServiceLevel.AtLeastOnce, cancellationToken: stoppingToken
+                );
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Не удалось подключиться к ШУ {CabinetId} ({Host}:{Port})", cabinetId, target.Host, target.Port);
+            }
+        }
+    }
+
+    private async Task ConnectAsync(
+        Dictionary<int, (IMqttClient Client, TelemetryTarget Target)> connections,
+        TelemetryTarget target, CancellationToken stoppingToken
+    )
+    {
+        var client = new MqttClientFactory().CreateMqttClient();
+        client.ApplicationMessageReceivedAsync += HandleMessageAsync;
+
+        try
+        {
+            await client.ConnectAsync(BuildClientOptions(target), stoppingToken);
+            // AtLeastOnce (QoS 1) — с дефолтным QoS 0 брокер не гарантирует доставку
+            // при разрыве связи, авария могла бы молча потеряться в самый нужный момент
+            await client.SubscribeAsync(
+                target.Topic, MqttQualityOfServiceLevel.AtLeastOnce, cancellationToken: stoppingToken
+            );
+            connections[target.CabinetId] = (client, target);
+            logger.LogInformation(
+                "Подключился к ШУ {CabinetId}: {Host}:{Port}, топик {Topic}",
+                target.CabinetId, target.Host, target.Port, target.Topic
+            );
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Не удалось подключиться к ШУ {CabinetId} ({Host}:{Port})", target.CabinetId, target.Host, target.Port);
+            client.Dispose();
+        }
+    }
+
+    private MqttClientOptions BuildClientOptions(TelemetryTarget target)
+    {
+        var builder = new MqttClientOptionsBuilder()
+            .WithTcpServer(target.Host, target.Port)
+            .WithClientId($"{_mqtt.ClientIdPrefix}-{target.CabinetId}");
+
+        if (!string.IsNullOrEmpty(target.Username))
+        {
+            builder = builder.WithCredentials(target.Username, target.Password);
+        }
+
+        return builder.Build();
+    }
+
+    private async Task<List<TelemetryTarget>> FetchTargetsAsync(CancellationToken stoppingToken)
+    {
+        using var client = httpClientFactory.CreateClient(nameof(Worker));
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{_webhook.BaseUrl}/webhooks/telemetry/targets");
+        request.Headers.Add("X-Telemetry-Secret", _webhook.Secret);
+
+        using var response = await client.SendAsync(request, stoppingToken);
+        response.EnsureSuccessStatusCode();
+
+        var targets = await response.Content.ReadFromJsonAsync<List<TelemetryTarget>>(cancellationToken: stoppingToken);
+        return targets ?? [];
     }
 
     // Один вызов на каждое входящее MQTT-сообщение. Формат самого контроллера —
@@ -123,12 +254,14 @@ public class Worker(
             Timestamp = DateTimeOffset.UtcNow,
         };
 
+        var url = $"{_webhook.BaseUrl}/webhooks/telemetry";
+
         for (var attempt = 1; attempt <= MaxWebhookAttempts; attempt++)
         {
             try
             {
                 using var client = httpClientFactory.CreateClient(nameof(Worker));
-                using var request = new HttpRequestMessage(HttpMethod.Post, _webhook.Url)
+                using var request = new HttpRequestMessage(HttpMethod.Post, url)
                 {
                     Content = JsonContent.Create(payload),
                 };

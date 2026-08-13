@@ -17,6 +17,7 @@ from app.schemas.telemetry import (
     RegisterDefinitionOut,
     TelemetryEventOut,
     TelemetryRegisterOut,
+    TelemetryTargetOut,
 )
 from app.services.audit_service import AuditLogger
 
@@ -46,6 +47,22 @@ class TelemetryIngestService:
         self.session = session
         self.cabinet_repo = CabinetRepository(session)
         self.event_repo = CabinetTelemetryEventRepository(session)
+
+    # Список "куда подключаться" — свой брокер у каждого ШУ (не общий на всех),
+    # прокси периодически перечитывает это вместо статичного конфига
+    async def list_targets(self) -> list[TelemetryTargetOut]:
+        cabinets = await self.cabinet_repo.list_telemetry_targets()
+        return [
+            TelemetryTargetOut(
+                cabinet_id=c.id,
+                host=c.mqtt_host,
+                port=c.mqtt_port,
+                topic=c.mqtt_topic,
+                username=c.mqtt_username,
+                password=c.mqtt_password,
+            )
+            for c in cabinets
+        ]
 
     async def ingest(self, topic: str, registers: dict[int, int], timestamp: datetime | None) -> None:
         cabinet = await self.cabinet_repo.get_by_mqtt_topic(topic)

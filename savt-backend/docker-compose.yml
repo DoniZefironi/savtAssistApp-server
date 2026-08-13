@@ -37,19 +37,16 @@ services:
         max-size: "20m"
         max-file: "3"
 
-  # Слушает MQTT-брокер контроллеров ШУ и пересылает сообщения на api обычным
-  # HTTP (см. POST /webhooks/telemetry) — по внутренней docker-сети, без nginx
-  # и без выхода наружу. Секрет вебхука общий с api — то же значение из .env.
+  # Слушает MQTT-брокеры контроллеров ШУ (у каждого ШУ свой брокер — host/port
+  # берутся не отсюда, а из GET /webhooks/telemetry/targets, см. README) и
+  # пересылает сообщения на api обычным HTTP (POST /webhooks/telemetry) — по
+  # внутренней docker-сети, без nginx и без выхода наружу. Секрет вебхука общий
+  # с api — то же значение из .env.
   telemetry-proxy:
     build: ./telemetry-proxy
     restart: unless-stopped
     environment:
-      Mqtt__Host: ${TELEMETRY_MQTT_HOST}
-      Mqtt__Port: ${TELEMETRY_MQTT_PORT:-1883}
-      Mqtt__TopicFilter: ${TELEMETRY_MQTT_TOPIC_FILTER:-#}
-      Mqtt__Username: ${TELEMETRY_MQTT_USERNAME}
-      Mqtt__Password: ${TELEMETRY_MQTT_PASSWORD}
-      Webhook__Url: http://api:8000/webhooks/telemetry
+      Webhook__BaseUrl: http://api:8000
       Webhook__Secret: ${TELEMETRY_WEBHOOK_SECRET}
     depends_on:
       - api
