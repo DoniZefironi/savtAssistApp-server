@@ -55,14 +55,17 @@ class RegisterDefinitionRepository:
     async def get_by_id(self, def_id: int) -> RegisterDefinition | None:
         return await self.session.get(RegisterDefinition, def_id)
 
-    async def get_by_address(self, address: int) -> RegisterDefinition | None:
+    async def get_by_address_and_bit(self, address: int, bit: int | None) -> RegisterDefinition | None:
+        bit_condition = RegisterDefinition.bit.is_(None) if bit is None else RegisterDefinition.bit == bit
         result = await self.session.execute(
-            select(RegisterDefinition).where(RegisterDefinition.address == address)
+            select(RegisterDefinition).where(RegisterDefinition.address == address, bit_condition)
         )
         return result.scalar_one_or_none()
 
-    async def create(self, address: int, name: str, description: str | None) -> RegisterDefinition:
-        obj = RegisterDefinition(address=address, name=name, description=description)
+    async def create(
+        self, address: int, bit: int | None, name: str, description: str | None,
+    ) -> RegisterDefinition:
+        obj = RegisterDefinition(address=address, bit=bit, name=name, description=description)
         self.session.add(obj)
         await self.session.flush()
         return obj
@@ -87,22 +90,26 @@ class CabinetRegisterOverrideRepository:
     async def get_by_id(self, override_id: int) -> CabinetRegisterOverride | None:
         return await self.session.get(CabinetRegisterOverride, override_id)
 
-    async def get_by_cabinet_and_address(
-        self, cabinet_id: int, address: int,
+    async def get_by_cabinet_address_and_bit(
+        self, cabinet_id: int, address: int, bit: int | None,
     ) -> CabinetRegisterOverride | None:
+        bit_condition = (
+            CabinetRegisterOverride.bit.is_(None) if bit is None else CabinetRegisterOverride.bit == bit
+        )
         result = await self.session.execute(
             select(CabinetRegisterOverride).where(
                 CabinetRegisterOverride.cabinet_id == cabinet_id,
                 CabinetRegisterOverride.address == address,
+                bit_condition,
             )
         )
         return result.scalar_one_or_none()
 
     async def create(
-        self, cabinet_id: int, address: int, name: str, description: str | None,
+        self, cabinet_id: int, address: int, bit: int | None, name: str, description: str | None,
     ) -> CabinetRegisterOverride:
         obj = CabinetRegisterOverride(
-            cabinet_id=cabinet_id, address=address, name=name, description=description,
+            cabinet_id=cabinet_id, address=address, bit=bit, name=name, description=description,
         )
         self.session.add(obj)
         await self.session.flush()

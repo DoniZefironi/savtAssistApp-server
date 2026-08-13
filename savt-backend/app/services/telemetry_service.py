@@ -31,13 +31,51 @@ def verify_telemetry_secret(header_value: str | None) -> bool:
     )
 
 
-def _decode_registers(raw_payload: dict, name_map: dict[int, str]) -> list[TelemetryRegisterOut]:
-    # Ключи из JSONB всегда приходят строками (JSON не умеет в нечисловые ключи
-    # объекта) — переводим обратно в адрес-число здесь, один раз на событие
-    return [
-        TelemetryRegisterOut(address=int(addr), name=name_map.get(int(addr)), value=value)
-        for addr, value in raw_payload.items()
-    ]
+# name_map: (address, bit) -> название. bit=None — обычная запись "весь регистр
+# целиком"; bit=0..15 — конкретный бит. bitmask_addresses — адреса, у которых
+# есть хотя бы одна bit-строка (там же может по ошибке валяться и bit=None
+# запись — она в этом случае просто игнорируется, приоритет у битовой трактовки)
+def _decode_registers(
+    raw_payload: dict, name_map: dict[tuple[int, int | None], str], bitmask_addresses: set[int],
+) -> list[TelemetryRegisterOut]:
+    results: list[TelemetryRegisterOut] = []
+    for addr_str, value in raw_payload.items():
+        # Ключи из JSONB всегда приходят строками (JSON не умеет в нечисловые
+        # ключи объекта) — переводим обратно в адрес-число здесь
+        address = int(addr_str)
+        if address in bitmask_addresses:
+            for bit in range(16):
+                name = name_map.get((address, bit))
+                if name is None:
+                    continue  # неописанные биты не показываем — про них ничего не известно
+                results.append(TelemetryRegisterOut(
+                    address=address, bit=bit, name=name, value=value, active=bool(value & (1 << bit)),
+                ))
+        else:
+            results.append(TelemetryRegisterOut(
+                address=address, bit=None, name=name_map.get((address, None)), value=value, active=None,
+            ))
+    return results
+
+
+async def _build_register_map(
+    def_repo: RegisterDefinitionRepository, override_repo: CabinetRegisterOverrideRepository, cabinet_id: int,
+) -> tuple[dict[tuple[int, int | None], str], set[int]]:
+    name_map: dict[tuple[int, int | None], str] = {}
+    bitmask_addresses: set[int] = set()
+
+    for d in await def_repo.list_all():
+        name_map[(d.address, d.bit)] = d.name
+        if d.bit is not None:
+            bitmask_addresses.add(d.address)
+
+    # Переопределения этого ШУ поверх стандартной карты
+    for o in await override_repo.list_for_cabinet(cabinet_id):
+        name_map[(o.address, o.bit)] = o.name
+        if o.bit is not None:
+            bitmask_addresses.add(o.address)
+
+    return name_map, bitmask_addresses
 
 
 class TelemetryIngestService:
@@ -108,15 +146,13 @@ class UserTelemetryService:
             cabinet_id, offset=(page - 1) * size, limit=size,
         )
 
-        # Стандартная карта + переопределения этого ШУ поверх неё (override важнее)
-        name_map = {d.address: d.name for d in await self.def_repo.list_all()}
-        name_map.update({o.address: o.name for o in await self.override_repo.list_for_cabinet(cabinet_id)})
+        name_map, bitmask_addresses = await _build_register_map(self.def_repo, self.override_repo, cabinet_id)
 
         items = [
             TelemetryEventOut(
                 id=event.id,
                 received_at=event.received_at,
-                registers=_decode_registers(event.raw_payload, name_map),
+                registers=_decode_registers(event.raw_payload, name_map, bitmask_addresses),
             )
             for event in events
         ]
@@ -138,14 +174,16 @@ class AdminRegisterMapService:
         return [RegisterDefinitionOut.model_validate(d) for d in await self.def_repo.list_all()]
 
     async def create_definition(
-        self, address: int, name: str, description: str | None, actor_id: int, actor_role: str,
+        self, address: int, bit: int | None, name: str, description: str | None,
+        actor_id: int, actor_role: str,
     ) -> RegisterDefinitionOut:
-        existing = await self.def_repo.get_by_address(address)
+        existing = await self.def_repo.get_by_address_and_bit(address, bit)
         if existing is not None:
-            raise AlreadyExistsError(f"Регистр {address} уже описан в стандартной карте")
-        obj = await self.def_repo.create(address, name, description)
+            where = f"бит {bit}" if bit is not None else "весь регистр"
+            raise AlreadyExistsError(f"Регистр {address} ({where}) уже описан в стандартной карте")
+        obj = await self.def_repo.create(address, bit, name, description)
         self.audit.log("register_definition.create", "register_definition", obj.id, actor_id, actor_role,
-                       {"address": address, "name": name})
+                       {"address": address, "bit": bit, "name": name})
         await self.session.commit()
         return RegisterDefinitionOut.model_validate(obj)
 
@@ -167,17 +205,18 @@ class AdminRegisterMapService:
         ]
 
     async def create_override(
-        self, cabinet_id: int, address: int, name: str, description: str | None,
+        self, cabinet_id: int, address: int, bit: int | None, name: str, description: str | None,
         actor_id: int, actor_role: str,
     ) -> CabinetRegisterOverrideOut:
         if await self.cabinet_repo.get_by_id(cabinet_id) is None:
             raise NotFoundError("ШУ не найден")
-        existing = await self.override_repo.get_by_cabinet_and_address(cabinet_id, address)
+        existing = await self.override_repo.get_by_cabinet_address_and_bit(cabinet_id, address, bit)
         if existing is not None:
-            raise AlreadyExistsError(f"Регистр {address} уже переопределён для этого ШУ")
-        obj = await self.override_repo.create(cabinet_id, address, name, description)
+            where = f"бит {bit}" if bit is not None else "весь регистр"
+            raise AlreadyExistsError(f"Регистр {address} ({where}) уже переопределён для этого ШУ")
+        obj = await self.override_repo.create(cabinet_id, address, bit, name, description)
         self.audit.log("cabinet_register_override.create", "cabinet", cabinet_id, actor_id, actor_role,
-                       {"address": address, "name": name})
+                       {"address": address, "bit": bit, "name": name})
         await self.session.commit()
         return CabinetRegisterOverrideOut.model_validate(obj)
 

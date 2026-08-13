@@ -13,10 +13,18 @@ class TelemetryWebhookIn(BaseModel):
 
 class TelemetryRegisterOut(BaseModel):
     address: int
-    # Название берём из CabinetRegisterOverride (если есть для этого ШУ и адреса),
-    # иначе из RegisterDefinition; null - адрес не описан ни там, ни там
+    # NULL — весь регистр одно значение; 0-15 — конкретный бит внутри него
+    # (регистр трактуется как битовая маска, если на его адрес заведён хотя бы
+    # один bit-уровневый RegisterDefinition/CabinetRegisterOverride)
+    bit: int | None
+    # Название берём из CabinetRegisterOverride (если есть для этого ШУ,
+    # адреса и bit), иначе из RegisterDefinition; null - не описано ни там, ни там
     name: str | None
+    # Сырое значение регистра целиком (одно и то же для всех bit-строк одного адреса)
     value: int
+    # Для bit-строк — установлен ли этот конкретный бит в value; null для
+    # not-bit строк (bit=NULL), там смысл несёт value целиком, а не флаг
+    active: bool | None
 
 
 class TelemetryEventOut(BaseModel):
@@ -36,9 +44,13 @@ class TelemetryTargetOut(BaseModel):
     password: str | None
 
 
-# Стандартная карта регистров (админ, общая для всех ШУ)
+# Стандартная карта регистров (админ, общая для всех ШУ). bit=None — обычный
+# регистр с одним значением ("Температура насоса"); bit=0..15 — конкретный бит
+# внутри 16-битного слова (типовая ПЛК-таблица "Неисправности": один регистр
+# аварий, где у каждого бита своя названная неисправность)
 class RegisterDefinitionIn(BaseModel):
     address: int = Field(..., ge=0, le=65534)
+    bit: int | None = Field(None, ge=0, le=15)
     name: str = Field(..., min_length=1, max_length=200)
     description: str | None = Field(None, max_length=2000)
 
@@ -46,6 +58,7 @@ class RegisterDefinitionIn(BaseModel):
 class RegisterDefinitionOut(BaseModel):
     id: int
     address: int
+    bit: int | None
     name: str
     description: str | None
     created_at: datetime
@@ -57,6 +70,7 @@ class RegisterDefinitionOut(BaseModel):
 # Добавка/переопределение карты на конкретный ШУ (админ)
 class CabinetRegisterOverrideIn(BaseModel):
     address: int = Field(..., ge=0, le=65534)
+    bit: int | None = Field(None, ge=0, le=15)
     name: str = Field(..., min_length=1, max_length=200)
     description: str | None = Field(None, max_length=2000)
 
@@ -65,6 +79,7 @@ class CabinetRegisterOverrideOut(BaseModel):
     id: int
     cabinet_id: int
     address: int
+    bit: int | None
     name: str
     description: str | None
     created_at: datetime

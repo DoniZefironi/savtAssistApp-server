@@ -16,6 +16,8 @@ class CabinetRegisterOverride(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     cabinet_id: Mapped[int] = mapped_column(ForeignKey("cabinets.id", ondelete="CASCADE"), index=True)
     address: Mapped[int] = mapped_column(Integer)
+    # NULL — вся WORD одно значение; 0-15 — конкретный бит (см. RegisterDefinition)
+    bit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     name: Mapped[str] = mapped_column(String(200))
     description: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -24,8 +26,8 @@ class CabinetRegisterOverride(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("cabinet_id", "address", name="uq_cabinet_register_override_cabinet_address"),
+        UniqueConstraint("cabinet_id", "address", "bit", name="uq_cabinet_register_override_cabinet_address_bit"),
     )
 
     def __repr__(self) -> str:
-        return f"<CabinetRegisterOverride cabinet_id={self.cabinet_id} address={self.address}>"
+        return f"<CabinetRegisterOverride cabinet_id={self.cabinet_id} address={self.address} bit={self.bit}>"
