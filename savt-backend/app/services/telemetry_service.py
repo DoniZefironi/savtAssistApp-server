@@ -75,7 +75,18 @@ class UserTelemetryService:
     ) -> PageOut[TelemetryEventOut]:
         if not await self.cabinet_repo.user_has_access(user_id, cabinet_id):
             raise PermissionDeniedError("У вас нет доступа к этому ШУ")
+        return await self._list(cabinet_id, page, size)
 
+    # Для админки/операторской панели — без проверки членства в проекте,
+    # доступ уже ограничен ролью на уровне роутера (require_role)
+    async def list_for_cabinet_admin(
+        self, cabinet_id: int, page: int, size: int,
+    ) -> PageOut[TelemetryEventOut]:
+        if await self.cabinet_repo.get_by_id(cabinet_id) is None:
+            raise NotFoundError("ШУ не найден")
+        return await self._list(cabinet_id, page, size)
+
+    async def _list(self, cabinet_id: int, page: int, size: int) -> PageOut[TelemetryEventOut]:
         events, total = await self.event_repo.list_for_cabinet(
             cabinet_id, offset=(page - 1) * size, limit=size,
         )

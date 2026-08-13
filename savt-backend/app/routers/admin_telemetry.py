@@ -1,18 +1,34 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleName
 from app.core.dependencies import get_role_from_token, get_session, require_role
 from app.models.user import User
+from app.schemas.pagination import PageOut
 from app.schemas.telemetry import (
     CabinetRegisterOverrideIn,
     CabinetRegisterOverrideOut,
     RegisterDefinitionIn,
     RegisterDefinitionOut,
+    TelemetryEventOut,
 )
-from app.services.telemetry_service import AdminRegisterMapService
+from app.services.telemetry_service import AdminRegisterMapService, UserTelemetryService
 
 router = APIRouter(prefix="/admin", tags=["admin: telemetry"])
+
+
+# Лента событий ШУ для админки/операторской панели — в отличие от
+# GET /cabinets/{id}/telemetry (мобильное приложение), доступ не завязан на
+# членство в проекте: оператор/админ должен видеть телеметрию любого ШУ
+@router.get("/cabinets/{cabinet_id}/telemetry", response_model=PageOut[TelemetryEventOut])
+async def get_cabinet_telemetry_admin(
+    cabinet_id: int,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    session: AsyncSession = Depends(get_session),
+):
+    return await UserTelemetryService(session).list_for_cabinet_admin(cabinet_id, page, size)
 
 
 # Стандартная карта регистров — общая для всех ШУ
