@@ -36,8 +36,8 @@ def verify_telemetry_secret(header_value: str | None) -> bool:
 
 
 # Значение регистра — 16-битное слово (бит 0..15), каждый бит потенциально
-# своя авария (не факт, что каждый бит вообще что-то значит). include_unnamed=False
-# (по умолчанию, обычный просмотр/мониторинг аварий) — в ответ попадают только
+# своя авария. include_unnamed=False (по умолчанию, обычный просмотр/мониторинг
+# аварий) — в ответ попадают только
 # биты, которые СЕЙЧАС взведены (=1) И названы в карте: на одно MQTT-сообщение
 # приходит ~20 регистров по 16 бит каждый, и без фильтра аварию в этом шуме не
 # найти. include_unnamed=True — для настройки самой карты: показывает все 16
@@ -49,6 +49,24 @@ def verify_telemetry_secret(header_value: str | None) -> bool:
 def _register_bits(raw_value: int) -> list[int]:
     unsigned = raw_value & 0xFFFF
     return [(unsigned >> bit) & 1 for bit in range(16)]
+
+
+# Стоит ли слать realtime-сигнал по этому регистру — только если хотя бы один
+# НАЗВАННЫЙ бит реально переключился (0→1 — новая авария, 1→0 — авария снята).
+# old_value/new_value совпадают почти всегда: контроллер обычно шлёт текущее
+# состояние периодически, не только по изменению — без этой проверки на
+# каждый такой "тик" улетал бы пуш ни о чём (см. ingest ниже)
+def _has_named_bit_change(
+    old_value: int, new_value: int, address: int, name_map: dict[tuple[int, int], str],
+) -> bool:
+    if old_value == new_value:
+        return False
+    old_bits = _register_bits(old_value)
+    new_bits = _register_bits(new_value)
+    return any(
+        old_bits[bit] != new_bits[bit] and (address, bit) in name_map
+        for bit in range(16)
+    )
 
 
 def _decode_registers(
@@ -137,22 +155,30 @@ class TelemetryIngestService:
             received_at=timestamp or datetime.now(timezone.utc),
             raw_payload=raw_payload,
         )
+        # Старые значения — ДО перезаписи, нужны ниже, чтобы понять, что из
+        # сообщения реально изменилось (а не просто повторный "тик" того же
+        # состояния — контроллер шлёт его периодически, не только по факту
+        # изменения)
+        old_values = await self.state_repo.get_values_for_addresses(cabinet.id, list(registers.keys()))
         # ...и то же самое — в "текущее состояние" (перезаписывает предыдущее
         # значение каждого адреса), это и есть то, что реально отдаёт лента
         await self.state_repo.upsert_many(cabinet.id, registers)
         await self.session.commit()
 
-        # Сигнал шлём, только если в сообщении есть хоть один взведённый (=1) И
-        # названный в карте бит — иначе на каждое сырое сообщение (их в разы
-        # больше значимых) фронт получал бы пуш ни о чём: лента такое сообщение
-        # всё равно не покажет
+        # Сигнал шлём, только если хотя бы один НАЗВАННЫЙ бит реально
+        # переключился (0→1 — новая авария, 1→0 — авария снята) относительно
+        # прошлого сообщения. Без этой проверки на каждое периодическое
+        # повторение уже известного состояния (их в разы больше, чем реальных
+        # изменений) улетал бы пуш ни о чём — а каждый такой пуш дёргает
+        # админку/приложение на полный рефетч, что при частой телеметрии с
+        # активной аварией быстро упирается в rate limit (см. инцидент
+        # 2026-08-14 — ШУ 118 заваливал админку 429 именно так)
         name_map = await _build_name_map(self.def_repo, self.override_repo, cabinet.id)
-        has_active_named_bit = any(
-            bit_value and (address, bit) in name_map
-            for address, raw_value in registers.items()
-            for bit, bit_value in enumerate(_register_bits(raw_value))
+        has_meaningful_change = any(
+            _has_named_bit_change(old_values.get(address, 0), new_value, address, name_map)
+            for address, new_value in registers.items()
         )
-        if has_active_named_bit:
+        if has_meaningful_change:
             await publish_telemetry_event(cabinet.id, event.id)
 
 

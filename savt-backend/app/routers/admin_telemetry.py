@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleName
 from app.core.dependencies import get_role_from_token, get_session, require_role
+from app.core.limiter import limiter
 from app.models.user import User
 from app.schemas.pagination import PageOut
 from app.schemas.telemetry import (
@@ -20,9 +21,21 @@ router = APIRouter(prefix="/admin", tags=["admin: telemetry"])
 
 # Текущее состояние регистров ШУ для админки/операторской панели — в отличие от
 # GET /cabinets/{id}/telemetry (мобильное приложение), доступ не завязан на
-# членство в проекте: оператор/админ должен видеть телеметрию любого ШУ
+# членство в проекте: оператор/админ должен видеть телеметрию любого ШУ.
+#
+# Свой (повышенный) лимит вместо общего 200/мин по умолчанию — см. инцидент
+# 2026-08-14: несколько десятков операторов за одним внешним IP (офис/VPN)
+# делят один и тот же бюджет 200/мин на весь backend, и панель с открытой
+# карточкой ШУ рефетчит эту ручку на каждый realtime-пуш (см. WS/SSE-каналы
+# телеметрии) — общего лимита на несколько одновременных пользователей не
+# хватало. Сама причина шторма пушей исправлена в TelemetryIngestService.ingest
+# (сигнал теперь шлётся только при реальном изменении, не на каждый повтор уже
+# известного состояния), но лимит здесь всё равно оставлен выше дефолтного —
+# ручка ролевая (только admin/operator), не публичная, риск сильно ниже
 @router.get("/cabinets/{cabinet_id}/telemetry", response_model=TelemetryCurrentStateOut)
+@limiter.limit("1200/minute")
 async def get_cabinet_telemetry_admin(
+    request: Request,
     cabinet_id: int,
     include_unnamed: bool = Query(
         False, description="Показывать и регистры без названия — для настройки карты",
@@ -35,9 +48,12 @@ async def get_cabinet_telemetry_admin(
 
 # Сырая история сообщений — для аудита/разбора задним числом ("когда началась
 # авария"). Хранится ограниченное время (см. TELEMETRY_HISTORY_RETENTION_DAYS),
-# в отличие от текущего состояния выше, которое не история и не чистится по возрасту
+# в отличие от текущего состояния выше, которое не история и не чистится по
+# возрасту. Свой лимит — та же причина, что и у ручки выше
 @router.get("/cabinets/{cabinet_id}/telemetry/history", response_model=PageOut[TelemetryEventOut])
+@limiter.limit("1200/minute")
 async def get_cabinet_telemetry_history(
+    request: Request,
     cabinet_id: int,
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),

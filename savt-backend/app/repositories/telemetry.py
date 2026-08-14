@@ -74,6 +74,24 @@ class CabinetRegisterStateRepository:
         )
         await self.session.execute(stmt)
 
+    # Значения ДО перезаписи — чтобы понять, что из входящего сообщения реально
+    # изменилось (см. TelemetryIngestService.ingest). Адресов, которых раньше
+    # не было (первое сообщение по ним), в результате не будет — вызывающий
+    # код трактует отсутствие как 0 (ничего не взведено)
+    async def get_values_for_addresses(
+        self, cabinet_id: int, addresses: list[int],
+    ) -> dict[int, int]:
+        if not addresses:
+            return {}
+        result = await self.session.execute(
+            select(CabinetRegisterState.address, CabinetRegisterState.value)
+            .where(
+                CabinetRegisterState.cabinet_id == cabinet_id,
+                CabinetRegisterState.address.in_(addresses),
+            )
+        )
+        return dict(result.all())
+
     async def list_for_cabinet(self, cabinet_id: int) -> list[CabinetRegisterState]:
         result = await self.session.execute(
             select(CabinetRegisterState)
