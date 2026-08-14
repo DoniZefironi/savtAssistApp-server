@@ -124,9 +124,48 @@ _SOURCE_LABELS = {
 }
 
 
+# Сколько кусков документации ШУ/проекта берём максимум — оставшееся до k
+# добирается из общей базы (FAQ/КБ). Раньше было 4, подняли до 6 вместе с k,
+# чтобы бот реже отвечал "не нашёл", особенно когда область поиска расширилась
+# на весь проект целиком (см. _resolve_project_scope)
+_SCOPED_DOCS_LIMIT = 6
+
+
+async def _resolve_project_scope(session: AsyncSession, project_id: int) -> tuple[set[int], set[int]]:
+    """Проект + все его дочерние проекты (рекурсивно, вложенность не ограничена
+    одним уровнем) → (все project_id в области, все cabinet_id всех этих проектов).
+    Так чат проекта видит документацию не только самого проекта и его ШУ, но и
+    вложенных проектов (например, партий отгрузки внутри одного производственного)."""
+    from app.models.cabinets import Cabinet as CabinetModel
+    from app.models.project import Project as ProjectModel
+
+    project_ids = {project_id}
+    frontier = {project_id}
+    while frontier:
+        rows = (await session.execute(
+            select(ProjectModel.id).where(
+                ProjectModel.parent_project_id.in_(frontier), ProjectModel.deleted_at.is_(None),
+            )
+        )).scalars().all()
+        new_ids = set(rows) - project_ids
+        if not new_ids:
+            break
+        project_ids |= new_ids
+        frontier = new_ids
+
+    cabinet_rows = (await session.execute(
+        select(CabinetModel.id).where(
+            CabinetModel.project_id.in_(project_ids), CabinetModel.deleted_at.is_(None),
+        )
+    )).scalars().all()
+
+    return project_ids, set(cabinet_rows)
+
+
 async def _retrieve_context(
-    session: AsyncSession, query: str, cabinet_id: int | None, k: int = 5
+    session: AsyncSession, query: str, cabinet_id: int | None, project_id: int | None = None, k: int = 7,
 ) -> list[dict]:
+    from sqlalchemy import or_
     from app.models.document import Document as DocumentModel
     vec = cast(await yandex_service.embed_query(query), Vector(256))
 
@@ -134,12 +173,11 @@ async def _retrieve_context(
     # is_internal сюда попадает для подстраховки — сами эмбеддинги для таких
     # документов и не должны существовать (см. bot_indexer.index_document), но
     # если индексация когда-то отстала/сбойнула, этот фильтр не даст утечки.
-    from sqlalchemy import or_
     restricted_ids = select(DocumentModel.id).where(
         or_(DocumentModel.requires_approval == True, DocumentModel.is_internal == True)
     ).scalar_subquery()
 
-    # Общий пул: только FAQ и KB (без документов конкретных ШУ)
+    # Общий пул: только FAQ и KB (без документов конкретных ШУ/проектов)
     general_stmt = (
         select(Embedding.content, Embedding.source_type, Embedding.meta)
         .where(Embedding.source_type.in_(["faq", "kb_article"]))
@@ -163,12 +201,35 @@ async def _retrieve_context(
                 ~Embedding.source_id.in_(restricted_ids),
             )
             .order_by(Embedding.embedding.op("<=>")(vec))
-            .limit(4)
+            .limit(_SCOPED_DOCS_LIMIT)
         )
         cabinet_rows = (await session.execute(cabinet_stmt)).all()
         remaining = k - len(cabinet_rows)
         general_rows = (await session.execute(general_stmt.limit(remaining))).all() if remaining > 0 else []
         return [_row_to_dict(r) for r in cabinet_rows + general_rows]
+
+    if project_id:
+        project_ids, cabinet_ids = await _resolve_project_scope(session, project_id)
+        # meta документа не хранит project_id (только cabinet_id, см. bot_indexer.index_document),
+        # поэтому здесь JOIN прямо на Document, а не фильтр по meta
+        project_stmt = (
+            select(Embedding.content, Embedding.source_type, Embedding.meta)
+            .join(DocumentModel, DocumentModel.id == Embedding.source_id)
+            .where(
+                Embedding.source_type == "document",
+                or_(
+                    DocumentModel.project_id.in_(project_ids),
+                    DocumentModel.cabinet_id.in_(cabinet_ids),
+                ),
+                ~Embedding.source_id.in_(restricted_ids),
+            )
+            .order_by(Embedding.embedding.op("<=>")(vec))
+            .limit(_SCOPED_DOCS_LIMIT)
+        )
+        project_rows = (await session.execute(project_stmt)).all()
+        remaining = k - len(project_rows)
+        general_rows = (await session.execute(general_stmt.limit(remaining))).all() if remaining > 0 else []
+        return [_row_to_dict(r) for r in project_rows + general_rows]
 
     return [_row_to_dict(r) for r in (await session.execute(general_stmt)).all()]
 
@@ -359,7 +420,7 @@ async def handle_message(
         history = list(reversed(history_rows))
 
         # RAG: ищем релевантные куски
-        context_chunks = await _retrieve_context(session, user_text, chat.cabinet_id)
+        context_chunks = await _retrieve_context(session, user_text, chat.cabinet_id, chat.project_id)
         if context_chunks:
             parts = [f"[{c['source']}]\n{c['content']}" for c in context_chunks]
             context_text = "\n---\n".join(parts)
