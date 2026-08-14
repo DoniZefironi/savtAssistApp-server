@@ -10,8 +10,7 @@ from app.schemas.cabinet import (
     UserCabinetListItemOut,
     UserCabinetPatchIn,
 )
-from app.schemas.pagination import PageOut
-from app.schemas.telemetry import TelemetryEventOut
+from app.schemas.telemetry import TelemetryCurrentStateOut
 from app.services.telemetry_service import UserTelemetryService
 from app.services.user_cabinet_service import UserCabinetService
 
@@ -51,19 +50,18 @@ async def update_cabinet(
 # DELETE /projects/{project_id} (выйти из проекта — теряет доступ разом ко
 # всем его шкафам)
 
-# Лента событий с MQTT-контроллера ШУ (аварии/сообщения) — регистры уже
-# расшифрованы по карте (стандартная + добавки этого ШУ, см. AdminRegisterMapService)
-@router.get("/{cabinet_id}/telemetry", response_model=PageOut[TelemetryEventOut])
+# Текущее состояние регистров ШУ (последнее известное значение каждого,
+# перезаписывается на каждое новое сообщение — не история, см. README) —
+# регистры уже расшифрованы по карте (стандартная + добавки этого ШУ)
+@router.get("/{cabinet_id}/telemetry", response_model=TelemetryCurrentStateOut)
 async def get_cabinet_telemetry(
     cabinet_id: int,
-    page: int = Query(1, ge=1),
-    size: int = Query(20, ge=1, le=100),
     include_unnamed: bool = Query(False, description="Показывать и регистры без названия в карте"),
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
     service = UserTelemetryService(session)
-    return await service.list_for_cabinet(current_user.id, cabinet_id, page, size, include_unnamed)
+    return await service.get_current_state(current_user.id, cabinet_id, include_unnamed)
 
 # Добавить ШУ по фото(пользователь) — "в моём проекте не хватает шкафа"
 @router.post("/add-by-photo", response_model=AddByPhotoOut, status_code=status.HTTP_201_CREATED)

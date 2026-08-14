@@ -43,6 +43,7 @@ from app.models.pending_registration import PendingRegistration
 from app.models.register_definition import RegisterDefinition
 from app.models.cabinet_register_override import CabinetRegisterOverride
 from app.models.cabinet_telemetry_event import CabinetTelemetryEvent
+from app.models.cabinet_register_state import CabinetRegisterState
 
 __all__ = [
     "Role", "User", "RefreshToken", "PhoneVerificationCode",
@@ -57,4 +58,5 @@ __all__ = [
     "Project", "UserProject", "ProjectShareRequest", "ProjectContact",
     "MessengerLink", "PhoneChangeRequest", "PendingRegistration",
     "RegisterDefinition", "CabinetRegisterOverride", "CabinetTelemetryEvent",
+    "CabinetRegisterState",
 ]

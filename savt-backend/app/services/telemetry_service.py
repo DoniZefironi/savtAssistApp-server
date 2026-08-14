@@ -1,5 +1,5 @@
 import hmac
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,6 +8,7 @@ from app.core.exceptions import AlreadyExistsError, NotFoundError, PermissionDen
 from app.repositories.cabinet import CabinetRepository
 from app.repositories.telemetry import (
     CabinetRegisterOverrideRepository,
+    CabinetRegisterStateRepository,
     CabinetTelemetryEventRepository,
     RegisterDefinitionRepository,
 )
@@ -15,6 +16,8 @@ from app.schemas.pagination import PageOut, make_page
 from app.schemas.telemetry import (
     CabinetRegisterOverrideOut,
     RegisterDefinitionOut,
+    TelemetryCurrentRegisterOut,
+    TelemetryCurrentStateOut,
     TelemetryEventOut,
     TelemetryRegisterOut,
     TelemetryTargetOut,
@@ -32,36 +35,47 @@ def verify_telemetry_secret(header_value: str | None) -> bool:
     )
 
 
-# include_unnamed=False (по умолчанию, обычный просмотр/мониторинг аварий) —
-# регистры без названия в карте не попадают в ответ вообще: на одно MQTT-сообщение
-# приходит ~20 регистров, из которых обычно назван едва ли не один, и без
-# фильтра аварию среди сплошного шума не найти. include_unnamed=True — для
-# настройки самой карты: чтобы понять, что означает ещё не названный регистр,
-# его сначала надо увидеть меняющимся.
+# Значение регистра — 16-битное слово (бит 0..15), каждый бит потенциально
+# своя авария (не факт, что каждый бит вообще что-то значит). include_unnamed=False
+# (по умолчанию, обычный просмотр/мониторинг аварий) — в ответ попадают только
+# биты, которые СЕЙЧАС взведены (=1) И названы в карте: на одно MQTT-сообщение
+# приходит ~20 регистров по 16 бит каждый, и без фильтра аварию в этом шуме не
+# найти. include_unnamed=True — для настройки самой карты: показывает все 16
+# бит каждого регистра как есть (взведён/нет, названы или нет), чтобы понять,
+# что означает ещё не названный бит, его сначала надо увидеть меняющимся.
+# & 0xFFFF на входе — контроллер может прислать регистр как знаковое 16-битное
+# число (-32768..32767), а не беззнаковое; без маски бит 15 отрицательных
+# значений разъезжался бы на всю ширину Python-int при сдвиге вправо
+def _register_bits(raw_value: int) -> list[int]:
+    unsigned = raw_value & 0xFFFF
+    return [(unsigned >> bit) & 1 for bit in range(16)]
+
+
 def _decode_registers(
-    raw_payload: dict, name_map: dict[int, str], include_unnamed: bool = False,
+    raw_payload: dict, name_map: dict[tuple[int, int], str], include_unnamed: bool = False,
 ) -> list[TelemetryRegisterOut]:
     result = []
-    for addr, value in raw_payload.items():
+    for addr, raw_value in raw_payload.items():
         # Ключи из JSONB всегда приходят строками (JSON не умеет в нечисловые
         # ключи объекта) — переводим обратно в адрес-число здесь
         address = int(addr)
-        name = name_map.get(address)
-        if name is None and not include_unnamed:
-            continue
-        result.append(TelemetryRegisterOut(address=address, name=name, value=value))
+        for bit, bit_value in enumerate(_register_bits(raw_value)):
+            name = name_map.get((address, bit))
+            if not include_unnamed and (name is None or bit_value == 0):
+                continue
+            result.append(TelemetryRegisterOut(address=address, bit=bit, name=name, value=bit_value))
     return result
 
 
 # Стандартная карта + переопределения конкретного ШУ поверх неё (override важнее).
-# Общая для расшифровки на чтение (UserTelemetryService) и для решения, стоит ли
-# слать realtime-сигнал на приём (TelemetryIngestService.ingest) — вынесена сюда,
-# чтобы не заводить одну и ту же логику дважды.
+# Общая для расшифровки на чтение и для решения, стоит ли слать realtime-сигнал
+# на приём (TelemetryIngestService.ingest) — вынесена сюда, чтобы не заводить
+# одну и ту же логику дважды.
 async def _build_name_map(
     def_repo: RegisterDefinitionRepository, override_repo: CabinetRegisterOverrideRepository, cabinet_id: int,
-) -> dict[int, str]:
-    name_map = {d.address: d.name for d in await def_repo.list_all()}
-    name_map.update({o.address: o.name for o in await override_repo.list_for_cabinet(cabinet_id)})
+) -> dict[tuple[int, int], str]:
+    name_map = {(d.address, d.bit): d.name for d in await def_repo.list_all()}
+    name_map.update({(o.address, o.bit): o.name for o in await override_repo.list_for_cabinet(cabinet_id)})
     return name_map
 
 
@@ -74,6 +88,17 @@ async def check_cabinet_telemetry_access(cabinet_id: int, user_id: int) -> bool:
         return await CabinetRepository(session).user_has_access(user_id, cabinet_id)
 
 
+# Автоочистка старой истории (см. schedule в main.py) — CabinetRegisterState
+# ("текущее состояние") не трогает, у него нет понятия возраста вообще
+async def prune_old_telemetry_history(session: AsyncSession, retention_days: int | None = None) -> int:
+    cutoff = datetime.now(timezone.utc) - timedelta(
+        days=retention_days if retention_days is not None else settings.telemetry_history_retention_days
+    )
+    deleted = await CabinetTelemetryEventRepository(session).delete_older_than(cutoff)
+    await session.commit()
+    return deleted
+
+
 class TelemetryIngestService:
     """Приём вебхука от C#-прокси. Без пользовательского контекста — прокси
     про cabinet_id ничего не знает, только топик контроллера как есть."""
@@ -81,6 +106,7 @@ class TelemetryIngestService:
         self.session = session
         self.cabinet_repo = CabinetRepository(session)
         self.event_repo = CabinetTelemetryEventRepository(session)
+        self.state_repo = CabinetRegisterStateRepository(session)
         self.def_repo = RegisterDefinitionRepository(session)
         self.override_repo = CabinetRegisterOverrideRepository(session)
 
@@ -105,62 +131,89 @@ class TelemetryIngestService:
         if cabinet is None:
             raise NotFoundError(f"ШУ с топиком '{topic}' не привязан")
         raw_payload = {str(address): value for address, value in registers.items()}
+        # Сырое сообщение — в историю (для аудита, см. .../telemetry/history)...
         event = await self.event_repo.create(
             cabinet_id=cabinet.id,
             received_at=timestamp or datetime.now(timezone.utc),
             raw_payload=raw_payload,
         )
+        # ...и то же самое — в "текущее состояние" (перезаписывает предыдущее
+        # значение каждого адреса), это и есть то, что реально отдаёт лента
+        await self.state_repo.upsert_many(cabinet.id, registers)
         await self.session.commit()
 
-        # Сигнал шлём, только если в сообщении есть хоть один названный в карте
-        # регистр — иначе на каждое сырое сообщение (их в разы больше значимых,
-        # см. include_unnamed в README) фронт получал бы пуш ни о чём: по умолчанию
-        # GET .../telemetry такое сообщение всё равно не покажет (см. _list)
+        # Сигнал шлём, только если в сообщении есть хоть один взведённый (=1) И
+        # названный в карте бит — иначе на каждое сырое сообщение (их в разы
+        # больше значимых) фронт получал бы пуш ни о чём: лента такое сообщение
+        # всё равно не покажет
         name_map = await _build_name_map(self.def_repo, self.override_repo, cabinet.id)
-        if any(int(addr) in name_map for addr in raw_payload):
+        has_active_named_bit = any(
+            bit_value and (address, bit) in name_map
+            for address, raw_value in registers.items()
+            for bit, bit_value in enumerate(_register_bits(raw_value))
+        )
+        if has_active_named_bit:
             await publish_telemetry_event(cabinet.id, event.id)
 
 
 class UserTelemetryService:
-    """Лента событий ШУ для карточки в приложении — та же проверка доступа
-    (членство в проекте ШУ), что и у документов/чата ШУ."""
+    """Текущее состояние регистров ШУ для карточки в приложении (см.
+    CabinetRegisterState) — та же проверка доступа, что и у документов/чата ШУ.
+    Сырая история сообщений — отдельно, только для админки/аудита, см.
+    list_history_for_cabinet_admin."""
     def __init__(self, session: AsyncSession):
         self.session = session
         self.cabinet_repo = CabinetRepository(session)
         self.event_repo = CabinetTelemetryEventRepository(session)
+        self.state_repo = CabinetRegisterStateRepository(session)
         self.def_repo = RegisterDefinitionRepository(session)
         self.override_repo = CabinetRegisterOverrideRepository(session)
 
-    async def list_for_cabinet(
-        self, user_id: int, cabinet_id: int, page: int, size: int, include_unnamed: bool = False,
-    ) -> PageOut[TelemetryEventOut]:
+    async def get_current_state(
+        self, user_id: int, cabinet_id: int, include_unnamed: bool = False,
+    ) -> TelemetryCurrentStateOut:
         if not await self.cabinet_repo.user_has_access(user_id, cabinet_id):
             raise PermissionDeniedError("У вас нет доступа к этому ШУ")
-        return await self._list(cabinet_id, page, size, include_unnamed)
+        return await self._current_state(cabinet_id, include_unnamed)
 
     # Для админки/операторской панели — без проверки членства в проекте,
     # доступ уже ограничен ролью на уровне роутера (require_role)
-    async def list_for_cabinet_admin(
+    async def get_current_state_admin(
+        self, cabinet_id: int, include_unnamed: bool = False,
+    ) -> TelemetryCurrentStateOut:
+        if await self.cabinet_repo.get_by_id(cabinet_id) is None:
+            raise NotFoundError("ШУ не найден")
+        return await self._current_state(cabinet_id, include_unnamed)
+
+    async def _current_state(self, cabinet_id: int, include_unnamed: bool) -> TelemetryCurrentStateOut:
+        states = await self.state_repo.list_for_cabinet(cabinet_id)
+        name_map = await _build_name_map(self.def_repo, self.override_repo, cabinet_id)
+
+        registers = []
+        for state in states:
+            for bit, bit_value in enumerate(_register_bits(state.value)):
+                name = name_map.get((state.address, bit))
+                if not include_unnamed and (name is None or bit_value == 0):
+                    continue
+                registers.append(TelemetryCurrentRegisterOut(
+                    address=state.address, bit=bit, name=name, value=bit_value,
+                    updated_at=state.updated_at,
+                ))
+        return TelemetryCurrentStateOut(registers=registers)
+
+    # Сырая история сообщений — только для админки/операторов, разбор задним
+    # числом ("когда началась авария"), не то, что видит обычный пользователь
+    async def list_history_for_cabinet_admin(
         self, cabinet_id: int, page: int, size: int, include_unnamed: bool = False,
     ) -> PageOut[TelemetryEventOut]:
         if await self.cabinet_repo.get_by_id(cabinet_id) is None:
             raise NotFoundError("ШУ не найден")
-        return await self._list(cabinet_id, page, size, include_unnamed)
 
-    async def _list(
-        self, cabinet_id: int, page: int, size: int, include_unnamed: bool = False,
-    ) -> PageOut[TelemetryEventOut]:
-        # Пагинация — по сырым событиям в БД, ДО фильтрации регистров. Значит
-        # при include_unnamed=False (обычный режим) на странице может оказаться
-        # меньше size событий, чем запрошено — часть после фильтрации/пропуска
-        # пустых просто исчезает. Точную пагинацию "только по значимым событиям"
-        # пришлось бы делать через JSONB-фильтр в самом SQL-запросе — усложнение,
-        # не оправданное, пока карта регистров разреженная (по мере её заполнения
-        # разрыв между "сырых событий" и "значимых событий" будет только сокращаться)
+        # Пагинация — по сырым событиям в БД, ДО фильтрации регистров, поэтому
+        # на странице может оказаться меньше size событий, чем запрошено (см. README)
         events, total = await self.event_repo.list_for_cabinet(
             cabinet_id, offset=(page - 1) * size, limit=size,
         )
-
         name_map = await _build_name_map(self.def_repo, self.override_repo, cabinet_id)
 
         items = []
@@ -189,14 +242,14 @@ class AdminRegisterMapService:
         return [RegisterDefinitionOut.model_validate(d) for d in await self.def_repo.list_all()]
 
     async def create_definition(
-        self, address: int, name: str, description: str | None, actor_id: int, actor_role: str,
+        self, address: int, bit: int, name: str, description: str | None, actor_id: int, actor_role: str,
     ) -> RegisterDefinitionOut:
-        existing = await self.def_repo.get_by_address(address)
+        existing = await self.def_repo.get_by_address_and_bit(address, bit)
         if existing is not None:
-            raise AlreadyExistsError(f"Регистр {address} уже описан в стандартной карте")
-        obj = await self.def_repo.create(address, name, description)
+            raise AlreadyExistsError(f"Бит {bit} регистра {address} уже описан в стандартной карте")
+        obj = await self.def_repo.create(address, bit, name, description)
         self.audit.log("register_definition.create", "register_definition", obj.id, actor_id, actor_role,
-                       {"address": address, "name": name})
+                       {"address": address, "bit": bit, "name": name})
         await self.session.commit()
         return RegisterDefinitionOut.model_validate(obj)
 
@@ -218,17 +271,17 @@ class AdminRegisterMapService:
         ]
 
     async def create_override(
-        self, cabinet_id: int, address: int, name: str, description: str | None,
+        self, cabinet_id: int, address: int, bit: int, name: str, description: str | None,
         actor_id: int, actor_role: str,
     ) -> CabinetRegisterOverrideOut:
         if await self.cabinet_repo.get_by_id(cabinet_id) is None:
             raise NotFoundError("ШУ не найден")
-        existing = await self.override_repo.get_by_cabinet_and_address(cabinet_id, address)
+        existing = await self.override_repo.get_by_cabinet_address_and_bit(cabinet_id, address, bit)
         if existing is not None:
-            raise AlreadyExistsError(f"Регистр {address} уже переопределён для этого ШУ")
-        obj = await self.override_repo.create(cabinet_id, address, name, description)
+            raise AlreadyExistsError(f"Бит {bit} регистра {address} уже переопределён для этого ШУ")
+        obj = await self.override_repo.create(cabinet_id, address, bit, name, description)
         self.audit.log("cabinet_register_override.create", "cabinet", cabinet_id, actor_id, actor_role,
-                       {"address": address, "name": name})
+                       {"address": address, "bit": bit, "name": name})
         await self.session.commit()
         return CabinetRegisterOverrideOut.model_validate(obj)
 

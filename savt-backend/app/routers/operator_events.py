@@ -107,7 +107,7 @@ async def stream_chat(request: Request, chat_id: int, ticket: str = Query(...)):
 # Телеметрия открытого ШУ — замена поллинга GET /admin/cabinets/{id}/telemetry,
 # пока карточка ШУ открыта в панели. В отличие от чата — без проверки доступа
 # к конкретному ШУ: оператор/админ видит телеметрию любого (тот же принцип,
-# что и у самого REST-эндпоинта, см. UserTelemetryService.list_for_cabinet_admin)
+# что и у самого REST-эндпоинта, см. UserTelemetryService.get_current_state_admin)
 @router.get("/cabinets/{cabinet_id}/telemetry")
 async def stream_cabinet_telemetry(request: Request, cabinet_id: int, ticket: str = Query(...)):
     _authenticate(ticket)

@@ -10,6 +10,7 @@ from app.schemas.telemetry import (
     CabinetRegisterOverrideOut,
     RegisterDefinitionIn,
     RegisterDefinitionOut,
+    TelemetryCurrentStateOut,
     TelemetryEventOut,
 )
 from app.services.telemetry_service import AdminRegisterMapService, UserTelemetryService
@@ -17,11 +18,26 @@ from app.services.telemetry_service import AdminRegisterMapService, UserTelemetr
 router = APIRouter(prefix="/admin", tags=["admin: telemetry"])
 
 
-# Лента событий ШУ для админки/операторской панели — в отличие от
+# Текущее состояние регистров ШУ для админки/операторской панели — в отличие от
 # GET /cabinets/{id}/telemetry (мобильное приложение), доступ не завязан на
 # членство в проекте: оператор/админ должен видеть телеметрию любого ШУ
-@router.get("/cabinets/{cabinet_id}/telemetry", response_model=PageOut[TelemetryEventOut])
+@router.get("/cabinets/{cabinet_id}/telemetry", response_model=TelemetryCurrentStateOut)
 async def get_cabinet_telemetry_admin(
+    cabinet_id: int,
+    include_unnamed: bool = Query(
+        False, description="Показывать и регистры без названия — для настройки карты",
+    ),
+    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    session: AsyncSession = Depends(get_session),
+):
+    return await UserTelemetryService(session).get_current_state_admin(cabinet_id, include_unnamed)
+
+
+# Сырая история сообщений — для аудита/разбора задним числом ("когда началась
+# авария"). Хранится ограниченное время (см. TELEMETRY_HISTORY_RETENTION_DAYS),
+# в отличие от текущего состояния выше, которое не история и не чистится по возрасту
+@router.get("/cabinets/{cabinet_id}/telemetry/history", response_model=PageOut[TelemetryEventOut])
+async def get_cabinet_telemetry_history(
     cabinet_id: int,
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
@@ -31,7 +47,9 @@ async def get_cabinet_telemetry_admin(
     _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
-    return await UserTelemetryService(session).list_for_cabinet_admin(cabinet_id, page, size, include_unnamed)
+    return await UserTelemetryService(session).list_history_for_cabinet_admin(
+        cabinet_id, page, size, include_unnamed,
+    )
 
 
 # Стандартная карта регистров — общая для всех ШУ
@@ -51,7 +69,7 @@ async def create_register_definition(
     session: AsyncSession = Depends(get_session),
 ):
     return await AdminRegisterMapService(session).create_definition(
-        payload.address, payload.name, payload.description, actor.id, actor_role,
+        payload.address, payload.bit, payload.name, payload.description, actor.id, actor_role,
     )
 
 
@@ -88,7 +106,7 @@ async def create_cabinet_register_override(
     session: AsyncSession = Depends(get_session),
 ):
     return await AdminRegisterMapService(session).create_override(
-        cabinet_id, payload.address, payload.name, payload.description, actor.id, actor_role,
+        cabinet_id, payload.address, payload.bit, payload.name, payload.description, actor.id, actor_role,
     )
 
 

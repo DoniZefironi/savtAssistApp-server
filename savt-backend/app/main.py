@@ -79,6 +79,14 @@ async def _bot_follow_up_job() -> None:
         await send_follow_up(session)
 
 
+async def _telemetry_history_prune_job() -> None:
+    async with AsyncSessionLocal() as session:
+        from app.services.telemetry_service import prune_old_telemetry_history
+        deleted = await prune_old_telemetry_history(session)
+        if deleted:
+            logger.info("Очистка истории телеметрии: удалено %d старых записей", deleted)
+
+
 # Управление жизненным циклом приложения, проверяет подключение к бд и закрывает соединение с бд
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -96,6 +104,7 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(sync_all_project_folders, "cron", hour=2, minute=0)
     scheduler.add_job(sync_statuses_from_bitrix, "interval", minutes=15)
     scheduler.add_job(_bot_follow_up_job, "interval", minutes=10)
+    scheduler.add_job(_telemetry_history_prune_job, "cron", hour=3, minute=0)
 
     # Реклама рассылается автоматически, только если час задан явно: она уходит
     # живым людям, включать её должно быть осознанным действием (см. README)
