@@ -96,3 +96,23 @@ async def ws_cabinets(websocket: WebSocket, ticket: str):
         await websocket.close(code=4401)
         return
     await _ws_stream(websocket, f"user_cabinets:{user_id}")
+
+
+# Сигнал о новом событии телеметрии ШУ - замена поллинга GET /cabinets/{id}/telemetry,
+# пока открыта карточка ШУ. Шлётся, только если в сообщении есть хоть один
+# названный в карте регистр (см. TelemetryIngestService.ingest) - событие несёт
+# только cabinet_id/event_id, сам список клиент перезапрашивает через REST
+@router.websocket("/cabinets/{cabinet_id}/telemetry")
+async def ws_cabinet_telemetry(websocket: WebSocket, cabinet_id: int, ticket: str):
+    from app.services.telemetry_service import check_cabinet_telemetry_access
+
+    user_id = consume_ticket(ticket, SCOPE_USER)
+    if user_id is None:
+        await websocket.close(code=4401)
+        return
+
+    if not await check_cabinet_telemetry_access(cabinet_id, user_id):
+        await websocket.close(code=4403)
+        return
+
+    await _ws_stream(websocket, f"cabinet_telemetry:{cabinet_id}")

@@ -20,6 +20,7 @@ from app.schemas.telemetry import (
     TelemetryTargetOut,
 )
 from app.services.audit_service import AuditLogger
+from app.services.realtime_events import publish_telemetry_event
 
 
 # Секрет сверяем через hmac.compare_digest (не "=="), та же логика, что и у
@@ -52,6 +53,27 @@ def _decode_registers(
     return result
 
 
+# Стандартная карта + переопределения конкретного ШУ поверх неё (override важнее).
+# Общая для расшифровки на чтение (UserTelemetryService) и для решения, стоит ли
+# слать realtime-сигнал на приём (TelemetryIngestService.ingest) — вынесена сюда,
+# чтобы не заводить одну и ту же логику дважды.
+async def _build_name_map(
+    def_repo: RegisterDefinitionRepository, override_repo: CabinetRegisterOverrideRepository, cabinet_id: int,
+) -> dict[int, str]:
+    name_map = {d.address: d.name for d in await def_repo.list_all()}
+    name_map.update({o.address: o.name for o in await override_repo.list_for_cabinet(cabinet_id)})
+    return name_map
+
+
+# Доступ к персональному WS-каналу телеметрии (/user-events/cabinets/{id}/telemetry) —
+# та же схема, что у check_chat_access в chat_service.py: своя сессия, WS-хендлер
+# не участвует в обычном Depends(get_session)
+async def check_cabinet_telemetry_access(cabinet_id: int, user_id: int) -> bool:
+    from app.database import AsyncSessionLocal
+    async with AsyncSessionLocal() as session:
+        return await CabinetRepository(session).user_has_access(user_id, cabinet_id)
+
+
 class TelemetryIngestService:
     """Приём вебхука от C#-прокси. Без пользовательского контекста — прокси
     про cabinet_id ничего не знает, только топик контроллера как есть."""
@@ -59,6 +81,8 @@ class TelemetryIngestService:
         self.session = session
         self.cabinet_repo = CabinetRepository(session)
         self.event_repo = CabinetTelemetryEventRepository(session)
+        self.def_repo = RegisterDefinitionRepository(session)
+        self.override_repo = CabinetRegisterOverrideRepository(session)
 
     # Список "куда подключаться" — свой брокер у каждого ШУ (не общий на всех),
     # прокси периодически перечитывает это вместо статичного конфига
@@ -81,12 +105,20 @@ class TelemetryIngestService:
         if cabinet is None:
             raise NotFoundError(f"ШУ с топиком '{topic}' не привязан")
         raw_payload = {str(address): value for address, value in registers.items()}
-        await self.event_repo.create(
+        event = await self.event_repo.create(
             cabinet_id=cabinet.id,
             received_at=timestamp or datetime.now(timezone.utc),
             raw_payload=raw_payload,
         )
         await self.session.commit()
+
+        # Сигнал шлём, только если в сообщении есть хоть один названный в карте
+        # регистр — иначе на каждое сырое сообщение (их в разы больше значимых,
+        # см. include_unnamed в README) фронт получал бы пуш ни о чём: по умолчанию
+        # GET .../telemetry такое сообщение всё равно не покажет (см. _list)
+        name_map = await _build_name_map(self.def_repo, self.override_repo, cabinet.id)
+        if any(int(addr) in name_map for addr in raw_payload):
+            await publish_telemetry_event(cabinet.id, event.id)
 
 
 class UserTelemetryService:
@@ -129,9 +161,7 @@ class UserTelemetryService:
             cabinet_id, offset=(page - 1) * size, limit=size,
         )
 
-        # Стандартная карта + переопределения этого ШУ поверх неё (override важнее)
-        name_map = {d.address: d.name for d in await self.def_repo.list_all()}
-        name_map.update({o.address: o.name for o in await self.override_repo.list_for_cabinet(cabinet_id)})
+        name_map = await _build_name_map(self.def_repo, self.override_repo, cabinet_id)
 
         items = []
         for event in events:

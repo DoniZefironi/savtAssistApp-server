@@ -72,3 +72,14 @@ async def publish_cabinet_created(cabinet_id: int, project_id: int, user_ids: li
     envelope = {"type": "cabinet.created", "cabinet_id": cabinet_id, "project_id": project_id}
     for user_id in user_ids:
         await event_bus.publish(f"user_cabinets:{user_id}", envelope)
+
+
+# Канал общий для мобильного WS (/user-events/cabinets/{id}/telemetry) и
+# операторского SSE (/operator/events/cabinets/{id}/telemetry) — та же схема,
+# что у "chat:{id}" выше. Минимальный payload: сам список решает, что показать
+# (фильтр по названным регистрам и т.п.), поэтому клиент по сигналу просто
+# перезапрашивает GET /cabinets/{id}/telemetry, а не получает событие целиком.
+async def publish_telemetry_event(cabinet_id: int, event_id: int) -> None:
+    await event_bus.publish(f"cabinet_telemetry:{cabinet_id}", {
+        "type": "telemetry.created", "cabinet_id": cabinet_id, "event_id": event_id,
+    })
