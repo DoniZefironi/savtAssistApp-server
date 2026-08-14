@@ -138,7 +138,19 @@ public class Worker(
                 logger.LogInformation(
                     "Переподключаюсь к ШУ {CabinetId} ({Host}:{Port})...", cabinetId, target.Host, target.Port
                 );
-                await client.ConnectAsync(BuildClientOptions(target), stoppingToken);
+                var connectResult = await client.ConnectAsync(BuildClientOptions(target), stoppingToken);
+                if (connectResult.ResultCode != MqttClientConnectResultCode.Success)
+                {
+                    // ConnectAsync НЕ бросает исключение на отказ брокера (CONNACK с
+                    // ошибкой) — только возвращает результат с кодом, это надо проверять
+                    // явно, иначе следующий SubscribeAsync упадёт с невнятным
+                    // "MqttClientNotConnectedException" без объяснения, ПОЧЕМУ
+                    logger.LogError(
+                        "Брокер отклонил подключение для ШУ {CabinetId} ({Host}:{Port}): {ResultCode} {Reason}",
+                        cabinetId, target.Host, target.Port, connectResult.ResultCode, connectResult.ReasonString
+                    );
+                    continue;
+                }
                 await client.SubscribeAsync(
                     target.Topic, MqttQualityOfServiceLevel.AtLeastOnce, cancellationToken: stoppingToken
                 );
@@ -160,7 +172,20 @@ public class Worker(
 
         try
         {
-            await client.ConnectAsync(BuildClientOptions(target), stoppingToken);
+            var connectResult = await client.ConnectAsync(BuildClientOptions(target), stoppingToken);
+            if (connectResult.ResultCode != MqttClientConnectResultCode.Success)
+            {
+                // ConnectAsync НЕ бросает исключение на отказ брокера (CONNACK с
+                // ошибкой) — только возвращает результат с кодом, это надо проверять
+                // явно, иначе следующий SubscribeAsync упадёт с невнятным
+                // "MqttClientNotConnectedException" без объяснения, ПОЧЕМУ
+                logger.LogError(
+                    "Брокер отклонил подключение для ШУ {CabinetId} ({Host}:{Port}): {ResultCode} {Reason}",
+                    target.CabinetId, target.Host, target.Port, connectResult.ResultCode, connectResult.ReasonString
+                );
+                client.Dispose();
+                return;
+            }
             // AtLeastOnce (QoS 1) — с дефолтным QoS 0 брокер не гарантирует доставку
             // при разрыве связи, авария могла бы молча потеряться в самый нужный момент
             await client.SubscribeAsync(
@@ -171,7 +196,7 @@ public class Worker(
                 "Подключился к ШУ {CabinetId}: {Host}:{Port}, топик {Topic}",
                 target.CabinetId, target.Host, target.Port, target.Topic
             );
-            }
+        }
         catch (Exception ex)
         {
             logger.LogError(ex, "Не удалось подключиться к ШУ {CabinetId} ({Host}:{Port})", target.CabinetId, target.Host, target.Port);
