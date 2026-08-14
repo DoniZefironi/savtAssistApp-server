@@ -51,22 +51,29 @@ def _register_bits(raw_value: int) -> list[int]:
     return [(unsigned >> bit) & 1 for bit in range(16)]
 
 
-# Стоит ли слать realtime-сигнал по этому регистру — только если хотя бы один
-# НАЗВАННЫЙ бит реально переключился (0→1 — новая авария, 1→0 — авария снята).
-# old_value/new_value совпадают почти всегда: контроллер обычно шлёт текущее
-# состояние периодически, не только по изменению — без этой проверки на
-# каждый такой "тик" улетал бы пуш ни о чём (см. ingest ниже)
-def _has_named_bit_change(
+# Все НАЗВАННЫЕ биты, которые реально переключились между old_value и
+# new_value — (bit, name, старое значение бита, новое значение бита). Пустой
+# список, если числа совпадают (контроллер обычно шлёт текущее состояние
+# периодически, не только по изменению) или ни один изменившийся бит не
+# назван в карте. Используется и для realtime-сигнала (любое переключение —
+# 0→1 новая авария, 1→0 снятая), и для push-уведомлений (только 0→1, см.
+# ingest ниже) — общая логика, чтобы не разъезжались друг с другом
+def _named_bit_transitions(
     old_value: int, new_value: int, address: int, name_map: dict[tuple[int, int], str],
-) -> bool:
+) -> list[tuple[int, str, int, int]]:
     if old_value == new_value:
-        return False
+        return []
     old_bits = _register_bits(old_value)
     new_bits = _register_bits(new_value)
-    return any(
-        old_bits[bit] != new_bits[bit] and (address, bit) in name_map
-        for bit in range(16)
-    )
+    result = []
+    for bit in range(16):
+        if old_bits[bit] == new_bits[bit]:
+            continue
+        name = name_map.get((address, bit))
+        if name is None:
+            continue
+        result.append((bit, name, old_bits[bit], new_bits[bit]))
+    return result
 
 
 def _decode_registers(
@@ -174,12 +181,44 @@ class TelemetryIngestService:
         # активной аварией быстро упирается в rate limit (см. инцидент
         # 2026-08-14 — ШУ 118 заваливал админку 429 именно так)
         name_map = await _build_name_map(self.def_repo, self.override_repo, cabinet.id)
-        has_meaningful_change = any(
-            _has_named_bit_change(old_values.get(address, 0), new_value, address, name_map)
+        transitions_by_address = {
+            address: _named_bit_transitions(old_values.get(address, 0), new_value, address, name_map)
             for address, new_value in registers.items()
-        )
-        if has_meaningful_change:
+        }
+        if any(transitions_by_address.values()):
             await publish_telemetry_event(cabinet.id, event.id)
+
+        # Push — только на НОВУЮ аварию (0→1), не на снятие: снятие видно и так
+        # по тому, что строка пропала из ленты, отдельный пуш об этом был бы
+        # избыточным. Один пуш на каждый новый взведённый бит, не один общий
+        # на всё сообщение — в списке уведомлений это разные события
+        new_alarms = [
+            (address, bit, name)
+            for address, transitions in transitions_by_address.items()
+            for bit, name, old_bit, new_bit in transitions
+            if old_bit == 0 and new_bit == 1
+        ]
+        if new_alarms:
+            await self._notify_new_alarms(cabinet, new_alarms)
+
+    async def _notify_new_alarms(self, cabinet, alarms: list[tuple[int, int, str]]) -> None:
+        from app.services.notification_service import NotificationService
+
+        members = await self.cabinet_repo.list_users_with_access(cabinet.id)
+        if not members:
+            return
+        cabinet_name = cabinet.admin_internal_name or cabinet.object_number
+        title = f"Авария ШУ «{cabinet_name}»"
+        notif_service = NotificationService(self.session)
+        for _address, _bit, alarm_name in alarms:
+            for user, _membership in members:
+                await notif_service.send(
+                    user_id=user.id,
+                    type_="cabinet_alarm",
+                    title=title,
+                    body=alarm_name,
+                    data={"cabinet_id": cabinet.id},
+                )
 
 
 class UserTelemetryService:

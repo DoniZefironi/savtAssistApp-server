@@ -20,6 +20,7 @@ _SETTING_BY_TYPE: dict[str, str] = {
     "request_status": "request_status_change",
     "warranty_expiring": "warranty_expiring",
     "promotional": "promotional",
+    "cabinet_alarm": "cabinet_alarms",
 }
 
 

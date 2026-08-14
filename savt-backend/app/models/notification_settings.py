@@ -31,6 +31,12 @@ class NotificationSettings(Base):
     request_status_change: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="true"
     )
+    # push при новой аварии ШУ (см. TelemetryIngestService.ingest) — только на
+    # появление (0→1), не на снятие; по умолчанию включён, это не служебный
+    # сигнал вроде operator_requested, а обычный тип с тумблером
+    cabinet_alarms: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true"
+    )
 
     # --- временная пауза: глушит ВСЕ пуши, независимо от переключателей выше ---
     # Две колонки, а не одна с датой-«бесконечностью»: "тишина навсегда" — это

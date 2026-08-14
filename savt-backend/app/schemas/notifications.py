@@ -25,6 +25,7 @@ class NotificationSettingsOut(BaseModel):
     promotional: bool
     warranty_expiring: bool
     request_status_change: bool
+    cabinet_alarms: bool
     # Пауза. is_muted — готовый ответ на вопрос «сейчас тихо?», чтобы клиент не
     # сравнивал даты сам и не разошёлся с сервером на границе срока
     is_muted: bool = False
@@ -45,6 +46,7 @@ class NotificationSettingsPatchIn(BaseModel):
     promotional: bool | None = None
     warranty_expiring: bool | None = None
     request_status_change: bool | None = None
+    cabinet_alarms: bool | None = None
 
 
 class DeviceTokenIn(BaseModel):

@@ -41,6 +41,7 @@ class NotificationService:
                 "request_status": settings.request_status_change,
                 "warranty_expiring": settings.warranty_expiring,
                 "promotional": settings.promotional,
+                "cabinet_alarm": settings.cabinet_alarms,
             }
             if not allowed.get(type_, True):
                 return
@@ -135,6 +136,7 @@ class NotificationService:
             promotional=settings.promotional,
             warranty_expiring=settings.warranty_expiring,
             request_status_change=settings.request_status_change,
+            cabinet_alarms=settings.cabinet_alarms,
             is_muted=settings.is_muted(),
             muted_until=settings.muted_until,
             muted_indefinitely=settings.muted_indefinitely,
