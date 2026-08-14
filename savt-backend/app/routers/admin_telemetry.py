@@ -25,10 +25,13 @@ async def get_cabinet_telemetry_admin(
     cabinet_id: int,
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
+    include_unnamed: bool = Query(
+        False, description="Показывать и регистры без названия — для настройки карты",
+    ),
     _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
-    return await UserTelemetryService(session).list_for_cabinet_admin(cabinet_id, page, size)
+    return await UserTelemetryService(session).list_for_cabinet_admin(cabinet_id, page, size, include_unnamed)
 
 
 # Стандартная карта регистров — общая для всех ШУ

@@ -31,13 +31,25 @@ def verify_telemetry_secret(header_value: str | None) -> bool:
     )
 
 
-def _decode_registers(raw_payload: dict, name_map: dict[int, str]) -> list[TelemetryRegisterOut]:
-    # Ключи из JSONB всегда приходят строками (JSON не умеет в нечисловые ключи
-    # объекта) — переводим обратно в адрес-число здесь, один раз на событие
-    return [
-        TelemetryRegisterOut(address=int(addr), name=name_map.get(int(addr)), value=value)
-        for addr, value in raw_payload.items()
-    ]
+# include_unnamed=False (по умолчанию, обычный просмотр/мониторинг аварий) —
+# регистры без названия в карте не попадают в ответ вообще: на одно MQTT-сообщение
+# приходит ~20 регистров, из которых обычно назван едва ли не один, и без
+# фильтра аварию среди сплошного шума не найти. include_unnamed=True — для
+# настройки самой карты: чтобы понять, что означает ещё не названный регистр,
+# его сначала надо увидеть меняющимся.
+def _decode_registers(
+    raw_payload: dict, name_map: dict[int, str], include_unnamed: bool = False,
+) -> list[TelemetryRegisterOut]:
+    result = []
+    for addr, value in raw_payload.items():
+        # Ключи из JSONB всегда приходят строками (JSON не умеет в нечисловые
+        # ключи объекта) — переводим обратно в адрес-число здесь
+        address = int(addr)
+        name = name_map.get(address)
+        if name is None and not include_unnamed:
+            continue
+        result.append(TelemetryRegisterOut(address=address, name=name, value=value))
+    return result
 
 
 class TelemetryIngestService:
@@ -88,22 +100,31 @@ class UserTelemetryService:
         self.override_repo = CabinetRegisterOverrideRepository(session)
 
     async def list_for_cabinet(
-        self, user_id: int, cabinet_id: int, page: int, size: int,
+        self, user_id: int, cabinet_id: int, page: int, size: int, include_unnamed: bool = False,
     ) -> PageOut[TelemetryEventOut]:
         if not await self.cabinet_repo.user_has_access(user_id, cabinet_id):
             raise PermissionDeniedError("У вас нет доступа к этому ШУ")
-        return await self._list(cabinet_id, page, size)
+        return await self._list(cabinet_id, page, size, include_unnamed)
 
     # Для админки/операторской панели — без проверки членства в проекте,
     # доступ уже ограничен ролью на уровне роутера (require_role)
     async def list_for_cabinet_admin(
-        self, cabinet_id: int, page: int, size: int,
+        self, cabinet_id: int, page: int, size: int, include_unnamed: bool = False,
     ) -> PageOut[TelemetryEventOut]:
         if await self.cabinet_repo.get_by_id(cabinet_id) is None:
             raise NotFoundError("ШУ не найден")
-        return await self._list(cabinet_id, page, size)
+        return await self._list(cabinet_id, page, size, include_unnamed)
 
-    async def _list(self, cabinet_id: int, page: int, size: int) -> PageOut[TelemetryEventOut]:
+    async def _list(
+        self, cabinet_id: int, page: int, size: int, include_unnamed: bool = False,
+    ) -> PageOut[TelemetryEventOut]:
+        # Пагинация — по сырым событиям в БД, ДО фильтрации регистров. Значит
+        # при include_unnamed=False (обычный режим) на странице может оказаться
+        # меньше size событий, чем запрошено — часть после фильтрации/пропуска
+        # пустых просто исчезает. Точную пагинацию "только по значимым событиям"
+        # пришлось бы делать через JSONB-фильтр в самом SQL-запросе — усложнение,
+        # не оправданное, пока карта регистров разреженная (по мере её заполнения
+        # разрыв между "сырых событий" и "значимых событий" будет только сокращаться)
         events, total = await self.event_repo.list_for_cabinet(
             cabinet_id, offset=(page - 1) * size, limit=size,
         )
@@ -112,14 +133,14 @@ class UserTelemetryService:
         name_map = {d.address: d.name for d in await self.def_repo.list_all()}
         name_map.update({o.address: o.name for o in await self.override_repo.list_for_cabinet(cabinet_id)})
 
-        items = [
-            TelemetryEventOut(
-                id=event.id,
-                received_at=event.received_at,
-                registers=_decode_registers(event.raw_payload, name_map),
-            )
-            for event in events
-        ]
+        items = []
+        for event in events:
+            registers = _decode_registers(event.raw_payload, name_map, include_unnamed)
+            if not registers and not include_unnamed:
+                continue  # сообщение целиком без единого названного регистра — прячем, а не пустым пузырём
+            items.append(TelemetryEventOut(
+                id=event.id, received_at=event.received_at, registers=registers,
+            ))
         return make_page(items, total, page, size)
 
 

@@ -58,11 +58,12 @@ async def get_cabinet_telemetry(
     cabinet_id: int,
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
+    include_unnamed: bool = Query(False, description="Показывать и регистры без названия в карте"),
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
     service = UserTelemetryService(session)
-    return await service.list_for_cabinet(current_user.id, cabinet_id, page, size)
+    return await service.list_for_cabinet(current_user.id, cabinet_id, page, size, include_unnamed)
 
 # Добавить ШУ по фото(пользователь) — "в моём проекте не хватает шкафа"
 @router.post("/add-by-photo", response_model=AddByPhotoOut, status_code=status.HTTP_201_CREATED)
