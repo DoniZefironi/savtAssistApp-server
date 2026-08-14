@@ -36,14 +36,25 @@ public class Worker(
     {
         var connections = new Dictionary<int, (IMqttClient Client, TelemetryTarget Target)>();
         var lastDiscovery = DateTimeOffset.MinValue;
+        // Пока ни разу не получилось получить список брокеров (например api ещё не
+        // успел подняться сразу после рестарта) — повторяем быстро (раз в 5с), а не
+        // ждём полный TargetsPollIntervalSeconds (по умолч. 60с) до следующей попытки
+        var everSucceeded = false;
 
         try
         {
             while (!stoppingToken.IsCancellationRequested)
             {
-                if (DateTimeOffset.UtcNow - lastDiscovery >= TimeSpan.FromSeconds(_webhook.TargetsPollIntervalSeconds))
+                var pollInterval = everSucceeded
+                    ? TimeSpan.FromSeconds(_webhook.TargetsPollIntervalSeconds)
+                    : ReconnectCheckInterval;
+
+                if (DateTimeOffset.UtcNow - lastDiscovery >= pollInterval)
                 {
-                    await RefreshTargetsAsync(connections, stoppingToken);
+                    if (await RefreshTargetsAsync(connections, stoppingToken))
+                    {
+                        everSucceeded = true;
+                    }
                     lastDiscovery = DateTimeOffset.UtcNow;
                 }
 
@@ -66,8 +77,10 @@ public class Worker(
     }
 
     // Сверяет актуальный список брокеров с уже открытыми подключениями:
-    // закрывает лишние/изменившиеся, открывает новые
-    private async Task RefreshTargetsAsync(
+    // закрывает лишние/изменившиеся, открывает новые. Возвращает false, если
+    // список вообще не удалось получить (api недоступен) — ExecuteAsync тогда
+    // повторяет попытку быстрее, а не ждёт полный интервал опроса
+    private async Task<bool> RefreshTargetsAsync(
         Dictionary<int, (IMqttClient Client, TelemetryTarget Target)> connections, CancellationToken stoppingToken
     )
     {
@@ -79,7 +92,7 @@ public class Worker(
         catch (Exception ex)
         {
             logger.LogError(ex, "Не удалось получить список брокеров с сервера");
-            return;
+            return false;
         }
 
         var targetsById = targets.ToDictionary(t => t.CabinetId);
@@ -115,6 +128,8 @@ public class Worker(
             }
             await ConnectAsync(connections, target, stoppingToken);
         }
+
+        return true;
     }
 
     private static bool TargetEquals(TelemetryTarget a, TelemetryTarget b) =>
