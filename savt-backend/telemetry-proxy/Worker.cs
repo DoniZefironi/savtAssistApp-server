@@ -2,6 +2,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using MQTTnet;
+using MQTTnet.Formatter;
 using MQTTnet.Protocol;
 using TelemetryProxy.Models;
 using TelemetryProxy.Options;
@@ -223,7 +224,12 @@ public class Worker(
     {
         var builder = new MqttClientOptionsBuilder()
             .WithTcpServer(target.Host, target.Port)
-            .WithClientId($"{_mqtt.ClientIdPrefix}-{target.CabinetId}");
+            .WithClientId($"{_mqtt.ClientIdPrefix}-{target.CabinetId}")
+            // MQTTnet по умолчанию запрашивает MQTT v5 — большинство промышленных
+            // брокеров (обычный Mosquitto без спец. настройки) понимают только
+            // v3.1.1 и отвечают отказом на CONNECT с v5 (код 1 — "unacceptable
+            // protocol version" из мира v3.1.1, MQTTnet его никак не переводит)
+            .WithProtocolVersion(MqttProtocolVersion.V311);
 
         if (!string.IsNullOrEmpty(target.Username))
         {
