@@ -261,7 +261,15 @@ public class Worker(
         var topic = e.ApplicationMessage.Topic;
         try
         {
-            var raw = e.ApplicationMessage.ConvertPayloadToString();
+            // Контроллер публикует из буфера фиксированного размера — если реальный
+            // текст короче буфера, остаток забит нулевыми байтами. TrimEnd('\0')
+            // убирает их перед парсингом, иначе JSON-парсер падает на "мусоре"
+            // сразу после закрывающей ']'
+            var raw = e.ApplicationMessage.ConvertPayloadToString()?.TrimEnd('\0');
+            if (string.IsNullOrEmpty(raw))
+            {
+                throw new JsonException("Пустой payload");
+            }
             var entries = JsonSerializer.Deserialize<List<Dictionary<int, int>>>(raw)
                 ?? throw new JsonException("Пустой payload");
 
