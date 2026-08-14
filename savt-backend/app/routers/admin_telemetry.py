@@ -48,7 +48,7 @@ async def create_register_definition(
     session: AsyncSession = Depends(get_session),
 ):
     return await AdminRegisterMapService(session).create_definition(
-        payload.address, payload.bit, payload.name, payload.description, actor.id, actor_role,
+        payload.address, payload.name, payload.description, actor.id, actor_role,
     )
 
 
@@ -85,7 +85,7 @@ async def create_cabinet_register_override(
     session: AsyncSession = Depends(get_session),
 ):
     return await AdminRegisterMapService(session).create_override(
-        cabinet_id, payload.address, payload.bit, payload.name, payload.description, actor.id, actor_role,
+        cabinet_id, payload.address, payload.name, payload.description, actor.id, actor_role,
     )
 
 

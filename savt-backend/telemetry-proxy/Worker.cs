@@ -171,7 +171,7 @@ public class Worker(
                 "Подключился к ШУ {CabinetId}: {Host}:{Port}, топик {Topic}",
                 target.CabinetId, target.Host, target.Port, target.Topic
             );
-        }
+            }
         catch (Exception ex)
         {
             logger.LogError(ex, "Не удалось подключиться к ШУ {CabinetId} ({Host}:{Port})", target.CabinetId, target.Host, target.Port);
@@ -200,7 +200,6 @@ public class Worker(
         request.Headers.Add("X-Telemetry-Secret", _webhook.Secret);
 
         using var response = await client.SendAsync(request, stoppingToken);
-        response.EnsureSuccessStatusCode();
 
         var targets = await response.Content.ReadFromJsonAsync<List<TelemetryTarget>>(cancellationToken: stoppingToken);
         return targets ?? [];
