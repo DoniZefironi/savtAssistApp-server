@@ -671,6 +671,7 @@ class ChatService:
         # которого в текущем контексте уже нет (см. bot_service.handle_message)
         chat.bot_offered_operator = False
         chat.operator_insist_count = 0
+        chat.bot_down_intake_step = 0
         await self.session.commit()
 
     async def get_chat_attachments(

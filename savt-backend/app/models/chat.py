@@ -55,6 +55,11 @@ class Chat(Base):
     # пока < 2, бот настаивает на своей помощи вместо немедленной передачи.
     # Сбрасывается, как только пользователь получает реальный ответ. См. handle_message
     operator_insist_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # 0 = не идёт; 1..len(_BOT_DOWN_QUESTIONS) = ждём ответ на вопрос с этим
+    # номером после сбоя Yandex API — бот задаёт уточняющие вопросы по одному,
+    # а не все разом, чтобы проследить, что пользователь ответил на каждый,
+    # прежде чем передать оператору. См. handle_message
+    bot_down_intake_step: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     # время последнего сообщения от пользователя (для follow-up таймера)
     last_user_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # если не NULL - чат в архиве (заявка закрыта): скрыт из активного списка,
