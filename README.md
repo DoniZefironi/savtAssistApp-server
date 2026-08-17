@@ -3860,10 +3860,15 @@ NAS-папки: такие всегда заводятся с `is_internal: true
 ---
 
 ### POST `/operator/chats/{chat_id}/return-to-bot`
-Вернуть чат боту — чистое состояние: `bot_active=true`, `bot_no_count=0`,
-`bot_offered_operator=false`, `operator_insist_count=0`, `bot_down_intake_step=0`
-(см. «Счётчик попыток и передача оператору» и «Сбой Yandex API» в разделе про
-бота). `204 No Content`.
+Вернуть чат боту — чистое состояние: `bot_active=true`, `operator_requested=false`,
+`bot_no_count=0`, `bot_offered_operator=false`, `operator_insist_count=0`,
+`bot_down_intake_step=0` (см. «Счётчик попыток и передача оператору» и «Сбой
+Yandex API» в разделе про бота). `204 No Content`.
+
+> `operator_requested` сбрасывается здесь, а не только в `POST .../take` —
+> `POST /operator/chats/{chat_id}/send` не требует предварительного `take`,
+> оператор может ответить и сразу вернуть чат боту. Без сброса тут плашка
+> «ожидает оператора» горела бы бесконечно, хотя бот уже снова отвечает.
 
 ---
 
@@ -4906,7 +4911,7 @@ Authorization: Bearer {admin_token}
 UPDATE chats SET bot_active = true WHERE chat_type != 'notes';
 
 -- Сбросить счётчик неудачных попыток и состояние эскалации оператора
-UPDATE chats SET bot_no_count = 0, follow_up_sent = false,
+UPDATE chats SET bot_no_count = 0, follow_up_sent = false, operator_requested = false,
   bot_offered_operator = false, operator_insist_count = 0, bot_down_intake_step = 0;
 
 -- Посмотреть сколько чанков проиндексировано
