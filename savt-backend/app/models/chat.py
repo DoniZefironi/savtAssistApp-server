@@ -46,6 +46,15 @@ class Chat(Base):
     )
     # отправлял ли бот follow-up после долгого молчания
     follow_up_sent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # бот только что сам предложил позвать оператора (дописал готовую фразу
+    # после исчерпания попыток) — следующий ответ пользователя трактуется как
+    # согласие/отказ безусловно, а не по счётчику bot_no_count. Сбрасывается
+    # сразу после обработки ответа. См. handle_message
+    bot_offered_operator: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # счётчик НЕЗАПРОШЕННЫХ (бот не предлагал) прямых просьб оператора подряд —
+    # пока < 2, бот настаивает на своей помощи вместо немедленной передачи.
+    # Сбрасывается, как только пользователь получает реальный ответ. См. handle_message
+    operator_insist_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     # время последнего сообщения от пользователя (для follow-up таймера)
     last_user_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # если не NULL - чат в архиве (заявка закрыта): скрыт из активного списка,

@@ -664,6 +664,13 @@ class ChatService:
             raise NotFoundError("Чат не найден")
         chat.bot_active = True
         chat.bot_no_count = 0
+        # Чистое состояние передачи оператору тоже — иначе, например, флаг
+        # "бот только что предложил оператора", выставленный до того, как
+        # оператор забрал чат вручную, пережил бы возврат и следующий ответ
+        # пользователя трактовался бы как согласие/отказ на предложение,
+        # которого в текущем контексте уже нет (см. bot_service.handle_message)
+        chat.bot_offered_operator = False
+        chat.operator_insist_count = 0
         await self.session.commit()
 
     async def get_chat_attachments(
