@@ -22,6 +22,7 @@ _SYSTEM_PROMPT = """Ты — помощник Ася, виртуальный а�
 Правила:
 - Отвечай чётко, кратко, структурированно.
 - Используй только информацию из предоставленного контекста.
+- Если в сообщении есть блок "ШУ этого проекта" — это точные данные из системы (не из базы знаний), используй их для вопросов о том, какие ШУ есть в проекте, и об их гарантии. Если конкретного ШУ в этом списке нет — так и скажи, не придумывай.
 - Если контекст не содержит ответа — честно скажи об этом и задай уточняющий вопрос.
 - Никогда не предлагай сама позвать/подключить оператора и не упоминай такую возможность — это решает не твой ответ, а система отдельно, вне зависимости от того, что ты написала. Если не можешь ответить — просто честно скажи об этом.
 - Не придумывай информацию.
@@ -186,6 +187,51 @@ async def _resolve_project_scope(session: AsyncSession, project_id: int) -> tupl
     )).scalars().all()
 
     return project_ids, set(cabinet_rows)
+
+
+# Ярлыки статуса гарантии — те же смыслы, что и warranty_status(), для текста
+# в промпте бота (не для API-ответа, там значения самого warranty_status как есть)
+_WARRANTY_STATUS_LABELS = {
+    "active": "гарантия действует",
+    "expiring_soon": "гарантия скоро истекает",
+    "expired": "гарантия истекла",
+    "none": "гарантии нет",
+}
+
+
+async def _cabinet_directory_context(session: AsyncSession, chat: Chat) -> str | None:
+    """Список ШУ проекта (номер, тип, гарантия) — структурированные данные из
+    БД, которых нет и не может быть в базе знаний через RAG-поиск (вопросы вида
+    "есть ли ШУ-318 в этом проекте", "когда гарантия на ШУ-52"). Для чата
+    проекта — все ШУ проекта; для чата конкретного ШУ — он сам плюс остальные
+    ШУ того же проекта (через cabinet.project_id). Для чата без привязки к
+    проекту (support, либо ШУ вне проекта) — ничего не возвращаем: бот честно
+    не знает, о каком проекте речь, лучше молчать, чем придумывать."""
+    from app.models.cabinets import Cabinet as CabinetModel
+    from app.utils.warranty import warranty_status
+
+    project_id = chat.project_id
+    if project_id is None and chat.cabinet_id is not None:
+        cabinet = await session.get(CabinetModel, chat.cabinet_id)
+        project_id = cabinet.project_id if cabinet else None
+    if project_id is None:
+        return None
+
+    cabinets = (await session.execute(
+        select(CabinetModel)
+        .where(CabinetModel.project_id == project_id, CabinetModel.deleted_at.is_(None))
+        .order_by(CabinetModel.object_number)
+    )).scalars().all()
+    if not cabinets:
+        return None
+
+    lines = []
+    for c in cabinets:
+        status = _WARRANTY_STATUS_LABELS[warranty_status(c.warranty_ends_at)]
+        name_suffix = f", {c.admin_internal_name}" if c.admin_internal_name else ""
+        until = f" до {c.warranty_ends_at.date().isoformat()}" if c.warranty_ends_at else ""
+        lines.append(f"- {c.object_number} ({c.type}){name_suffix} — {status}{until}")
+    return "ШУ этого проекта (точные данные из системы, не из базы знаний):\n" + "\n".join(lines)
 
 
 async def _retrieve_context(
@@ -538,6 +584,12 @@ async def handle_message(
         else:
             context_text = "Контекст не найден."
 
+        # Список ШУ проекта — отдельно от RAG, это структурированные данные из
+        # БД (см. _cabinet_directory_context), не найдётся никаким поиском по
+        # документам. None для чата поддержки/ШУ вне проекта — тогда просто
+        # не добавляем блок вообще
+        directory_context = await _cabinet_directory_context(session, chat)
+
         # Формируем историю для GPT
         gpt_messages = []
         for h in history[:-1]:  # без последнего (это текущее сообщение)
@@ -545,10 +597,11 @@ async def handle_message(
             if h.text:
                 gpt_messages.append({"role": role, "text": h.text})
 
-        gpt_messages.append({
-            "role": "user",
-            "text": f"Контекст из базы знаний:\n{context_text}\n\nВопрос пользователя: {user_text}",
-        })
+        prompt_text = f"Контекст из базы знаний:\n{context_text}"
+        if directory_context:
+            prompt_text = f"{directory_context}\n\n{prompt_text}"
+        prompt_text += f"\n\nВопрос пользователя: {user_text}"
+        gpt_messages.append({"role": "user", "text": prompt_text})
 
         system = _SYSTEM_PROMPT
         if chat.bot_no_count > 0:
