@@ -74,7 +74,18 @@ _EXPLICIT_OPERATOR_WORDS = {
 
 # Сколько раз бот настаивает на своей помощи в ответ на незапрошенную прямую
 # просьбу оператора, прежде чем передать чат
-_OPERATOR_INSIST_LIMIT = 2
+_OPERATOR_INSIST_LIMIT = 1
+
+# Слова самой просьбы ("вызывай(те)", "позови(те)" и т.п.) — вместе с
+# _EXPLICIT_OPERATOR_WORDS используются, чтобы отличить просьбу оператора БЕЗ
+# реального вопроса ("вызывай оператора") от совмещённой с вопросом ("не
+# работает АСУ, позовите оператора"), см. _is_bare_operator_request
+_OPERATOR_REQUEST_FILLER_WORDS = _EXPLICIT_OPERATOR_WORDS | {
+    "вызывай", "вызови", "вызовите", "зови", "позови", "позовите",
+    "подключи", "подключите", "переключи", "переключите",
+    "хочу", "нужен", "нужно", "надо", "дай", "дайте", "живого", "живой",
+    "пожалуйста",
+}
 
 
 def _tokens(text: str) -> list[str]:
@@ -302,6 +313,16 @@ def _explicit_operator_request(text: str) -> bool:
     return False
 
 
+def _is_bare_operator_request(text: str) -> bool:
+    """True, если в сообщении нет ничего, кроме самой просьбы позвать
+    оператора — реального вопроса нет, гонять через RAG/LLM бессмысленно
+    (модель честно отвечает "не могу вызвать оператора", что вместе с
+    настойчивой припиской бота звучит как противоречие). См. handle_message."""
+    tokens = _tokens(text)
+    remaining = [t for t in tokens if t not in _OPERATOR_REQUEST_FILLER_WORDS]
+    return len(remaining) == 0
+
+
 def _is_negative(text: str) -> bool:
     return _classify(text) == "negative"
 
@@ -453,6 +474,18 @@ async def handle_message(
     if _explicit_operator_request(user_text):
         if chat.operator_insist_count < _OPERATOR_INSIST_LIMIT:
             chat.operator_insist_count += 1
+            if _is_bare_operator_request(user_text):
+                # Нечего отвечать по существу — не гоняем "вопрос" вроде
+                # "вызывай оператора" через RAG/LLM (модель честно скажет,
+                # что не может вызвать оператора сама, а это только запутает
+                # рядом с настойчивой припиской бота). Фиксированный ответ,
+                # без LLM
+                await _send_bot_message(
+                    session, chat, bot_user_id,
+                    "Конечно! Но для начала давайте я попробую помочь — опишите, пожалуйста, что случилось.",
+                )
+                await session.commit()
+                return
             insisting = True
         else:
             chat.operator_requested = True
@@ -480,8 +513,25 @@ async def handle_message(
         )).scalars().all()
         history = list(reversed(history_rows))
 
+        # Короткий ответ ("ШУ-52", "да", "12") сам по себе почти не несёт
+        # смысла для векторного поиска — это ответ НА уточняющий вопрос бота,
+        # а не новый вопрос. Без этого поиск шёл по одному "ШУ-52", ничего не
+        # находил, и бот "терял" тему разговора (спрашивал про красную кнопку,
+        # уточнил модель — а бот снова "чем могу помочь"), хотя история и
+        # передавалась модели: контекст диалога у неё был, а вот сам поиск по
+        # базе знаний — нет. Склеиваем с последним реальным вопросом
+        # пользователя ТОЛЬКО для поиска — в сам промпт уходит текст как есть
+        search_query = user_text
+        if len(_tokens(user_text)) <= 4:
+            prev_user_text = next(
+                (h.text for h in reversed(history[:-1]) if h.sender_id != bot_user_id and h.text),
+                None,
+            )
+            if prev_user_text:
+                search_query = f"{prev_user_text} {user_text}"
+
         # RAG: ищем релевантные куски
-        context_chunks = await _retrieve_context(session, user_text, chat.cabinet_id, chat.project_id)
+        context_chunks = await _retrieve_context(session, search_query, chat.cabinet_id, chat.project_id)
         if context_chunks:
             parts = [f"[{c['source']}]\n{c['content']}" for c in context_chunks]
             context_text = "\n---\n".join(parts)
