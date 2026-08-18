@@ -76,11 +76,27 @@ class RegisterDefinitionOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# Правка существующей записи — все поля опциональны, передавать только то,
+# что нужно поменять (как везде в проекте, см. NotificationSettingsPatchIn)
+class RegisterDefinitionPatchIn(BaseModel):
+    address: int | None = Field(None, ge=0, le=65534)
+    bit: int | None = Field(None, ge=0, le=15)
+    name: str | None = Field(None, min_length=1, max_length=200)
+    description: str | None = Field(None, max_length=2000)
+
+
 # Добавка/переопределение карты на конкретный ШУ (админ)
 class CabinetRegisterOverrideIn(BaseModel):
     address: int = Field(..., ge=0, le=65534)
     bit: int = Field(..., ge=0, le=15)
     name: str = Field(..., min_length=1, max_length=200)
+    description: str | None = Field(None, max_length=2000)
+
+
+class CabinetRegisterOverridePatchIn(BaseModel):
+    address: int | None = Field(None, ge=0, le=65534)
+    bit: int | None = Field(None, ge=0, le=15)
+    name: str | None = Field(None, min_length=1, max_length=200)
     description: str | None = Field(None, max_length=2000)
 
 

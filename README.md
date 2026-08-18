@@ -1990,6 +1990,15 @@ Telegram позволяет менять номер аккаунта. После
 `bit` — `0..15`. Пара (`address`, `bit`) уникальна — повторное создание на
 занятую пару вернёт `409`.
 
+### PATCH `/admin/register-definitions/{definition_id}`
+Только администратор. Передавать только те поля, которые нужно поменять —
+как везде в проекте (см. «PATCH-запросы»).
+```json
+{ "name": "Авария насоса 1 (уточнено)" }
+```
+Можно менять и `address`/`bit` — если новая пара уже занята другой записью,
+`409` (как и при создании). `description: null` сбрасывает описание.
+
 ### DELETE `/admin/register-definitions/{definition_id}`
 Только администратор. `204 No Content`.
 
@@ -2004,6 +2013,10 @@ Telegram позволяет менять номер аккаунта. После
 { "address": 501, "bit": 5, "name": "Своё название для этого ШУ", "description": null }
 ```
 Пара (`cabinet_id`, `address`, `bit`) уникальна — повтор вернёт `409`.
+
+### PATCH `/admin/cabinets/{cabinet_id}/register-overrides/{override_id}`
+Только администратор. Та же логика, что и у `PATCH .../register-definitions/{id}`
+выше — частичное обновление, конфликт по (`cabinet_id`, `address`, `bit`) — `409`.
 
 ### DELETE `/admin/cabinets/{cabinet_id}/register-overrides/{override_id}`
 Только администратор. `204 No Content`.

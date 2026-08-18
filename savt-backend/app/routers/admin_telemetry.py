@@ -9,8 +9,10 @@ from app.schemas.pagination import PageOut
 from app.schemas.telemetry import (
     CabinetRegisterOverrideIn,
     CabinetRegisterOverrideOut,
+    CabinetRegisterOverridePatchIn,
     RegisterDefinitionIn,
     RegisterDefinitionOut,
+    RegisterDefinitionPatchIn,
     TelemetryCurrentStateOut,
     TelemetryEventOut,
 )
@@ -89,6 +91,19 @@ async def create_register_definition(
     )
 
 
+@router.patch("/register-definitions/{definition_id}", response_model=RegisterDefinitionOut)
+async def update_register_definition(
+    definition_id: int,
+    payload: RegisterDefinitionPatchIn,
+    actor: User = Depends(require_role(RoleName.ADMIN)),
+    actor_role: str = Depends(get_role_from_token),
+    session: AsyncSession = Depends(get_session),
+):
+    return await AdminRegisterMapService(session).update_definition(
+        definition_id, payload, actor.id, actor_role,
+    )
+
+
 @router.delete("/register-definitions/{definition_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_register_definition(
     definition_id: int,
@@ -123,6 +138,22 @@ async def create_cabinet_register_override(
 ):
     return await AdminRegisterMapService(session).create_override(
         cabinet_id, payload.address, payload.bit, payload.name, payload.description, actor.id, actor_role,
+    )
+
+
+@router.patch(
+    "/cabinets/{cabinet_id}/register-overrides/{override_id}", response_model=CabinetRegisterOverrideOut,
+)
+async def update_cabinet_register_override(
+    cabinet_id: int,
+    override_id: int,
+    payload: CabinetRegisterOverridePatchIn,
+    actor: User = Depends(require_role(RoleName.ADMIN)),
+    actor_role: str = Depends(get_role_from_token),
+    session: AsyncSession = Depends(get_session),
+):
+    return await AdminRegisterMapService(session).update_override(
+        cabinet_id, override_id, payload, actor.id, actor_role,
     )
 
 

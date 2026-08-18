@@ -15,7 +15,9 @@ from app.repositories.telemetry import (
 from app.schemas.pagination import PageOut, make_page
 from app.schemas.telemetry import (
     CabinetRegisterOverrideOut,
+    CabinetRegisterOverridePatchIn,
     RegisterDefinitionOut,
+    RegisterDefinitionPatchIn,
     TelemetryCurrentRegisterOut,
     TelemetryCurrentStateOut,
     TelemetryEventOut,
@@ -318,6 +320,29 @@ class AdminRegisterMapService:
         await self.session.commit()
         return RegisterDefinitionOut.model_validate(obj)
 
+    async def update_definition(
+        self, def_id: int, data: RegisterDefinitionPatchIn, actor_id: int, actor_role: str,
+    ) -> RegisterDefinitionOut:
+        obj = await self.def_repo.get_by_id(def_id)
+        if obj is None:
+            raise NotFoundError("Регистр не найден в стандартной карте")
+
+        changes = data.model_dump(exclude_unset=True)
+        # Адрес/бит меняются вместе — если поменяли только один из двух,
+        # для проверки уникальности берём второй как есть у записи
+        new_address = changes.get("address", obj.address)
+        new_bit = changes.get("bit", obj.bit)
+        if (new_address, new_bit) != (obj.address, obj.bit):
+            existing = await self.def_repo.get_by_address_and_bit(new_address, new_bit)
+            if existing is not None and existing.id != obj.id:
+                raise AlreadyExistsError(f"Бит {new_bit} регистра {new_address} уже описан в стандартной карте")
+
+        for field, value in changes.items():
+            setattr(obj, field, value)
+        self.audit.log("register_definition.update", "register_definition", obj.id, actor_id, actor_role, changes)
+        await self.session.commit()
+        return RegisterDefinitionOut.model_validate(obj)
+
     async def delete_definition(self, def_id: int, actor_id: int, actor_role: str) -> None:
         obj = await self.def_repo.get_by_id(def_id)
         if obj is None:
@@ -347,6 +372,28 @@ class AdminRegisterMapService:
         obj = await self.override_repo.create(cabinet_id, address, bit, name, description)
         self.audit.log("cabinet_register_override.create", "cabinet", cabinet_id, actor_id, actor_role,
                        {"address": address, "bit": bit, "name": name})
+        await self.session.commit()
+        return CabinetRegisterOverrideOut.model_validate(obj)
+
+    async def update_override(
+        self, cabinet_id: int, override_id: int, data: CabinetRegisterOverridePatchIn,
+        actor_id: int, actor_role: str,
+    ) -> CabinetRegisterOverrideOut:
+        obj = await self.override_repo.get_by_id(override_id)
+        if obj is None or obj.cabinet_id != cabinet_id:
+            raise NotFoundError("Переопределение не найдено")
+
+        changes = data.model_dump(exclude_unset=True)
+        new_address = changes.get("address", obj.address)
+        new_bit = changes.get("bit", obj.bit)
+        if (new_address, new_bit) != (obj.address, obj.bit):
+            existing = await self.override_repo.get_by_cabinet_address_and_bit(cabinet_id, new_address, new_bit)
+            if existing is not None and existing.id != obj.id:
+                raise AlreadyExistsError(f"Бит {new_bit} регистра {new_address} уже переопределён для этого ШУ")
+
+        for field, value in changes.items():
+            setattr(obj, field, value)
+        self.audit.log("cabinet_register_override.update", "cabinet", cabinet_id, actor_id, actor_role, changes)
         await self.session.commit()
         return CabinetRegisterOverrideOut.model_validate(obj)
 
