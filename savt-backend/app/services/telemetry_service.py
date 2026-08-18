@@ -341,6 +341,12 @@ class AdminRegisterMapService:
             setattr(obj, field, value)
         self.audit.log("register_definition.update", "register_definition", obj.id, actor_id, actor_role, changes)
         await self.session.commit()
+        # updated_at считается на сервере (onupdate=func.now()) — после UPDATE
+        # объект в памяти его не знает, и без явного refresh Pydantic пытается
+        # подгрузить атрибут синхронно при сериализации → MissingGreenlet.
+        # При INSERT та же ситуация не всплывает — SQLAlchemy подтягивает
+        # server_default сразу через RETURNING, для UPDATE так не происходит
+        await self.session.refresh(obj)
         return RegisterDefinitionOut.model_validate(obj)
 
     async def delete_definition(self, def_id: int, actor_id: int, actor_role: str) -> None:
@@ -395,6 +401,8 @@ class AdminRegisterMapService:
             setattr(obj, field, value)
         self.audit.log("cabinet_register_override.update", "cabinet", cabinet_id, actor_id, actor_role, changes)
         await self.session.commit()
+        # см. update_definition выше — updated_at после UPDATE нужно перечитать явно
+        await self.session.refresh(obj)
         return CabinetRegisterOverrideOut.model_validate(obj)
 
     async def delete_override(self, cabinet_id: int, override_id: int, actor_id: int, actor_role: str) -> None:
