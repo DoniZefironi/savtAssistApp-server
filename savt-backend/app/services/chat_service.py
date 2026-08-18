@@ -524,7 +524,9 @@ class ChatService:
         return result
 
     async def delete_message(self, chat_id: int, msg_id: int, user_id: int) -> None:
-        await self._get_chat_or_403(chat_id, user_id)
+        chat = await self._get_chat_or_403(chat_id, user_id)
+        if chat.archived_at is not None:
+            raise PermissionDeniedError("Чат архивирован, удаление сообщений недоступно")
         msg = await self.msg_repo.get_by_id(msg_id)
         if msg is None or msg.chat_id != chat_id:
             raise NotFoundError("Сообщение не найдено")
@@ -544,7 +546,9 @@ class ChatService:
         self, chat_id: int, user_id: int, message_ids: list[int]
     ) -> list[int]:
         from sqlalchemy import update as sa_update
-        await self._get_chat_or_403(chat_id, user_id)
+        chat = await self._get_chat_or_403(chat_id, user_id)
+        if chat.archived_at is not None:
+            raise PermissionDeniedError("Чат архивирован, удаление сообщений недоступно")
         now = datetime.now(timezone.utc)
         result = await self.session.execute(
             sa_update(Message)
