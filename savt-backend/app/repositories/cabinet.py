@@ -192,6 +192,19 @@ class CabinetRepository(BaseRepository[Cabinet]):
         result = await self.session.execute(select(Cabinet).where(*conditions))
         return list(result.scalars().all())
 
+    # Кол-во живых ШУ сразу по нескольким проектам, одним запросом — вместо
+    # N отдельных list_by_project в цикле (см. UserProjectService.list_projects,
+    # где раньше это было N+1: по одному запросу на каждый проект пользователя)
+    async def count_by_projects(self, project_ids: list[int]) -> dict[int, int]:
+        if not project_ids:
+            return {}
+        result = await self.session.execute(
+            select(Cabinet.project_id, func.count(Cabinet.id))
+            .where(Cabinet.project_id.in_(project_ids), Cabinet.deleted_at.is_(None))
+            .group_by(Cabinet.project_id)
+        )
+        return dict(result.all())
+
     async def get_geo(
         self, warranty_status: str | None = None, has_open_requests: bool | None = None,
     ) -> list[tuple]:

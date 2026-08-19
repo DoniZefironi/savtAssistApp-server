@@ -17,19 +17,21 @@ class UserProjectService:
         self.request_repo = ProjectRequestRepository(session)
         self.chat_repo = ChatRepository(session)
 
-    # Список проектов пользователя
+    # Список проектов пользователя. Кол-во ШУ — одним батч-запросом на все
+    # проекты разом (count_by_projects), не по одному в цикле — раньше это
+    # был N+1: список из 10 проектов означал 11 запросов вместо 2
     async def list_projects(self, user_id: int) -> list[UserProjectListItemOut]:
         rows = await self.user_project_repo.list_for_user(user_id)
-        items = []
-        for up, project in rows:
-            cabinets = await self.cabinet_repo.list_by_project(project.id)
-            items.append(UserProjectListItemOut(
+        cabinet_counts = await self.cabinet_repo.count_by_projects([project.id for _up, project in rows])
+        return [
+            UserProjectListItemOut(
                 project_id=project.id, name=project.name, is_primary=up.is_primary,
-                cabinet_count=len(cabinets),
+                cabinet_count=cabinet_counts.get(project.id, 0),
                 company_name=project.company_name,
                 warranty_status=_warranty_status(project.warranty_ends_at),
-            ))
-        return items
+            )
+            for up, project in rows
+        ]
 
     # Подробнее о проекте — все шкафы проекта, доступ к ним у участника
     # одинаковый и не выбирается по-шкафно (см. общую идею проектного доступа)
