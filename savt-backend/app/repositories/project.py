@@ -13,7 +13,7 @@ from app.models.user import User
 from app.models.user_project import UserProject
 from app.repositories.base import BaseRepository
 from app.repositories.cabinet import cabinet_match_conditions
-from app.utils.db import fuzzy_condition
+from app.utils.db import fuzzy_condition, match_score
 
 
 def project_year_expr():
@@ -201,6 +201,32 @@ class ProjectRepository(BaseRepository[Project]):
                 contact_match,
             ))
 
+            # Релевантность — отдельно от самого отбора выше (fuzzy_condition
+            # только решает, попадает ли строка в выдачу вообще). Название и
+            # номер проекта весят больше совпадения в компании, а то — больше
+            # совпадения по контакту: спросили "100", нашёлся и проект с таким
+            # номером, и проект, у чьего контакта "100" затесалось в телефоне —
+            # первый должен быть выше, а не когда повезёт по sort_by
+            contact_score = (
+                select(func.max(func.greatest(
+                    match_score(query, ProjectContact.full_name, 0.3),
+                    match_score(query, ProjectContact.post, 0.3),
+                    match_score(query, cast(ProjectContact.phones, String), 0.3),
+                    match_score(query, cast(ProjectContact.emails, String), 0.3),
+                )))
+                .where(ProjectContact.project_id == Project.id)
+                .correlate(Project)
+                .scalar_subquery()
+            )
+            relevance = func.greatest(
+                match_score(query, Project.name, 1.0),
+                match_score(query, Project.production_number, 1.0),
+                match_score(query, Project.company_name, 0.6),
+                func.coalesce(contact_score, 0.0),
+            )
+        else:
+            relevance = None
+
         if year is not None:
             conditions.append(project_year_expr() == year)
         if company:
@@ -270,10 +296,15 @@ class ProjectRepository(BaseRepository[Project]):
         # Пустое значение — всегда в конце, в обе стороны сортировки: проект без
         # даты отгрузки не должен занимать верх списка, отсортированного по ней
         order = sort_column.asc() if sort_order == "asc" else sort_column.desc()
+        # Пока есть поисковый запрос — релевантность впереди выбранной
+        # сортировки, а не наоборот (как в обычном поиске): sort_by решает
+        # только порядок среди одинаково релевантных строк, не перебивает его
+        order_by = (relevance.desc(), order.nulls_last(), Project.id.desc()) if relevance is not None \
+            else (order.nulls_last(), Project.id.desc())
         stmt = (
             select(Project)
             .where(*conditions)
-            .order_by(order.nulls_last(), Project.id.desc())
+            .order_by(*order_by)
             .offset(offset)
             .limit(limit)
         )
