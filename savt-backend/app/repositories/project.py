@@ -380,10 +380,14 @@ class UserProjectRepository(BaseRepository[UserProject]):
         return result.scalar_one_or_none()
 
     async def list_for_user(self, user_id: int) -> list:
+        # deleted_at: soft-delete проекта (ProjectService.delete) не трогает
+        # строки UserProject — без этого фильтра удалённый проект оставался бы
+        # виден в /projects тому, кто в нём состоял, хотя админам он уже не
+        # виден вовсе (GET /admin/projects фильтрует deleted_at так же)
         result = await self.session.execute(
             select(UserProject, Project)
             .join(Project, Project.id == UserProject.project_id)
-            .where(UserProject.user_id == user_id)
+            .where(UserProject.user_id == user_id, Project.deleted_at.is_(None))
             .order_by(UserProject.is_primary.desc(), UserProject.added_at.desc())
         )
         return result.all()
@@ -395,6 +399,7 @@ class UserProjectRepository(BaseRepository[UserProject]):
             .where(
                 UserProject.user_id == user_id,
                 UserProject.project_id == project_id,
+                Project.deleted_at.is_(None),
             )
         )
         return result.one_or_none()
