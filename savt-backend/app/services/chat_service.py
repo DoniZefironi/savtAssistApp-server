@@ -160,32 +160,28 @@ class ChatService:
     async def list_chats(
         self, user_id: int, chat_type: str | None = None, archived: bool = False,
     ) -> list[ChatListOut]:
-        chats = await self.chat_repo.list_for_user(user_id, chat_type=chat_type, archived=archived)
-        sr_ids = [c.service_request_id for c in chats if c.service_request_id is not None]
+        rows = await self.chat_repo.list_for_user(user_id, chat_type=chat_type, archived=archived)
+        if not rows:
+            return []
+
+        chat_ids = [chat.id for chat, _, _ in rows]
+        unread_counts = await self.chat_repo.get_unread_counts_batch(chat_ids, user_id)
+        last_msgs = await self.msg_repo.get_last_messages_batch(chat_ids)
+        sr_ids = [chat.service_request_id for chat, _, _ in rows if chat.service_request_id is not None]
         sr_map = await self._get_service_requests(sr_ids)
+
         result = []
-        for chat in chats:
-            unread = await self.chat_repo.get_unread_count(chat.id, user_id)
+        for chat, cabinet, project in rows:
             cabinet_name = None
             cabinet_object_number = None
-            if chat.cabinet_id:
-                from app.repositories.cabinet import CabinetRepository
-                cab = await CabinetRepository(self.session).get_by_id(chat.cabinet_id)
-                if cab:
-                    cabinet_name = cab.admin_internal_name or cab.object_number
-                    cabinet_object_number = cab.object_number
+            if cabinet:
+                cabinet_name = cabinet.admin_internal_name or cabinet.object_number
+                cabinet_object_number = cabinet.object_number
 
-            project_name = None
-            if chat.project_id:
-                from app.repositories.project import ProjectRepository
-                proj = await ProjectRepository(self.session).get_by_id(chat.project_id)
-                project_name = proj.name if proj else None
-
+            last_msg = last_msgs.get(chat.id)
             last_text = None
-            msgs = await self.msg_repo.get_messages(chat.id, limit=1)
-            if msgs:
-                msg, _ = msgs[0]
-                last_text = msg.text if not msg.deleted_at else "Сообщение удалено"
+            if last_msg:
+                last_text = last_msg.text if not last_msg.deleted_at else "Сообщение удалено"
 
             sr = sr_map.get(chat.service_request_id) if chat.service_request_id else None
 
@@ -196,10 +192,10 @@ class ChatService:
                 cabinet_name=cabinet_name,
                 cabinet_object_number=cabinet_object_number,
                 project_id=chat.project_id,
-                project_name=project_name,
+                project_name=project.name if project else None,
                 last_message_text=last_text,
                 last_message_at=chat.last_message_at,
-                unread_count=unread,
+                unread_count=unread_counts.get(chat.id, 0),
                 problem_status=chat.problem_status,
                 bot_active=chat.bot_active,
                 operator_requested=chat.operator_requested,

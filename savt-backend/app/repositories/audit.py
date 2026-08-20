@@ -1,11 +1,11 @@
 from datetime import datetime
 
-from sqlalchemy import cast, func, or_, select, String
+from sqlalchemy import cast, func, select, String
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit_log import AuditLog
 from app.models.user import User
-from app.utils.db import escape_like
+from app.utils.db import fuzzy_condition
 
 _SORTABLE = {
     "created_at": AuditLog.created_at,
@@ -15,17 +15,17 @@ _SORTABLE = {
     "actor_id": AuditLog.actor_id,
 }
 
+# Как и в остальных репозиториях — fuzzy_condition (normalize_search_text + pg_trgm)
+# вместо голого ILIKE: тот не задействует индекс при ведущем "%" и не прощает
+# опечатки/регистр/разделители. payload — тем же приведением к тексту (CAST AS
+# VARCHAR), что и в GIN-индексе для audit_logs (см. миграцию a7c4e91f2b83)
 _SEARCHABLE = {
-    "action": lambda s: AuditLog.action.ilike(f"%{escape_like(s)}%", escape="\\"),
-    "entity_type": lambda s: AuditLog.entity_type.ilike(f"%{escape_like(s)}%", escape="\\"),
-    "actor_name": lambda s: User.full_name.ilike(f"%{escape_like(s)}%", escape="\\"),
-    "payload": lambda s: cast(AuditLog.payload, String).ilike(f"%{escape_like(s)}%", escape="\\"),
-    "all": lambda s: or_(
-        AuditLog.action.ilike(f"%{escape_like(s)}%", escape="\\"),
-        AuditLog.entity_type.ilike(f"%{escape_like(s)}%", escape="\\"),
-        AuditLog.actor_role.ilike(f"%{escape_like(s)}%", escape="\\"),
-        User.full_name.ilike(f"%{escape_like(s)}%", escape="\\"),
-        cast(AuditLog.payload, String).ilike(f"%{escape_like(s)}%", escape="\\"),
+    "action": lambda s: fuzzy_condition(s, AuditLog.action),
+    "entity_type": lambda s: fuzzy_condition(s, AuditLog.entity_type),
+    "actor_name": lambda s: fuzzy_condition(s, User.full_name),
+    "payload": lambda s: fuzzy_condition(s, cast(AuditLog.payload, String)),
+    "all": lambda s: fuzzy_condition(
+        s, AuditLog.action, AuditLog.entity_type, AuditLog.actor_role, User.full_name, cast(AuditLog.payload, String),
     ),
 }
 

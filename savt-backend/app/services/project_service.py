@@ -267,14 +267,14 @@ class ProjectService:
             warranty_status=warranty_status,
             sort_by=sort_by, sort_order=sort_order, offset=offset, limit=size,
         )
+        cabinet_counts = await self.cabinet_repo.count_by_projects([p.id for p in projects])
         items = []
         for p in projects:
-            cabinets = await self.cabinet_repo.list_by_project(p.id)
             items.append(ProjectListOut(
                 id=p.id, name=p.name, unique_code=p.unique_code,
                 production_number=p.production_number,
                 year=project_year(p),
-                cabinet_count=len(cabinets), created_at=p.created_at,
+                cabinet_count=cabinet_counts.get(p.id, 0), created_at=p.created_at,
                 company_name=p.company_name,
                 shipment_planned_at=p.shipment_planned_at,
                 shipment_actual_at=p.shipment_actual_at,

@@ -105,19 +105,26 @@ class ChatRepository:
         )
         return list(result.scalars().all())
 
+    # Cabinet/Project сразу джойном (не по одному в цикле сервиса) — та же
+    # причина, что у list_for_operator: раньше на каждый чат в списке уходило
+    # по отдельному запросу за ШУ и проектом.
     async def list_for_user(
         self, user_id: int, chat_type: str | None = None, archived: bool = False,
-    ) -> list[Chat]:
+    ) -> list[tuple]:
+        from app.models.cabinets import Cabinet
+        from app.models.project import Project
         conditions = [Chat.user_id == user_id]
         conditions.append(Chat.archived_at.isnot(None) if archived else Chat.archived_at.is_(None))
         if chat_type:
             conditions.append(Chat.chat_type == chat_type)
         result = await self.session.execute(
-            select(Chat)
+            select(Chat, Cabinet, Project)
+            .outerjoin(Cabinet, Cabinet.id == Chat.cabinet_id)
+            .outerjoin(Project, Project.id == Chat.project_id)
             .where(*conditions)
             .order_by(Chat.last_message_at.desc().nullslast(), Chat.created_at.desc())
         )
-        return list(result.scalars().all())
+        return result.all()
 
     async def list_for_operator(
         self, search: str | None = None, chat_type: str | None = None, archived: bool = False,

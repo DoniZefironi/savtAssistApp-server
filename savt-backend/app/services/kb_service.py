@@ -149,10 +149,7 @@ class KbArticleService:
         )
         ids = [a.id for a in articles]
         tags_map = await self.repo.get_tags(ids)
-        atts_counts = {}
-        for a in articles:
-            atts = await self.repo.get_attachments(a.id)
-            atts_counts[a.id] = len(atts)
+        atts_counts = await self.repo.get_attachment_counts(ids)
 
         items = [
             KbArticleListOut(

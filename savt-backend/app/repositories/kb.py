@@ -158,6 +158,18 @@ class KbArticleRepository:
         )
         return list(result.scalars().all())
 
+    # Счётчик вложений сразу по нескольким статьям — вместо get_attachments
+    # в цикле по каждой статье списка (N+1, см. KbService.list_articles)
+    async def get_attachment_counts(self, article_ids: list[int]) -> dict[int, int]:
+        if not article_ids:
+            return {}
+        result = await self.session.execute(
+            select(KbArticleAttachment.article_id, func.count(KbArticleAttachment.id))
+            .where(KbArticleAttachment.article_id.in_(article_ids))
+            .group_by(KbArticleAttachment.article_id)
+        )
+        return dict(result.all())
+
     async def get_attachment(self, att_id: int) -> KbArticleAttachment | None:
         return await self.session.get(KbArticleAttachment, att_id)
 
