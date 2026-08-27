@@ -17,10 +17,11 @@ Authorization, а ссылки в Bitrix открываются людьми б�
 """
 import base64
 import hashlib
+import hmac
 import logging
 import time
 from typing import Annotated
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from pydantic import PlainSerializer
 
@@ -70,6 +71,40 @@ def sign_url(url: str | None, ttl_seconds: int | None = None) -> str | None:
     # nginx secure_link ждёт base64url без "=" (см. secure_link_md5)
     signature = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
     return f"{path}?md5={signature}&expires={expires}"
+
+
+def verify_signature(url: str | None) -> bool:
+    """Проверяет подпись и срок действия /static/-ссылки — тем же алгоритмом,
+    что и nginx secure_link_md5 (см. sign_url). Нужна там, где файл читается в
+    обход nginx, напрямую в приложении (см. upload.py: download_file,
+    transcribe_voice) — без этой проверки эти два эндпоинта принимали любой
+    /static/-путь просто по факту авторизации в API, не проверяя подпись/срок,
+    и по сути возвращали бессрочный доступ по угаданному/утёкшему пути — ровно
+    ту проблему, ради которой подпись и вводили (см. докстринг модуля)."""
+    if not url:
+        return False
+    secret = settings.static_link_secret
+    if not secret:
+        # Как и при выпуске (sign_url) — без секрета подписывать/проверять
+        # нечем, это локальный запуск без nginx
+        return True
+
+    parsed = urlsplit(url)
+    params = parse_qs(parsed.query)
+    md5_param = (params.get("md5") or [None])[0]
+    expires_param = (params.get("expires") or [None])[0]
+    if not md5_param or not expires_param:
+        return False
+    try:
+        expires = int(expires_param)
+    except ValueError:
+        return False
+    if expires < int(time.time()):
+        return False
+
+    digest = hashlib.md5(f"{expires}{parsed.path} {secret}".encode("utf-8")).digest()
+    expected = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+    return hmac.compare_digest(md5_param, expected)
 
 
 def sign_url_long(url: str | None) -> str | None:

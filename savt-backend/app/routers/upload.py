@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from app.core.dependencies import get_current_user
-from app.core.signed_urls import SignedUrl, strip_signature
+from app.core.signed_urls import SignedUrl, strip_signature, verify_signature
 from app.models.user import User
 from app.services.upload_service import UPLOAD_ROOT, save_attachment, save_voice, transcode_to_ogg_opus
 
@@ -19,7 +19,15 @@ _STATIC_PREFIX = "/static/"
 # превращается в путь на диске — параметры подписи надо снять, иначе они попадут
 # в имя файла. Заодно проверка выхода за UPLOAD_ROOT: startswith по строке
 # пропускал бы соседний каталог вида /code/uploads_backup, поэтому is_relative_to.
+#
+# verify_signature — обязательна: эти два роута читают файл в обход nginx,
+# напрямую в приложении, поэтому подпись/срок действия здесь должны
+# проверяться так же, как их проверяет nginx для прямой раздачи /static/ —
+# иначе Depends(get_current_user) остаётся единственной защитой, и любой
+# залогиненный пользователь может скачать чужой файл по угаданному/утёкшему пути.
 def _resolve_static_path(url: str) -> Path:
+    if not verify_signature(url):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Ссылка недействительна или истекла")
     bare = strip_signature(url) or ""
     if not bare.startswith(_STATIC_PREFIX):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Некорректный URL")

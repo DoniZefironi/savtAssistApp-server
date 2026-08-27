@@ -174,10 +174,19 @@ def save_local_file(source: Path) -> FileInfo:
 
 def delete_uploaded_file(file_url: str | None) -> None:
     """Удаляет файл из /uploads по его публичному URL (`/static/...`).
-    Best-effort: отсутствие файла не считается ошибкой."""
+    Best-effort: отсутствие файла не считается ошибкой.
+
+    Сейчас единственный вызывающий (chat_service._schedule_attachment_cleanup)
+    передаёт только доверенные URL, прочитанные из БД, а не произвольный вход —
+    но resolve()+is_relative_to на границе всё равно нужен: та же защита, что
+    у _resolve_static_path в upload.py, чтобы будущий вызывающий с менее
+    доверенным входом не смог удалить файл за пределами UPLOAD_ROOT."""
     if not file_url:
         return
-    (UPLOAD_ROOT / file_url.removeprefix("/static/")).unlink(missing_ok=True)
+    target = (UPLOAD_ROOT / file_url.removeprefix("/static/")).resolve()
+    if not target.is_relative_to(UPLOAD_ROOT.resolve()):
+        return
+    target.unlink(missing_ok=True)
 
 
 _CHUNK_SIZE = 1024 * 1024  # 1 МБ

@@ -1,3 +1,4 @@
+import hmac
 import logging
 import re
 from datetime import datetime, timezone
@@ -78,7 +79,9 @@ def verify_token(form: dict) -> bool:
     if not token:
         return False
     valid_tokens = {t.strip() for t in settings.bitrix_incoming_webhook_tokens.split(",") if t.strip()}
-    return token in valid_tokens
+    # hmac.compare_digest, не "in" — то же самое, что verify_telemetry_secret/
+    # verify_telegram_secret уже делают для своих секретов, для единообразия
+    return any(hmac.compare_digest(token, valid) for valid in valid_tokens)
 
 
 async def handle_task_comment_webhook(form: dict) -> None:
@@ -247,7 +250,7 @@ async def upsert_project_from_deal(session, deal: dict):
     Возвращает (project, created): project=None, если номер проекта не определился —
     вызывающий код просто пропускает такую сделку, ничего не логируя как ошибку.
     Идемпотентно: повторный вызов с тем же номером не создаёт дубликат
-    (см. Project.production_number / ProjectRepository.find_by_production_number).
+    (см. Project.production_number / ProjectRepository.find_by_production_number_any).
     Используется и вебхуком (handle_deal_event), и разовым скриптом импорта
     (app/cli.py import-bitrix-deals)."""
     production_number = extract_production_number(deal)
