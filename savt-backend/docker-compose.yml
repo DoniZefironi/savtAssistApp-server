@@ -20,7 +20,15 @@ services:
         max-file: "3"
 
   api:
-    build: .
+    # network: host — у сборщика BuildKit своё, изолированное от хоста сетевое
+    # пространство; когда там ломается DNS-форвардинг, apt-get/pip внутри сборки
+    # не резолвят вообще ничего (deb.debian.org, pypi.org), хотя из обычных
+    # контейнеров (docker run) и с самого хоста интернет доступен нормально —
+    # см. инцидент 2026-08-27. network: host пускает сборку через сеть хоста
+    # напрямую, в обход изолированной сети билдера.
+    build:
+      context: .
+      network: host
     restart: unless-stopped
     env_file:
       - .env
@@ -43,7 +51,9 @@ services:
   # внутренней docker-сети, без nginx и без выхода наружу. Секрет вебхука общий
   # с api — то же значение из .env.
   telemetry-proxy:
-    build: ./telemetry-proxy
+    build:
+      context: ./telemetry-proxy
+      network: host
     restart: unless-stopped
     environment:
       Webhook__BaseUrl: http://api:8000

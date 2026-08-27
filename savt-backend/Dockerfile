@@ -7,12 +7,7 @@ RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 FROM python:3.12-slim
 
-# ForceIPv4 — сервер сборки резолвит deb.debian.org в IPv6, а реального
-# IPv6-маршрута наружу с хоста нет (подтверждено: curl -6 обрывается за 9мс,
-# curl -4 отрабатывает нормально) — без этого apt-get update изредка падает
-# с "Temporary failure resolving" в зависимости от того, что вернул DNS.
-RUN apt-get -o Acquire::ForceIPv4=true update \
-    && apt-get install -y --no-install-recommends ffmpeg \
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /code
