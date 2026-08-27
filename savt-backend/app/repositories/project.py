@@ -63,22 +63,10 @@ class ProjectRepository(BaseRepository[Project]):
         )
         return result.scalar_one_or_none()
 
-    # Поиск по открытому номеру проекта из Bitrix (для идемпотентности вебхука
-    # сделок — см. app/services/bitrix_webhook_service.py handle_deal_event)
-    async def find_by_production_number(self, production_number: str) -> Project | None:
-        result = await self.session.execute(
-            select(Project).where(
-                Project.production_number == production_number,
-                Project.deleted_at.is_(None),
-            )
-        )
-        return result.scalar_one_or_none()
-
-    # Тот же поиск, но включая мягко удалённые — нужен вебхуку сделок, чтобы
-    # воскресить проект, если его удалили в приложении, а сделка в Bitrix ещё
-    # жива (см. upsert_project_from_deal). Везде, кроме этого места, удалённый
-    # проект должен вести себя как несуществующий — им и остаётся
-    # find_by_production_number выше.
+    # Поиск по открытому номеру проекта из Bitrix, включая мягко удалённые —
+    # нужен вебхуку сделок, чтобы воскресить проект, если его удалили в
+    # приложении, а сделка в Bitrix ещё жива (см. upsert_project_from_deal,
+    # app/services/bitrix_webhook_service.py handle_deal_event).
     async def find_by_production_number_any(self, production_number: str) -> Project | None:
         result = await self.session.execute(
             select(Project).where(Project.production_number == production_number)
@@ -323,19 +311,6 @@ class ProjectContactRepository:
             .order_by(ProjectContact.sort_order, ProjectContact.id)
         )
         return list(result.scalars().all())
-
-    async def list_for_projects(self, project_ids: list[int]) -> dict[int, list[ProjectContact]]:
-        if not project_ids:
-            return {}
-        result = await self.session.execute(
-            select(ProjectContact)
-            .where(ProjectContact.project_id.in_(project_ids))
-            .order_by(ProjectContact.sort_order, ProjectContact.id)
-        )
-        mapping: dict[int, list[ProjectContact]] = {pid: [] for pid in project_ids}
-        for contact in result.scalars().all():
-            mapping[contact.project_id].append(contact)
-        return mapping
 
     async def replace_for_project(self, project_id: int, contacts: list[dict]) -> None:
         """Приводит набор контактов проекта к присланному из Bitrix.

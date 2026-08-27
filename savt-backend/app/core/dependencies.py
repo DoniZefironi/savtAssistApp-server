@@ -11,7 +11,7 @@ from app.models.user import User
 from app.repositories.user import UserRepository
 from app.models.role import Role
 
-
+# извлечение Beaere-токен из заголовка авторизации
 _security = HTTPBearer(auto_error=False)
 
 
@@ -66,15 +66,6 @@ async def get_current_user(
     return user
 
 
-# Пускает и обычного пользователя, и гостя (см. create_guest_token) — для
-# роутов, явно открытых без регистрации (сейчас КБ, FAQ и чтение тегов).
-# Гость возвращается как None: в этих роутах инжектированный User нигде не
-# читается, он там только ради самой проверки допуска.
-#
-# Полностью анонимного доступа (без токена вообще) сознательно нет: гостевой
-# JWT дёшев в выдаче (POST /auth/guest, без обращения к БД) и даёт то же
-# единообразие, что и у обычных пользователей — Authorization есть всегда,
-# и остальной код клиента не разветвляется на "с токеном" / "без токена".
 async def get_current_user_or_guest(
     credentials: HTTPAuthorizationCredentials | None = Depends(_security),
     session: AsyncSession = Depends(get_session),
@@ -106,7 +97,6 @@ async def get_role_from_token(
         return "unknown"
 
 
-# Иерархия: каждая роль может выполнять действия своего уровня и ниже
 _ROLE_HIERARCHY: dict[str, set[str]] = {
     "user":       {"user", "operator", "admin", "superadmin"},
     "operator":   {"operator", "admin", "superadmin"},
@@ -116,7 +106,6 @@ _ROLE_HIERARCHY: dict[str, set[str]] = {
 
 
 def require_role(*allowed_roles: RoleName):
-    # Расширяем список: если admin разрешён — superadmin тоже
     expanded = set()
     for r in allowed_roles:
         expanded.update(_ROLE_HIERARCHY.get(r.value, {r.value}))

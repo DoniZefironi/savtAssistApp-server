@@ -74,12 +74,6 @@ class ChatService:
                     created_support_chat = chat
         return created_support_chat
 
-    async def ensure_cabinet_chat(self, user_id: int, cabinet_id: int) -> Chat:
-        existing = await self.chat_repo.find(user_id, "cabinet", cabinet_id)
-        if existing is None:
-            existing = await self.chat_repo.create(user_id, "cabinet", cabinet_id)
-        return existing
-
     # Чат проекта — по одному на пару пользователь + проект, наравне с чатом ШУ
     async def ensure_project_chat(self, user_id: int, project_id: int) -> Chat:
         existing = await self.chat_repo.find(user_id, "project", project_id=project_id)

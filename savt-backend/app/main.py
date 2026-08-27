@@ -1,14 +1,23 @@
 import logging
+# для управления ресурсами, требующих логики запуска и разборки, в текущем случае соединение с бд и кэши
 from contextlib import asynccontextmanager
-
+# планировщик, модуль используется для планирования задач в приложении, которые используют модуль asyncio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+# фреймворк для создания апи и библиотека для запросов
 from fastapi import FastAPI, Request
+# для управления механизмом CORS
 from fastapi.middleware.cors import CORSMiddleware
+# для получения json ответов
 from fastapi.responses import JSONResponse
+# для статических файлов
 from fastapi.staticfiles import StaticFiles
+# для лимитов скорости запросов
 from slowapi.errors import RateLimitExceeded
+# для ограничения кол-во запросов
 from slowapi.middleware import SlowAPIMiddleware
+# используется для написания sql-запросов
 from sqlalchemy import text
+# для работы с nginx
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from app.config import settings
@@ -62,36 +71,47 @@ from app.services import promo_service
 from app.core.limiter import limiter
 from app.database import AsyncSessionLocal
 
-# Без этого логгеры вида logging.getLogger(__name__) в сервисах (bitrix_webhook_service,
-# project_folder_service и т.п.) молча теряются — корневой уровень по умолчанию WARNING,
-# и до сих пор виден был только SQLAlchemy engine (у него echo настраивает свой логгер отдельно).
+# настройки логгера, применяется один раз при старте приложения и определяет, как выглядит и куда идут все логи, у которых нет своего 
+# отдельного обработчика. level=logging.INFO — включает логи уровня INFO и выше (INFO, WARNING, ERROR, CRITICAL), format - как выглядит лог
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-# echo=True (см. app/database.py) сам вешает свой хендлер на sqlalchemy.engine —
-# без этого его записи дублировались бы (свой хендлер + после basicConfig ещё и корневой)
+# для предотвращения дублирования в логах sql. 
+# logging.getLogger("sqlalchemy.engine.Engine") - получает тот логгер, в который пишет sqlalchemy
+# .propagate = False - запрещает этому логгеру передавать записи в корневой логгер
 logging.getLogger("sqlalchemy.engine.Engine").propagate = False
-
+# создание логгера
 logger = logging.getLogger(__name__)
 
-
+# функция бота, ничего не возращает
 async def _bot_follow_up_job() -> None:
+    # открывает ссесию БД на время задачи
     async with AsyncSessionLocal() as session:
+        # импорт send_follow_up внутри функции, для защиты от циклического импорта
         from app.services.bot_service import send_follow_up
+        # выбирает чаты, где бот ещё активен
         await send_follow_up(session)
 
-
+# ежедневная чистка старых записей телемтрии ШУ - иначе cabinet_telemetry_events растёт бесконечно
 async def _telemetry_history_prune_job() -> None:
+    # открывает ссесию БД на время задачи
     async with AsyncSessionLocal() as session:
+        # импорт внутри функции
         from app.services.telemetry_service import prune_old_telemetry_history
+        # возращает число удалееных строк
         deleted = await prune_old_telemetry_history(session)
+        # логировать только если что-то удалили
         if deleted:
+            # логирование, что ещё сказать то
             logger.info("Очистка истории телеметрии: удалено %d старых записей", deleted)
 
 
-# Управление жизненным циклом приложения, проверяет подключение к бд и закрывает соединение с бд
+# жизненный цикл приложения, выполняется один раз при старте и один раз при остановке
+# проверка БД, инициализация файрбазе, системный пользователь-бот, регистрация всех фоновых задач, корректное закрытие ресурсов
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # не дает приложению подняться, если бд недоступно
     async with engine.connect() as conn:
         await conn.execute(text("SELECT 1"))
+    # пуш-уведомление, инициализируется один раз на процесс    
     init_firebase(settings.firebase_credentials_path)
 
     # Создаём системного пользователя Ася
@@ -99,72 +119,73 @@ async def lifespan(app: FastAPI):
         from app.services.bot_service import ensure_bot_user
         await ensure_bot_user(session)
 
+    # планировщик задач
     scheduler = AsyncIOScheduler()
+    # проверка истечения гарантии
     scheduler.add_job(check_warranty_expiry, "cron", hour=9, minute=0)
+    # синхронизация папок проектов
     scheduler.add_job(sync_all_project_folders, "cron", hour=2, minute=0)
+    # синхронизация с битриксом
     scheduler.add_job(sync_statuses_from_bitrix, "interval", minutes=15)
+    # синрхонизация бота с чатами
     scheduler.add_job(_bot_follow_up_job, "interval", minutes=10)
+    # чистка старой телеметрии
     scheduler.add_job(_telemetry_history_prune_job, "cron", hour=3, minute=0)
 
-    # Реклама рассылается автоматически, только если час задан явно: она уходит
-    # живым людям, включать её должно быть осознанным действием (см. README)
+    # реклама рассылается автоматически, только если час задан явно: она уходит
+    # живым людям, включать её должно быть осознанным действием
     promo_hour = promo_service.auto_send_hour()
     if promo_hour is not None:
         scheduler.add_job(promo_service.send_random_scheduled, "cron", hour=promo_hour, minute=0)
         logger.info("Автоматическая рассылка рекламы включена: ежедневно в %02d:00", promo_hour)
 
+    # приложение работает
     scheduler.start()
 
     yield
 
+    # при остановке приложения останавливает и закрывает пул соединений с БД
     scheduler.shutdown()
     await engine.dispose()
 
 # Создание приложения с названием SAVT Assist API и привязка к lifespan
 app = FastAPI(title="SAVT Assist API", lifespan=lifespan)
 
-# Читаем реальный IP из X-Forwarded-For (Nginx proxy).
-#
-# НЕ "*": при "*" uvicorn берёт ПЕРВОЕ (самое левое) значение из
-# X-Forwarded-For — а это ровно то, что прислал клиент, nginx его не
-# перезаписывает, только дописывает свой $remote_addr в конец
-# ($proxy_add_x_forwarded_for в nginx.conf). С "*" любой снаружи мог послать
-# X-Forwarded-For: 1.2.3.4 и получить видимость с этого IP — вплоть до
-# обхода per-IP rate limiting (slowapi берёт client.host, который эта
-# миддлварь и подменяет) на /auth/login, /auth/register/* и т.д.
-#
-# 172.16.0.0/12 — весь диапазон приватных адресов, которые Docker обычно
-# использует под bridge-сети (в т.ч. дефолтную сеть docker-compose для этого
-# проекта). api-контейнер снаружи не публикуется (только nginx, см.
-# docker-compose.yml) — единственный, кто физически может достучаться до
-# него напрямую, это другой контейнер на той же docker-сети хоста. Так что
-# доверяем только адресам из этого диапазона, а не любому X-Forwarded-For.
+# для того, чтобы видеть настоящий ip клиента, от этого зависит рэйт лимит и логи
+# ProxyHeadersMiddleware - переписывает request.client.host на значение из заголовка, который приоставляет nginx.
+# без этого весь трафик для приложения выглядил бы так, будто всё идет с одного ip
+# trusted_hosts="172.16.0.0/12" - доверять этому заголовку разрешено, только если запрос физически пришел с адреса из этого диапазона
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="172.16.0.0/12")
 
-# Rate limiting. Свой обработчик вместо slowapi-шного _rate_limit_exceeded_handler:
-# дефолтный отдаёт {"error": "..."}, а весь остальной API — {"detail": "..."}
-# (см. обработчики DomainError ниже). Разные ключи под одним и тем же кодом 429
-# заставляли бы каждого клиента API помнить два формата ошибки вместо одного.
+# обработчик ошибки
 @app.exception_handler(RateLimitExceeded)
+# перехватывает исключение рейт лимита, которое кидает slowapi, когда лимит превышен
 async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    # подставляет в сообщение, чтобы клиент видел, какой именно лимит сработал
     response = JSONResponse(
         status_code=429,
         content={"detail": f"Слишком много запросов. Попробуйте позже ({exc.detail})"},
     )
+    # дописывает в ответ стандартные заголовки
     return limiter._inject_headers(response, request.state.view_rate_limit)
 
-
+# место, откуда достают все внутренние механизмы slowapi (мидлваре, обработчик исключений, декоратор)
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+# движок, который проверяет лимиты на каждый запрос
 app.add_middleware(SlowAPIMiddleware)
 
 # CORS — разрешаем запросы с веб-версии
+# settings.cors_origins - строка из енв, домены через запятую
 _origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
+    # список доменов, которым разрешено обращаться к апи из браузера
     allow_origins=_origins,
+    # разрешает отправку кук и авторизационных заголовков вместе с кросс-доменным запросом
     allow_credentials=True,
+    # разрешает все методы
     allow_methods=["*"],
+    # разрешает все заголовки
     allow_headers=["*"],
 )
 
@@ -248,7 +269,7 @@ app.mount("/static", StaticFiles(directory="/code/uploads"), name="static")
 async def root():
     return {"service": "savt-assist", "status": "ok"}
 
-
+# проверка работы сервера
 @app.get("/health")
 async def health():
     async with engine.connect() as conn:

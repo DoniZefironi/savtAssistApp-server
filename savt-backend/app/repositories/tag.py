@@ -58,19 +58,6 @@ class TagRepository:
             self.session.add(DocumentTag(document_id=document_id, tag_id=tag_id))
         await self.session.flush()
 
-    async def get_tags_for_articles(self, article_ids: list[int]) -> dict[int, list[Tag]]:
-        if not article_ids:
-            return {}
-        result = await self.session.execute(
-            select(KbArticleTag.article_id, Tag)
-            .join(Tag, Tag.id == KbArticleTag.tag_id)
-            .where(KbArticleTag.article_id.in_(article_ids))
-        )
-        mapping: dict[int, list[Tag]] = {a_id: [] for a_id in article_ids}
-        for article_id, tag in result.all():
-            mapping[article_id].append(tag)
-        return mapping
-
     async def set_article_tags(self, article_id: int, tag_ids: list[int]) -> None:
         await self.session.execute(
             delete(KbArticleTag).where(KbArticleTag.article_id == article_id)
@@ -78,9 +65,3 @@ class TagRepository:
         for tag_id in tag_ids:
             self.session.add(KbArticleTag(article_id=article_id, tag_id=tag_id))
         await self.session.flush()
-
-    async def get_document_ids_by_tags(self, tag_ids: list[int]) -> list[int]:
-        result = await self.session.execute(
-            select(DocumentTag.document_id).where(DocumentTag.tag_id.in_(tag_ids)).distinct()
-        )
-        return [row[0] for row in result.all()]

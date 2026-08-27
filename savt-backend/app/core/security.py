@@ -8,60 +8,60 @@ from passlib.context import CryptContext
 
 from app.config import settings
 
+# настройка хеширования паролей через bcrypt 
 _pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# Хешируем пароль bcrypt-ом перед сохранением в БД.
+# хеширование пароля
 def hash_password(plain_password: str) -> str:
+    # passlib сам генерирует случайную соль, хеширует и возращает одну строку
     return _pwd_context.hash(plain_password)
 
-# Проверяем пароль при логине.
+# верификация пароля
 def verify_password(plain_password: str, hashed_password: str) -> bool:
+    # passlib достаёт соль и параметры прям из хэша, хэширует пароль с теми же паратметрами и сравнивает результат с хэшем, возравщает бул
     return _pwd_context.verify(plain_password, hashed_password)
 
-# Генерируем криптографически безопасную случайную строку.
-# Это значение целиком отдаётся клиенту, в БД хранится только её хеш.
+# генерация рефреш токена
 def generate_refresh_token() -> str:
+    # 48 случайных байт и кодировка их в base64 
     return secrets.token_urlsafe(48) 
 
-# Хешируем refresh-токен или SMS-код через SHA-256 перед сохранением.
-# Bcrypt тут не нужен — токены длинные и случайные, перебор невозможен.
+# хеширование токена
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
-# Генерируем 6-значный SMS-код. secrets — для криптостойкости.
+# генерация смс кода
 def generate_sms_code() -> str:
     return f"{secrets.randbelow(1_000_000):06d}"
 
-
+# алгоритм подписи для jwt
 _JWT_ALGORITHM = "HS256"
 
-# Создаём JWT access-токен. Время жизни короткое (по умолчанию 30 минут).
-# В payload кладём id пользователя и роль — этого достаточно для авторизации
-# без обращения к БД на каждом запросе.
+# создание аксесс токена
 def create_access_token(user_id: int, role: str) -> str:
+    # текущее время
     now = datetime.now(timezone.utc)
+    # тело токена
     payload: dict[str, Any] = {
+        # кому выдан токен
         "sub": str(user_id),
+        # роль
         "role": role,
+        # тип токена
         "type": "access",
+        # время выпуска токена
         "iat": int(now.timestamp()),
+        # время истечения
+        # settings.jwt_access_token_ttl_minutes - TTL берется из конфига
         "exp": int((now + timedelta(minutes=settings.jwt_access_token_ttl_minutes)).timestamp()),
     }
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=_JWT_ALGORITHM)
 
-# Проверяем и декодируем JWT.
-# Бросает jwt.ExpiredSignatureError если истёк, jwt.InvalidTokenError если невалидный.
+# проверить и распарсить аксес-токен обратно в данные
 def decode_access_token(token: str) -> dict[str, Any]:
     return jwt.decode(token, settings.jwt_secret_key, algorithms=[_JWT_ALGORITHM])
 
-
-# Гостевой токен: доступ без регистрации к тому, что явно открыто гостям
-# (см. get_current_user_or_guest) — сейчас это КБ, FAQ и чтение тегов. Не привязан к записи
-# в users — гостя как учётной записи не существует, поэтому выдача не трогает
-# БД и не требует последующего отзыва. type="guest" отличает его от обычного
-# access-токена: get_current_user (везде, кроме гостевых роутов) отвергает
-# любой токен не типа "access", так что гость автоматически заперт снаружи
-# всего остального API без дополнительных проверок роли.
+# создание гостевого токена
 def create_guest_token() -> str:
     now = datetime.now(timezone.utc)
     payload: dict[str, Any] = {

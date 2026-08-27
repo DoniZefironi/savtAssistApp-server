@@ -95,6 +95,14 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 # (см. инцидент 2026-08-24: ~7 минут 503 на прод из-за этого).
 docker compose build && docker compose up -d
 
+# ОБЯЗАТЕЛЬНО следом, если пересоздался api: nginx резолвит имя "api" в IP
+# один раз при старте своих воркеров и кэширует — новый api-контейнер получает
+# новый IP в docker-сети, а nginx продолжает стучаться в старый (мёртвый) адрес
+# и отдаёт 503 с "Сервис временно недоступен", даже когда api уже давно жив и
+# здоров. `nginx -s reload` перезапускает воркеры без даунтайма и заставляет их
+# перерезолвить api заново (проверено на инциденте 2026-08-24, тот же день).
+docker exec savt-backend-nginx-1 nginx -s reload
+
 # Миграции
 docker exec savt-backend-api-1 alembic upgrade head
 
