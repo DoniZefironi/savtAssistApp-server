@@ -6,11 +6,32 @@ from app.models.chat import Chat
 from app.repositories.cabinet import CabinetRepository
 from app.repositories.project import ProjectRepository
 from app.repositories.tag import TagRepository
-from app.schemas.cabinet import CabinetCreateIn, CabinetGeoItem, CabinetListOut, CabinetOut, CabinetUpdateIn
+from app.schemas.cabinet import CabinetCreateIn, CabinetGeoItem, CabinetListOut, CabinetOut, CabinetUpdateIn, SimInfoOut
 from app.schemas.tags import TagOut
 from app.schemas.pagination import PageOut, make_page
 from app.services.audit_service import AuditLogger
 from app.utils.warranty import warranty_status as _warranty_status
+
+
+async def _load_sim_info(sim_id: int | None) -> SimInfoOut | None:
+    """Живой запрос во внешнее приложение SIM-карт — best-effort: недоступность
+    того сервиса не должна ронять показ самого ШУ, см. sim_service.get_sim."""
+    if sim_id is None:
+        return None
+    from app.services import sim_service
+    raw = await sim_service.get_sim(sim_id)
+    if raw is None:
+        return None
+    return SimInfoOut(
+        id=raw.get("id", sim_id),
+        serial_number=raw.get("serialNumber"),
+        phone=raw.get("phone"),
+        ip=raw.get("ip"),
+        status=raw.get("status"),
+        name=raw.get("name"),
+        activation_date=raw.get("activationDate"),
+        need_ping=raw.get("needPing"),
+    )
 
 
 async def _resolve_type(session: AsyncSession, raw_type: str) -> str:
@@ -79,6 +100,7 @@ class CabinetService:
         project_names = await self.project_repo.get_names_by_ids(
             [cabinet.project_id] if cabinet.project_id is not None else []
         )
+        sim = await _load_sim_info(cabinet.sim_id)
         return CabinetOut(
             id=cabinet.id,
             type=cabinet.type,
@@ -95,6 +117,8 @@ class CabinetService:
             mqtt_host=cabinet.mqtt_host,
             mqtt_port=cabinet.mqtt_port,
             mqtt_username=cabinet.mqtt_username,
+            sim_id=cabinet.sim_id,
+            sim=sim,
             tags=[TagOut.model_validate(t) for t in tags_map.get(cabinet_id, [])],
             project_id=cabinet.project_id,
             project_name=project_names.get(cabinet.project_id) if cabinet.project_id is not None else None,
@@ -115,6 +139,12 @@ class CabinetService:
             if existing is not None and existing.id != cabinet_id:
                 raise AlreadyExistsError(
                     f"Топик '{changed['mqtt_topic']}' уже привязан к другому ШУ (id={existing.id})"
+                )
+        if changed.get("sim_id") is not None:
+            existing_sim = await self.repo.get_by_sim_id(changed["sim_id"])
+            if existing_sim is not None and existing_sim.id != cabinet_id:
+                raise AlreadyExistsError(
+                    f"SIM id={changed['sim_id']} уже привязана к другому ШУ (id={existing_sim.id})"
                 )
         for field, value in changed.items():
             setattr(cabinet, field, value)

@@ -43,6 +43,10 @@ class Cabinet(Base):
     # Хранится как есть (не хешируется) — нужен серверу целиком, чтобы отдать
     # прокси для подключения к брокеру, это не пароль пользователя приложения
     mqtt_password: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # id записи во внешнем приложении управления SIM-картами (10.1.0.67:5000) —
+    # сами данные (статус/IP/телефон) там и остаются, здесь только связь.
+    # unique — одна SIM физически стоит только в одном ШУ одновременно
+    sim_id: Mapped[int | None] = mapped_column(Integer, unique=True, nullable=True, index=True)
     # дата создания
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

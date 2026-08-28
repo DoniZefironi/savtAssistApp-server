@@ -59,6 +59,9 @@ class CabinetUpdateIn(BaseModel):
     mqtt_port: int | None = Field(None, ge=1, le=65535)
     mqtt_username: str | None = Field(None, max_length=200)
     mqtt_password: str | None = Field(None, max_length=200)
+    # id SIM во внешнем приложении управления SIM-картами (10.1.0.67:5000).
+    # null — отвязать текущую SIM от ШУ
+    sim_id: int | None = None
 
     @model_validator(mode="after")
     def validate_warranty_dates(self) -> "CabinetUpdateIn":
@@ -66,6 +69,19 @@ class CabinetUpdateIn(BaseModel):
         if s is not None and e is not None and e <= s:
             raise ValueError("Дата окончания гарантии должна быть позже даты начала")
         return self
+
+
+class SimInfoOut(BaseModel):
+    """Живой снимок SIM из внешнего приложения (10.1.0.67:5000) — не хранится
+    у нас, запрашивается заново при каждом показе карточки ШУ, см. sim_service.py."""
+    id: int
+    serial_number: str | None = None
+    phone: str | None = None
+    ip: str | None = None
+    status: str | None = None
+    name: str | None = None
+    activation_date: str | None = None
+    need_ping: bool | None = None
 
 
 class CabinetOut(BaseModel):
@@ -85,6 +101,10 @@ class CabinetOut(BaseModel):
     mqtt_port: int | None
     mqtt_username: str | None
     # mqtt_password намеренно не отдаётся обратно клиенту — write-only, как обычный пароль
+    sim_id: int | None
+    # None если sim_id не задан, а также если внешний сервис недоступен —
+    # отсутствие данных не должно ронять показ самого ШУ (см. CabinetService.get)
+    sim: SimInfoOut | None = None
     tags: list[TagOut] = []
     project_id: int | None
     project_name: str | None

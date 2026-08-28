@@ -73,5 +73,12 @@ class Settings(BaseSettings):
 
     promo_auto_send_hour: str = ""
 
+    # Служебный аккаунт для входа в приложение управления SIM-картами — у него
+    # своя JWT-авторизация (POST /api/User/login), не статический токен, см.
+    # app/services/sim_service.py
+    sim_service_base_url: str = "http://10.1.0.67:5000"
+    sim_service_login: str = ""
+    sim_service_password: str = ""
+
 
 settings = Settings()
