@@ -18,6 +18,7 @@ async def _load_sim_info(sim_id: str | None) -> SimInfoOut | None:
     того сервиса не должна ронять показ самого ШУ, см. sim_service.get_sim."""
     if sim_id is None:
         return None
+    from app.config import settings
     from app.services import sim_service
     raw = await sim_service.get_sim(sim_id)
     if raw is None:
@@ -27,6 +28,7 @@ async def _load_sim_info(sim_id: str | None) -> SimInfoOut | None:
         serial_number=raw.get("serialNumber"),
         phone=raw.get("phone"),
         ip=raw.get("ip"),
+        sim_url=settings.sim_service_frontend_url,
     )
 
 

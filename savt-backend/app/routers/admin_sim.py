@@ -1,6 +1,7 @@
 import asyncio
 
 from fastapi import APIRouter, Depends, Query
+from app.config import settings
 from app.core.constants import RoleName
 from app.core.dependencies import require_role
 from app.models.user import User
@@ -17,6 +18,7 @@ def _to_sim_info(raw: dict) -> SimInfoOut:
         serial_number=raw.get("serialNumber"),
         phone=raw.get("phone"),
         ip=raw.get("ip"),
+        sim_url=settings.sim_service_frontend_url,
     )
 
 

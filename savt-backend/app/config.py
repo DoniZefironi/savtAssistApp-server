@@ -79,6 +79,10 @@ class Settings(BaseSettings):
     sim_service_base_url: str = "http://10.1.0.67:5000"
     sim_service_login: str = ""
     sim_service_password: str = ""
+    # Веб-интерфейс SimApi (не API) — выбор конкретной SIM там открывает модалку
+    # без отражения в URL, поэтому это ссылка на список карт целиком, не на
+    # конкретную запись (прямого deep-link на одну SIM в их фронте нет)
+    sim_service_frontend_url: str = "http://10.1.0.67:3000/admin/cards"
 
 
 settings = Settings()

@@ -80,6 +80,10 @@ class SimInfoOut(BaseModel):
     serial_number: str | None = None
     phone: str | None = None
     ip: str | None = None
+    # Ссылка на список карт в веб-интерфейсе SimApi — НЕ на конкретную запись:
+    # выбор SIM там открывает модалку без отражения в URL, прямого deep-link
+    # на одну SIM в их фронте нет (см. sim_service_frontend_url в config.py)
+    sim_url: str | None = None
 
 
 class CabinetOut(BaseModel):
