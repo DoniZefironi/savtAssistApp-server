@@ -10,15 +10,23 @@ _client: httpx.AsyncClient | None = None
 # JWT кэшируется в памяти процесса между вызовами — коротко живущий, добывается
 # логином служебного аккаунта (см. _login), не статический токен из .env.
 _access_token: str | None = None
+# Внешний сервис отдаёт refresh-токен и как заголовок Refresh-token (виден в
+# CORS exposedHeaders их Program.cs), и, вероятно, как куку — httpx хранит куку
+# в самом клиенте автоматически, а вот заголовок нужно ловить и слать самим,
+# на случай если /api/User/refresh ждёт его именно так, а не только из куки.
+_refresh_token: str | None = None
 
 
 def _get_client() -> httpx.AsyncClient:
     global _client
     if _client is None:
-        # Один и тот же клиент на весь процесс — важно и для connection reuse,
-        # и для refresh-токена: httpx хранит куки в самом клиенте, а
-        # GET /api/User/refresh достаёт refresh-токен именно из куки,
-        # выставленной предыдущим /api/User/login на этом же клиенте.
+        # Один клиент на весь процесс — для connection reuse и (в теории) для
+        # refresh-куки, которую httpx хранит в самом клиенте. На практике кука
+        # refreshToken приходит с флагом Secure, а base_url тут — plain HTTP,
+        # так что httpx её обратно не отправит (Secure = только по HTTPS) —
+        # _refresh() будет молча проваливаться, и _authorized_request просто
+        # перелогинивается заново при 401. Это ок, не баг: относительно редкий
+        # лишний запрос на каждое истечение токена, а не проблема вовсе.
         _client = httpx.AsyncClient(base_url=settings.sim_service_base_url, timeout=10)
     return _client
 
@@ -36,6 +44,17 @@ def _extract_token(resp: httpx.Response) -> str | None:
     return token or None
 
 
+def _capture_tokens(resp: httpx.Response) -> str | None:
+    """Забирает access-токен из заголовка authorization, и заодно, если
+    прислали, обновляет закэшированный refresh-токен из заголовка
+    Refresh-token (не только из куки, см. комментарий у _refresh_token)."""
+    global _refresh_token
+    refresh = resp.headers.get("refresh-token")
+    if refresh:
+        _refresh_token = refresh
+    return _extract_token(resp)
+
+
 async def _login() -> str | None:
     global _access_token
     if not _configured():
@@ -43,7 +62,7 @@ async def _login() -> str | None:
     try:
         resp = await _get_client().post(
             "/api/User/login",
-            data={"login": settings.sim_service_login, "password": settings.sim_service_password},
+            params={"login": settings.sim_service_login, "password": settings.sim_service_password},
         )
     except httpx.RequestError as e:
         _log.warning("sim_service login: сетевая ошибка %s", e)
@@ -51,7 +70,7 @@ async def _login() -> str | None:
     if not resp.is_success:
         _log.warning("sim_service login: HTTP %s %s", resp.status_code, resp.text[:200])
         return None
-    _access_token = _extract_token(resp)
+    _access_token = _capture_tokens(resp)
     if _access_token is None:
         _log.warning("sim_service login: ответ 2xx, но заголовок authorization пуст")
     return _access_token
@@ -59,14 +78,15 @@ async def _login() -> str | None:
 
 async def _refresh() -> str | None:
     global _access_token
+    headers = {"Refresh-token": _refresh_token} if _refresh_token else {}
     try:
-        resp = await _get_client().get("/api/User/refresh")
+        resp = await _get_client().get("/api/User/refresh", headers=headers)
     except httpx.RequestError as e:
         _log.warning("sim_service refresh: сетевая ошибка %s", e)
         return None
     if not resp.is_success:
         return None
-    _access_token = _extract_token(resp)
+    _access_token = _capture_tokens(resp)
     return _access_token
 
 
