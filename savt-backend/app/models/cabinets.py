@@ -45,8 +45,9 @@ class Cabinet(Base):
     mqtt_password: Mapped[str | None] = mapped_column(String(200), nullable=True)
     # id записи во внешнем приложении управления SIM-картами (10.1.0.67:5000) —
     # сами данные (статус/IP/телефон) там и остаются, здесь только связь.
+    # Строка, не число — SimApi использует GUID как id.
     # unique — одна SIM физически стоит только в одном ШУ одновременно
-    sim_id: Mapped[int | None] = mapped_column(Integer, unique=True, nullable=True, index=True)
+    sim_id: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True, index=True)
     # дата создания
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

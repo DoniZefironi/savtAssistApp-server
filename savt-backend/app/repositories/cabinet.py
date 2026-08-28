@@ -100,7 +100,7 @@ class CabinetRepository(BaseRepository[Cabinet]):
         )
         return result.scalar_one_or_none()
 
-    async def get_by_sim_id(self, sim_id: int) -> Cabinet | None:
+    async def get_by_sim_id(self, sim_id: str) -> Cabinet | None:
         result = await self.session.execute(
             select(Cabinet).where(Cabinet.sim_id == sim_id, Cabinet.deleted_at.is_(None))
         )

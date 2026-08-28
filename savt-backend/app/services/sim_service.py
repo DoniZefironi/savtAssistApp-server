@@ -118,7 +118,7 @@ async def _authorized_request(method: str, path: str, **kwargs) -> httpx.Respons
     return resp
 
 
-async def get_sim(sim_id: int) -> dict | None:
+async def get_sim(sim_id: str) -> dict | None:
     """Одна SIM-карта по id (GET /api/Sim/{id}) — для показа статуса/IP/телефона
     на странице ШУ. None — SIM не найдена, сервис недоступен/не настроен или
     авторизоваться не удалось; вызывающий код должен деградировать тихо (не

@@ -13,7 +13,7 @@ from app.services.audit_service import AuditLogger
 from app.utils.warranty import warranty_status as _warranty_status
 
 
-async def _load_sim_info(sim_id: int | None) -> SimInfoOut | None:
+async def _load_sim_info(sim_id: str | None) -> SimInfoOut | None:
     """Живой запрос во внешнее приложение SIM-карт — best-effort: недоступность
     того сервиса не должна ронять показ самого ШУ, см. sim_service.get_sim."""
     if sim_id is None:

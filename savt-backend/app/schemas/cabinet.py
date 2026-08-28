@@ -59,9 +59,9 @@ class CabinetUpdateIn(BaseModel):
     mqtt_port: int | None = Field(None, ge=1, le=65535)
     mqtt_username: str | None = Field(None, max_length=200)
     mqtt_password: str | None = Field(None, max_length=200)
-    # id SIM во внешнем приложении управления SIM-картами (10.1.0.67:5000).
-    # null — отвязать текущую SIM от ШУ
-    sim_id: int | None = None
+    # id SIM во внешнем приложении управления SIM-картами (10.1.0.67:5000) —
+    # GUID-строка, не число. null — отвязать текущую SIM от ШУ
+    sim_id: str | None = None
 
     @model_validator(mode="after")
     def validate_warranty_dates(self) -> "CabinetUpdateIn":
@@ -74,11 +74,13 @@ class CabinetUpdateIn(BaseModel):
 class SimInfoOut(BaseModel):
     """Живой снимок SIM из внешнего приложения (10.1.0.67:5000) — не хранится
     у нас, запрашивается заново при каждом показе карточки ШУ, см. sim_service.py."""
-    id: int
+    id: str
     serial_number: str | None = None
     phone: str | None = None
     ip: str | None = None
-    status: str | None = None
+    # Число, не строка — судя по всему, enum-код (как rightSet у User в том же
+    # приложении), но расшифровка значений неизвестна, отдаём как есть
+    status: int | None = None
     name: str | None = None
     activation_date: str | None = None
     need_ping: bool | None = None
@@ -101,7 +103,7 @@ class CabinetOut(BaseModel):
     mqtt_port: int | None
     mqtt_username: str | None
     # mqtt_password намеренно не отдаётся обратно клиенту — write-only, как обычный пароль
-    sim_id: int | None
+    sim_id: str | None
     # None если sim_id не задан, а также если внешний сервис недоступен —
     # отсутствие данных не должно ронять показ самого ШУ (см. CabinetService.get)
     sim: SimInfoOut | None = None
