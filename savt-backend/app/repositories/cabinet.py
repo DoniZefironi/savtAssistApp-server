@@ -100,12 +100,6 @@ class CabinetRepository(BaseRepository[Cabinet]):
         )
         return result.scalar_one_or_none()
 
-    async def get_by_sim_id(self, sim_id: str) -> Cabinet | None:
-        result = await self.session.execute(
-            select(Cabinet).where(Cabinet.sim_id == sim_id, Cabinet.deleted_at.is_(None))
-        )
-        return result.scalar_one_or_none()
-
     # Полностью настроенные под телеметрию ШУ (есть и брокер, и топик) — список
     # "куда подключаться", который забирает C#-прокси (см. GET /webhooks/telemetry/targets)
     async def list_telemetry_targets(self) -> list[Cabinet]:

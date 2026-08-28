@@ -46,8 +46,8 @@ class Cabinet(Base):
     # id записи во внешнем приложении управления SIM-картами (10.1.0.67:5000) —
     # сами данные (статус/IP/телефон) там и остаются, здесь только связь.
     # Строка, не число — SimApi использует GUID как id.
-    # unique — одна SIM физически стоит только в одном ШУ одновременно
-    sim_id: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True, index=True)
+    # Без unique — одну и ту же SIM можно привязать сразу к нескольким ШУ
+    sim_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     # дата создания
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

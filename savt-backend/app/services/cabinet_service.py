@@ -136,12 +136,6 @@ class CabinetService:
                 raise AlreadyExistsError(
                     f"Топик '{changed['mqtt_topic']}' уже привязан к другому ШУ (id={existing.id})"
                 )
-        if changed.get("sim_id") is not None:
-            existing_sim = await self.repo.get_by_sim_id(changed["sim_id"])
-            if existing_sim is not None and existing_sim.id != cabinet_id:
-                raise AlreadyExistsError(
-                    f"SIM id={changed['sim_id']} уже привязана к другому ШУ (id={existing_sim.id})"
-                )
         for field, value in changed.items():
             setattr(cabinet, field, value)
         self.audit.log("cabinet.update", "cabinet", cabinet_id, actor_id, actor_role, {"fields": list(changed.keys())})
