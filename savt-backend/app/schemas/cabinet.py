@@ -73,17 +73,13 @@ class CabinetUpdateIn(BaseModel):
 
 class SimInfoOut(BaseModel):
     """Живой снимок SIM из внешнего приложения (10.1.0.67:5000) — не хранится
-    у нас, запрашивается заново при каждом показе карточки ШУ, см. sim_service.py."""
+    у нас, запрашивается заново при каждом показе карточки ШУ, см. sim_service.py.
+    Отдаём фронту только то, что реально нужно показать; id — не для показа,
+    а чтобы фронт мог сослаться на конкретную SIM при выборе в GET /admin/sim."""
     id: str
     serial_number: str | None = None
     phone: str | None = None
     ip: str | None = None
-    # Число, не строка — судя по всему, enum-код (как rightSet у User в том же
-    # приложении), но расшифровка значений неизвестна, отдаём как есть
-    status: int | None = None
-    name: str | None = None
-    activation_date: str | None = None
-    need_ping: bool | None = None
 
 
 class CabinetOut(BaseModel):

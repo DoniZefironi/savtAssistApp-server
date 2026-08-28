@@ -27,10 +27,6 @@ async def _load_sim_info(sim_id: str | None) -> SimInfoOut | None:
         serial_number=raw.get("serialNumber"),
         phone=raw.get("phone"),
         ip=raw.get("ip"),
-        status=raw.get("status"),
-        name=raw.get("name"),
-        activation_date=raw.get("activationDate"),
-        need_ping=raw.get("needPing"),
     )
 
 
