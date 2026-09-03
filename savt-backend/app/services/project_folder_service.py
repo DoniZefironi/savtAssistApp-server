@@ -70,7 +70,7 @@ def sanitize_folder_name(name: str) -> str:
 _YEAR_PREFIX_RE = re.compile(r"^\d{2}_")
 
 
-def _strip_year_prefix(name: str) -> str:
+def strip_year_prefix(name: str) -> str:
     return _YEAR_PREFIX_RE.sub("", name, count=1)
 
 
@@ -122,7 +122,7 @@ async def _parent_root_path(project: Project, project_repo: ProjectRepository) -
         ancestors[0] if ancestors else project
     )
     for ancestor in ancestors:
-        root = root / (ancestor.folder_name or sanitize_folder_name(_strip_year_prefix(ancestor.name)))
+        root = root / (ancestor.folder_name or sanitize_folder_name(strip_year_prefix(ancestor.name)))
     return root
 
 
@@ -138,7 +138,7 @@ async def _legacy_parent_root_path(project: Project, project_repo: ProjectReposi
 
 async def _project_root_path(project: Project, project_repo: ProjectRepository) -> Path:
     parent_root = await _parent_root_path(project, project_repo)
-    return parent_root / (project.folder_name or sanitize_folder_name(_strip_year_prefix(project.name)))
+    return parent_root / (project.folder_name or sanitize_folder_name(strip_year_prefix(project.name)))
 
 
 async def _ensure_structure(root: Path) -> None:
@@ -246,7 +246,7 @@ async def relocate_project_folder(session: AsyncSession, project: Project) -> No
     if not settings.project_folders_root:
         return
     project_repo = ProjectRepository(session)
-    new_name = sanitize_folder_name(_strip_year_prefix(project.name))
+    new_name = sanitize_folder_name(strip_year_prefix(project.name))
     parent_root = await _parent_root_path(project, project_repo)
     target = parent_root / new_name
     if await asyncio.to_thread(target.exists):
@@ -270,7 +270,7 @@ async def sync_project_folder(session: AsyncSession, project: Project) -> None:
 
     project_repo = ProjectRepository(session)
     parent_root = await _parent_root_path(project, project_repo)
-    new_name = sanitize_folder_name(_strip_year_prefix(project.name))
+    new_name = sanitize_folder_name(strip_year_prefix(project.name))
 
     root = parent_root / new_name
     await _relocate_folder(project, project_repo, root)

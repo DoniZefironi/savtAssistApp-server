@@ -313,7 +313,12 @@ async def upsert_project_from_deal(session, deal: dict):
         bitrix_deal_id=deal_id or None,
     )
     await session.flush()
-    project.folder_name = project_folder_service.sanitize_folder_name(title)
+    # strip_year_prefix — иначе первая же папка на NAS заводится как "26_201 ..."
+    # и обрезается только на следующей sync_project_folder (переименование +
+    # перенос содержимого), а не сразу при создании
+    project.folder_name = project_folder_service.sanitize_folder_name(
+        project_folder_service.strip_year_prefix(title)
+    )
     await _apply_deal_fields(project, deal)
     await session.commit()
     project_folder_service.schedule_folder_creation(project.id)
