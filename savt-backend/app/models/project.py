@@ -15,14 +15,20 @@ class Project(Base):
     # зашифрованный обратимо, см. app/services/project_code_service.py), поэтому
     # длиннее простого случайного кода
     unique_code: Mapped[str] = mapped_column(String(200), unique=True, index=True)
-    # открытый номер проекта из Bitrix (например "26_138") — для поиска "уже есть
-    # ли проект с таким номером" при повторных вызовах вебхука. unique_code для
-    # этого не годится: шифруется со случайным IV, при каждом вызове получается
-    # новая строка даже для одного и того же номера. Проекты заводятся только из
-    # Bitrix (см. bitrix_webhook_service.upsert_project_from_deal), поэтому null
-    # тут практически не бывает — разве что у совсем старых проектов, заведённых
-    # ещё когда ручное создание существовало.
-    production_number: Mapped[str | None] = mapped_column(String(50), unique=True, nullable=True, index=True)
+    # открытый номер проекта из Bitrix (например "26_138") — для отображения и
+    # поиска. Не unique: в Bitrix иногда заводят две разные сделки с одинаковым
+    # номером (опечатка/дубль) — это два разных проекта, см. bitrix_deal_id
+    # ниже, которым сопоставление реально идёт. unique_code для сопоставления
+    # тоже не годится: шифруется со случайным IV, при каждом вызове получается
+    # новая строка даже для одного и того же номера.
+    production_number: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+    # ID сделки Bitrix (CRM deal), из которой создан проект — основной ключ
+    # идемпотентности при повторных вызовах вебхука (см.
+    # bitrix_webhook_service.upsert_project_from_deal). Unique: одна сделка не
+    # может породить два проекта. Может быть null у проектов, заведённых до
+    # появления этого поля — такие один раз сопоставляются по production_number
+    # и после этого получают его.
+    bitrix_deal_id: Mapped[str | None] = mapped_column(String(20), unique=True, nullable=True, index=True)
     # вложенность (проект в проекте) — например, отдельная партия отгрузки внутри
     # одного производственного проекта
     parent_project_id: Mapped[int | None] = mapped_column(

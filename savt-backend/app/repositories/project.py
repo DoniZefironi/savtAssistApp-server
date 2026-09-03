@@ -73,6 +73,16 @@ class ProjectRepository(BaseRepository[Project]):
         )
         return result.scalar_one_or_none()
 
+    # Поиск по ID сделки Bitrix, включая мягко удалённые — основной ключ
+    # идемпотентности вебхука сделок (см. upsert_project_from_deal). В отличие
+    # от find_by_production_number_any однозначно определяет "та же самая
+    # сделка", а не "проект с таким же номером" — двух сделок с одним ID не бывает.
+    async def find_by_bitrix_deal_id(self, bitrix_deal_id: str) -> Project | None:
+        result = await self.session.execute(
+            select(Project).where(Project.bitrix_deal_id == bitrix_deal_id)
+        )
+        return result.scalar_one_or_none()
+
     async def soft_delete(self, project: Project) -> None:
         project.deleted_at = datetime.now(timezone.utc)
         await self.session.flush()

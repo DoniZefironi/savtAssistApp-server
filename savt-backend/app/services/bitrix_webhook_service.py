@@ -249,8 +249,16 @@ async def upsert_project_from_deal(session, deal: dict):
     """Создаёт/обновляет Project по сделке Bitrix.
     Возвращает (project, created): project=None, если номер проекта не определился —
     вызывающий код просто пропускает такую сделку, ничего не логируя как ошибку.
-    Идемпотентно: повторный вызов с тем же номером не создаёт дубликат
-    (см. Project.production_number / ProjectRepository.find_by_production_number_any).
+
+    Идемпотентно по ID самой сделки (Project.bitrix_deal_id), а не по номеру
+    (production_number): в Bitrix иногда заводят две разные сделки с одинаковым
+    номером (опечатка/дубль) — это две разные сделки и должны стать двумя разными
+    проектами, а не схлопнуться в один. Единственное исключение — бэкфилл: у
+    проектов, заведённых до появления bitrix_deal_id, это поле ещё пустое, и
+    первая же сделка с совпавшим номером считается "той самой" и получает
+    bitrix_deal_id (дальше уже сопоставляется по нему). Если у найденного по
+    номеру проекта bitrix_deal_id уже занят другой сделкой — это и есть случай
+    дубля, создаётся новый проект.
     Используется и вебхуком (handle_deal_event), и разовым скриптом импорта
     (app/cli.py import-bitrix-deals)."""
     production_number = extract_production_number(deal)
@@ -267,9 +275,15 @@ async def upsert_project_from_deal(session, deal: dict):
     # Ищем и среди мягко удалённых: проект — собственность Bitrix, пока жива
     # сделка — жив и он. Удаление в приложении (DELETE /admin/projects/{id})
     # не должно быть окончательным, пока сделку не закрыли и в CRM.
-    existing = await project_repo.find_by_production_number_any(production_number)
+    existing = await project_repo.find_by_bitrix_deal_id(deal_id) if deal_id else None
+    if existing is None:
+        candidate = await project_repo.find_by_production_number_any(production_number)
+        if candidate is not None and candidate.bitrix_deal_id is None:
+            existing = candidate
 
     if existing is not None:
+        if deal_id and existing.bitrix_deal_id != deal_id:
+            existing.bitrix_deal_id = deal_id
         resurrected = existing.deleted_at is not None
         if resurrected:
             existing.deleted_at = None
@@ -296,6 +310,7 @@ async def upsert_project_from_deal(session, deal: dict):
 
     project = await project_repo.create(
         name=title, unique_code=unique_code, production_number=production_number,
+        bitrix_deal_id=deal_id or None,
     )
     await session.flush()
     project.folder_name = project_folder_service.sanitize_folder_name(title)
