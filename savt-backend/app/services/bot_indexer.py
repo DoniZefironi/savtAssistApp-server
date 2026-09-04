@@ -218,11 +218,18 @@ async def index_document(session: AsyncSession, doc: Document) -> None:
         )
         return
     text = await _extract_text(doc.file_url)
-    if not text.strip():
+    # Не удалось извлечь текст (нераспознанный формат, битый файл, документ без
+    # текстового слоя и т.п.) — индексируем хотя бы заголовок, чтобы бот вообще
+    # знал о существовании файла, но помечаем это в meta. Без этой пометки такой
+    # документ навсегда застревал бы "уже проиндексированным" (у него ведь есть
+    # embeddings) — reindex_all(force=False) больше никогда не пытался бы
+    # переизвлечь текст повторно, даже после починки самого экстрактора.
+    extraction_failed = not text.strip()
+    if extraction_failed:
         text = doc.title or ""
     await _upsert_chunks(
         session, "document", doc.id, _chunks(text),
-        {"title": doc.title, "cabinet_id": doc.cabinet_id},
+        {"title": doc.title, "cabinet_id": doc.cabinet_id, "extraction_failed": extraction_failed},
     )
 
 
@@ -247,14 +254,26 @@ def schedule_reindex_document(doc_id: int) -> None:
 async def reindex_all(session: AsyncSession, force: bool = False) -> dict:
     """Индексирует только ещё не проиндексированные записи.
     force=True — переиндексирует всё (старое поведение).
-    """
-    stats = {"faq": 0, "kb_article": 0, "document": 0, "skipped": 0}
+
+    Каждый элемент коммитится отдельно и сам ловит свою ошибку: раньше весь
+    прогон коммитился одним разом в конце, и сбой на одном документе (например,
+    сетевая ошибка Yandex API на одном из многих чанков большого файла) откатывал
+    вообще всё, включая уже успешно проиндексированные до него FAQ/статьи/
+    документы этого же прогона. Теперь одна неудача попадает в stats["failed"]
+    и не мешает остальным."""
+    stats = {"faq": 0, "kb_article": 0, "document": 0, "skipped": 0, "failed": 0}
 
     if not force:
         rows = (await session.execute(
-            select(Embedding.source_type, Embedding.source_id).distinct()
+            select(Embedding.source_type, Embedding.source_id, Embedding.meta)
         )).all()
-        already = {(r[0], r[1]) for r in rows}
+        # Документы с extraction_failed=True в already НЕ попадают — иначе
+        # обычный "переиндексировать новое" (force=False) навсегда пропускал бы
+        # документ, у которого когда-то не извлёкся текст (см. index_document)
+        already = {
+            (source_type, source_id) for source_type, source_id, meta in rows
+            if not (source_type == "document" and (meta or {}).get("extraction_failed"))
+        }
     else:
         already = set()
 
@@ -263,26 +282,43 @@ async def reindex_all(session: AsyncSession, force: bool = False) -> dict:
         if ("faq", e.id) in already:
             stats["skipped"] += 1
             continue
-        await index_faq_entry(session, e)
-        stats["faq"] += 1
+        try:
+            await index_faq_entry(session, e)
+            await session.commit()
+            stats["faq"] += 1
+        except Exception:
+            await session.rollback()
+            stats["failed"] += 1
+            logger.exception("Индексация FAQ %s не удалась", e.id)
 
     articles = (await session.execute(select(KbArticle))).scalars().all()
     for a in articles:
         if ("kb_article", a.id) in already:
             stats["skipped"] += 1
             continue
-        await index_kb_article(session, a)
-        stats["kb_article"] += 1
+        try:
+            await index_kb_article(session, a)
+            await session.commit()
+            stats["kb_article"] += 1
+        except Exception:
+            await session.rollback()
+            stats["failed"] += 1
+            logger.exception("Индексация статьи КБ %s не удалась", a.id)
 
     docs = (await session.execute(select(Document))).scalars().all()
     for d in docs:
         if ("document", d.id) in already:
             stats["skipped"] += 1
             continue
-        await index_document(session, d)
-        stats["document"] += 1
+        try:
+            await index_document(session, d)
+            await session.commit()
+            stats["document"] += 1
+        except Exception:
+            await session.rollback()
+            stats["failed"] += 1
+            logger.exception("Индексация документа %s не удалась", d.id)
 
-    await session.commit()
     return stats
 
 
