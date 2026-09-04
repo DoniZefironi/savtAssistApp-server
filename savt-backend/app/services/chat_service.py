@@ -445,8 +445,24 @@ class ChatService:
 
             async def _bot_reply():
                 try:
+                    text_for_bot = data.text
+                    if not text_for_bot:
+                        # Голосовое без текста — распознаём и отвечаем на
+                        # расшифровку так же, как на обычный текст. Расшифровка
+                        # нигде не сохраняется (как и у ручного POST
+                        # /upload/transcribe) — при сбое STT бот просто
+                        # промолчит на это сообщение, как и раньше на голосовые.
+                        voice_att = next(
+                            (a for a in data.attachments
+                             if a.file_url and a.mime_type and a.mime_type.startswith("audio/")),
+                            None,
+                        )
+                        if voice_att is not None:
+                            text_for_bot = await _transcribe_voice_attachment(voice_att.file_url)
+                    if not text_for_bot:
+                        return
                     async with AsyncSessionLocal() as bot_session:
-                        await handle_message(bot_session, chat.id, data.text)
+                        await handle_message(bot_session, chat.id, text_for_bot)
                 except Exception:
                     _log.exception("Bot reply failed for chat %s", chat.id)
 
@@ -889,6 +905,26 @@ def _build_message(msg, user, atts, rxns) -> MessageOut:
         attachments=[AttachmentOut.model_validate(a) for a in atts],
         reactions=[ReactionOut.model_validate(r) for r in rxns],
     )
+
+
+async def _transcribe_voice_attachment(file_url: str) -> str | None:
+    """Распознаёт голосовое вложение в текст — та же логика (транскодирование
+    + STT/LRR по размеру), что и ручной POST /upload/transcribe, только
+    вызывается автоматически, когда боту прислали голосовое без текста (см.
+    send_message._bot_reply). None — файла на диске нет или он пуст."""
+    from pathlib import Path
+    from app.services import yandex_service
+    from app.services.upload_service import UPLOAD_ROOT, transcode_to_ogg_opus
+
+    path = (UPLOAD_ROOT / file_url.removeprefix("/static/")).resolve()
+    if not path.is_relative_to(UPLOAD_ROOT.resolve()) or not await asyncio.to_thread(path.is_file):
+        return None
+
+    raw_bytes = await asyncio.to_thread(path.read_bytes)
+    audio_bytes = await asyncio.to_thread(transcode_to_ogg_opus, raw_bytes)
+    if len(audio_bytes) <= yandex_service.MAX_SYNC_STT_BYTES:
+        return await yandex_service.transcribe_voice(audio_bytes, format="oggopus")
+    return await yandex_service.transcribe_voice_long(audio_bytes, format="oggopus")
 
 
 def _attachment_type(mime_type: str) -> str:

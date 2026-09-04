@@ -88,6 +88,12 @@ async def complete(system_prompt: str, messages: list[dict]) -> str:
 
 _STT_URL = "https://stt.api.cloud.yandex.net/speech/v1/stt:recognize"
 
+# Yandex SpeechKit stt:recognize (синхронный) принимает максимум 1 МБ — больше
+# уходит в transcribe_voice_long. Общий порог для всех вызывающих (ручной
+# POST /upload/transcribe и автоматическое распознавание голосовых для бота,
+# см. chat_service._transcribe_voice_attachment) — единое число в одном месте.
+MAX_SYNC_STT_BYTES = 1_000_000
+
 
 async def transcribe_voice(
     audio_bytes: bytes, format: str = "oggopus", sample_rate_hertz: int | None = None

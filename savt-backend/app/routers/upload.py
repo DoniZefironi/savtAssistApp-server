@@ -38,9 +38,6 @@ def _resolve_static_path(url: str) -> Path:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Файл не найден")
     return file_path
 
-# Yandex SpeechKit stt:recognize (синхронный) принимает максимум 1 МБ — берём с запасом
-_MAX_STT_BYTES = 1_000_000
-
 
 class UploadOut(BaseModel):
     # Подписанный: по этому URL клиент сразу показывает превью загруженного
@@ -85,7 +82,7 @@ async def transcribe_voice(
     audio_bytes = await asyncio.to_thread(transcode_to_ogg_opus, raw_bytes)
 
     try:
-        if len(audio_bytes) <= _MAX_STT_BYTES:
+        if len(audio_bytes) <= yandex_service.MAX_SYNC_STT_BYTES:
             text = await yandex_service.transcribe_voice(audio_bytes, format="oggopus")
         else:
             text = await yandex_service.transcribe_voice_long(audio_bytes, format="oggopus")
