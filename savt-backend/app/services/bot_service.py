@@ -23,8 +23,8 @@ _SYSTEM_PROMPT = """Ты — помощник Ася, виртуальный а�
 - Отвечай чётко, кратко, структурированно.
 - Используй только информацию из предоставленного контекста.
 - В контексте у каждого фрагмента указан источник в квадратных скобках. Источник "Документация ШУ" приоритетнее источников "FAQ" и "База знаний" — это точные данные по конкретному объекту, а не общая информация. Если по одному и тому же вопросу есть фрагменты и из документации, и из FAQ/базы знаний — в первую очередь опирайся на документацию, а общие источники используй только как дополнение или если документации по этому вопросу нет.
-- Если в сообщении есть блок "ШУ этого проекта" — это точные данные из системы (не из базы знаний), используй их для вопросов о том, какие ШУ есть в проекте, и об их гарантии. Если конкретного ШУ в этом списке нет — так и скажи, не придумывай.
-- Если в сообщении есть блок "Данные проекта" — это тоже точные данные из системы (не из базы знаний): название и номер проекта, компания-заказчик, даты отгрузки, гарантия проекта. Используй их для соответствующих вопросов. Если в этом блоке нет какого-то поля (например, даты отгрузки) — значит, оно ещё не заполнено в системе, так и скажи, не придумывай.
+- Если в сообщении есть блок "ШУ этого проекта" — это точные данные из системы (не из базы знаний), используй их для вопросов о том, какие ШУ есть в проекте, их назначении, описании, местоположении и гарантии. Если конкретного ШУ в этом списке нет, или у найденного ШУ нет какого-то из этих полей (например, назначения) — так и скажи, не придумывай.
+- Если в сообщении есть блок "Данные проекта" — это тоже точные данные из системы (не из базы знаний): название и номер проекта, компания-заказчик, даты отгрузки, гарантия проекта. Используй их для соответствующих вопросов. Значения вроде "ещё не отгружено" или "не указана" — это не отсутствие данных, а точный ответ ("была ли отгрузка?" → "нет, ещё не отгружено, по плану — [дата]"). Не путай плановую дату с фактом свершившегося события.
 - Если вопрос пользователя содержит блок вида "[Фото: ...]" — это не слова пользователя, а автоматическое описание фотографии, которую он прислал (сгенерировано отдельной моделью распознавания изображений). Отвечай так, будто сама видела это фото и опираешься на его содержимое.
 - Если контекст не содержит ответа — честно скажи об этом и задай уточняющий вопрос.
 - Внимательно учитывай всю историю переписки в этом чате. Если пользователь уже называл модель ШУ, суть проблемы или другие детали раньше в этом же диалоге — не спрашивай их снова и не отвечай так, будто вопрос задан с нуля: используй то, что уже известно из диалога, в самом ответе или в уточняющем вопросе. Если ты уже задавала уточняющий вопрос и пользователь на него ответил — переходи к сути, а не повторяй тот же вопрос другими словами.
@@ -237,33 +237,50 @@ async def _resolve_chat_project_id(session: AsyncSession, chat: Chat) -> int | N
 async def _project_info_context(session: AsyncSession, project_id: int) -> str | None:
     """Поля проекта из Bitrix (название, номер, заказчик, даты отгрузки, гарантия
     проекта) — структурированные данные из БД, не из базы знаний через RAG
-    (вопросы вида "когда у нас отгрузка", "кто заказчик по этому проекту")."""
+    (вопросы вида "когда у нас отгрузка", "была ли уже отгрузка", "кто заказчик").
+
+    Каждое поле пишется явной строкой, даже когда оно пустое ("ещё не
+    отгружено", "не указана") — раньше пустые поля просто пропускались, и
+    модели приходилось самой догадываться об их отсутствии по недостающей
+    строке; на практике она с этим не справлялась (например, на вопрос "была
+    ли отгрузка" при пустой фактической дате отвечала плановой, как будто
+    отгрузка уже состоялась). Явное "ещё не отгружено" не оставляет для
+    догадок места."""
     from app.models.project import Project as ProjectModel
 
     project = await session.get(ProjectModel, project_id)
     if project is None:
         return None
 
-    lines = [f"Название: {project.name}"]
-    if project.production_number:
-        lines.append(f"Номер проекта: {project.production_number}")
-    if project.company_name:
-        lines.append(f"Компания-заказчик: {project.company_name}")
-    if project.shipment_planned_at:
-        lines.append(f"Плановая дата отгрузки: {project.shipment_planned_at.date().isoformat()}")
-    if project.shipment_actual_at:
-        lines.append(f"Фактическая дата отгрузки: {project.shipment_actual_at.date().isoformat()}")
-    if project.warranty_starts_at:
-        lines.append(f"Гарантия проекта с: {project.warranty_starts_at.date().isoformat()}")
-    if project.warranty_ends_at:
-        lines.append(f"Гарантия проекта до: {project.warranty_ends_at.date().isoformat()}")
+    planned = project.shipment_planned_at.date().isoformat() if project.shipment_planned_at else "не указана"
+    actual = (
+        f"да, {project.shipment_actual_at.date().isoformat()}"
+        if project.shipment_actual_at else "ещё не отгружено"
+    )
+    warranty_from = project.warranty_starts_at.date().isoformat() if project.warranty_starts_at else "не указано"
+    warranty_to = project.warranty_ends_at.date().isoformat() if project.warranty_ends_at else "не указано"
+
+    lines = [
+        f"Название: {project.name}",
+        f"Номер проекта: {project.production_number or 'не указан'}",
+        f"Компания-заказчик: {project.company_name or 'не указана'}",
+        f"Плановая дата отгрузки: {planned}",
+        f"Отгружено фактически: {actual}",
+        f"Гарантия проекта: с {warranty_from} до {warranty_to}",
+    ]
     return "Данные проекта (точные данные из системы, не из базы знаний):\n" + "\n".join(lines)
 
 
 async def _cabinet_directory_context(session: AsyncSession, project_id: int) -> str | None:
-    """Список ШУ проекта (номер, тип, гарантия) — структурированные данные из
-    БД, которых нет и не может быть в базе знаний через RAG-поиск (вопросы вида
-    "есть ли ШУ-318 в этом проекте", "когда гарантия на ШУ-52")."""
+    """Список ШУ проекта — номер, тип, гарантия, плюс (если заполнены) назначение,
+    описание и координаты — структурированные данные из БД, которых нет и не
+    может быть в базе знаний через RAG-поиск (вопросы вида "есть ли ШУ-318 в
+    этом проекте", "для чего этот шкаф", "где он находится").
+
+    admin_comment сюда сознательно не идёт — это внутренняя заметка админа/
+    оператора, не предназначенная для показа клиенту, в отличие от остальных
+    полей (purpose/description/координаты и так уже видны самому пользователю
+    в карточке его ШУ, см. UserCabinetDetailOut)."""
     from app.models.cabinets import Cabinet as CabinetModel
     from app.utils.warranty import warranty_status
 
@@ -280,7 +297,14 @@ async def _cabinet_directory_context(session: AsyncSession, project_id: int) -> 
         status = _WARRANTY_STATUS_LABELS[warranty_status(c.warranty_ends_at)]
         name_suffix = f", {c.admin_internal_name}" if c.admin_internal_name else ""
         until = f" до {c.warranty_ends_at.date().isoformat()}" if c.warranty_ends_at else ""
-        lines.append(f"- {c.object_number} ({c.type}){name_suffix} — {status}{until}")
+        block = [f"- {c.object_number} ({c.type}){name_suffix} — {status}{until}"]
+        if c.purpose:
+            block.append(f"  назначение: {c.purpose}")
+        if c.description:
+            block.append(f"  описание: {c.description}")
+        if c.latitude is not None and c.longitude is not None:
+            block.append(f"  координаты: {c.latitude}, {c.longitude}")
+        lines.append("\n".join(block))
     return "ШУ этого проекта (точные данные из системы, не из базы знаний):\n" + "\n".join(lines)
 
 
@@ -639,12 +663,12 @@ async def handle_message(
             return
 
     try:
-        # Получаем последние сообщения для контекста диалога (до 6)
+        # Получаем последние сообщения для контекста диалога
         history_rows = (await session.execute(
             select(Message)
             .where(Message.chat_id == chat_id, Message.deleted_at.is_(None))
             .order_by(Message.id.desc())
-            .limit(6)
+            .limit(settings.bot_history_limit)
         )).scalars().all()
         history = list(reversed(history_rows))
 

@@ -47,6 +47,9 @@ class Settings(BaseSettings):
 
     bot_follow_up_minutes: int = 60
     bot_max_attempts: int = 3
+    # Сколько последних сообщений чата (включая текущее) уходит в LLM как
+    # история диалога — чем больше, тем дороже и медленнее каждый запрос
+    bot_history_limit: int = 25
 
     bitrix_webhook_url: str = ""
     bitrix_default_responsible_id: int = 0
