@@ -7,7 +7,10 @@ RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 FROM python:3.12-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+# libreoffice-writer — конвертация старых .doc/.xls в .docx/.xlsx при
+# индексации документов ботом (см. app/services/bot_indexer.py), сами эти
+# бинарные форматы python-docx/openpyxl не читают
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libreoffice-writer \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /code

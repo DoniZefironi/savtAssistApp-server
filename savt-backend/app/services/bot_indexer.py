@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import subprocess
+import tempfile
 from pathlib import Path
 
 from sqlalchemy import delete, select
@@ -110,12 +112,51 @@ async def _ocr_image_file(path: Path) -> str:
 
 _IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
 
-# Старые бинарные форматы (Word/Excel 97-2003) современными библиотеками не
-# читаются в принципе — нужна конвертация в .docx/.xlsx, а не парсинг.
-_UNSUPPORTED_LEGACY_FORMATS = {
-    ".doc": "Word 97-2003 (.doc) — пересохраните файл как .docx",
-    ".xls": "Excel 97-2003 (.xls) — пересохраните файл как .xlsx",
-}
+# Старые бинарные форматы (Word/Excel 97-2003) python-docx/openpyxl не читают
+# в принципе — это не тот же формат в другой обёртке, а совсем другой (OLE,
+# не XML). Конвертируем через LibreOffice headless в современный .docx/.xlsx,
+# а дальше уже переиспользуем обычный _parse_docx/_parse_excel как есть.
+_LEGACY_OFFICE_TARGETS = {".doc": "docx", ".xls": "xlsx"}
+_LIBREOFFICE_TIMEOUT_SECONDS = 90
+
+
+def _run_libreoffice_convert(path: Path, target_ext: str, out_dir: str, profile_dir: str) -> bytes | None:
+    """Синхронная часть (subprocess.run) — вызывается через asyncio.to_thread.
+    -env:UserInstallation с отдельным профилем на каждый вызов — иначе
+    параллельные конвертации (несколько документов проиндексированы почти
+    одновременно) конфликтуют за один и тот же профиль LibreOffice и падают."""
+    try:
+        result = subprocess.run(
+            [
+                "soffice", "--headless", "--norestore",
+                f"-env:UserInstallation=file://{profile_dir}",
+                "--convert-to", target_ext, "--outdir", out_dir, str(path),
+            ],
+            capture_output=True, timeout=_LIBREOFFICE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning("LibreOffice: превышено время конвертации %s", path)
+        return None
+    if result.returncode != 0:
+        logger.warning(
+            "LibreOffice не смог сконвертировать %s: %s", path, result.stderr.decode(errors="replace")[:500],
+        )
+        return None
+    converted = Path(out_dir) / f"{path.stem}.{target_ext}"
+    if not converted.exists():
+        logger.warning("LibreOffice не создал ожидаемый файл для %s", path)
+        return None
+    return converted.read_bytes()
+
+
+async def _convert_legacy_office(path: Path, target_ext: str) -> bytes | None:
+    with tempfile.TemporaryDirectory(prefix="office_convert_") as out_dir, \
+         tempfile.TemporaryDirectory(prefix="lo_profile_") as profile_dir:
+        try:
+            return await asyncio.to_thread(_run_libreoffice_convert, path, target_ext, out_dir, profile_dir)
+        except Exception:
+            logger.exception("Не удалось сконвертировать %s через LibreOffice", path)
+            return None
 
 
 async def _extract_text(file_url: str) -> str:
@@ -126,12 +167,19 @@ async def _extract_text(file_url: str) -> str:
         return ""
 
     suffix = path.suffix.lower()
-    if suffix in _UNSUPPORTED_LEGACY_FORMATS:
-        logger.warning(
-            "Формат не поддерживается извлечением текста (%s): %s",
-            _UNSUPPORTED_LEGACY_FORMATS[suffix], path,
-        )
-        return ""
+
+    if suffix in _LEGACY_OFFICE_TARGETS:
+        target_ext = _LEGACY_OFFICE_TARGETS[suffix]
+        converted = await _convert_legacy_office(path, target_ext)
+        if converted is None:
+            logger.warning("Не удалось прочитать старый формат (%s) через LibreOffice: %s", suffix, path)
+            return ""
+        tmp_path = Path(tempfile.mktemp(suffix=f".{target_ext}"))
+        try:
+            await asyncio.to_thread(tmp_path.write_bytes, converted)
+            return _parse_docx(tmp_path) if target_ext == "docx" else _parse_excel(tmp_path)
+        finally:
+            await asyncio.to_thread(tmp_path.unlink, True)
 
     if suffix == ".pdf":
         text = await _parse_pdf(path)

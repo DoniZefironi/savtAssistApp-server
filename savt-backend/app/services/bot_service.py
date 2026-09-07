@@ -259,8 +259,20 @@ async def _project_info_context(session: AsyncSession, project_id: int) -> str |
         f"да, {project.shipment_actual_at.date().isoformat()}"
         if project.shipment_actual_at else "ещё не отгружено"
     )
-    warranty_from = project.warranty_starts_at.date().isoformat() if project.warranty_starts_at else "не указано"
-    warranty_to = project.warranty_ends_at.date().isoformat() if project.warranty_ends_at else "не указано"
+    if project.warranty_starts_at or project.warranty_ends_at:
+        warranty_from = project.warranty_starts_at.date().isoformat() if project.warranty_starts_at else "не указано"
+        warranty_to = project.warranty_ends_at.date().isoformat() if project.warranty_ends_at else "не указано"
+        warranty_line = f"с {warranty_from} до {warranty_to}"
+    else:
+        # Явно, не просто "не указано" — модель на практике при пустых датах
+        # подменяла ответ общей статьёй о правилах/условиях гарантии из базы
+        # знаний вместо честного "не указана", несмотря на отдельное правило в
+        # промпте. Проговариваем прямо в данных, что это разные вещи.
+        warranty_line = (
+            "НЕ УКАЗАНА в системе (не заполнена администратором). Это точный ответ "
+            "на вопрос 'какая гарантия' — так и отвечай, не заменяй общей статьёй "
+            "о правилах/условиях гарантии из базы знаний, это другой вопрос."
+        )
 
     lines = [
         f"Название: {project.name}",
@@ -269,7 +281,7 @@ async def _project_info_context(session: AsyncSession, project_id: int) -> str |
         f"Плановая дата отгрузки: {planned}",
         f"Отгружено фактически: {actual}",
         f"Гарантия проекта (это и есть ответ на 'какая у нас/меня гарантия', "
-        f"не общая статья о правилах гарантии): с {warranty_from} до {warranty_to}",
+        f"не общая статья о правилах гарантии): {warranty_line}",
     ]
     return "Данные проекта (точные данные из системы, не из базы знаний):\n" + "\n".join(lines)
 
