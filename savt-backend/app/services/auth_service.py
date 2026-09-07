@@ -31,6 +31,11 @@ from app.models.role import Role
 
 _DEFAULT_USER_ROLE_ID = 1
 
+# Сколько секунд после ротации refresh-токена его повторное использование
+# считается безобидной гонкой (несколько вкладок/быстрые перезагрузки), а не
+# признаком кражи — см. refresh_tokens
+_REFRESH_REUSE_GRACE_SECONDS = 10
+
 PURPOSE_REGISTRATION = "registration"
 PURPOSE_PASSWORD_RESET = "password_reset"
 # "phone_change" здесь больше нет: смена номера идёт через заявку с одобрением
@@ -228,7 +233,32 @@ class AuthService:
 
 
         if stored.revoked_at is not None:
-            # токена уже нет, кто-то хочет его использовать(ну или просто со всех устройств вышли, и токен остался в кеше)
+            # Токен уже ротирован (revoked_at + replaced_by_id) и с этого момента
+            # прошло совсем немного — почти наверняка не кража, а обычная гонка:
+            # несколько параллельных запросов с одним и тем же (ещё не
+            # обновившимся в клиентском хранилище) refresh-токеном, например
+            # несколько вкладок или быстрые повторные перезагрузки страницы.
+            # find_by_hash(for_update=True) сериализует их через блокировку
+            # строки — самый первый успевает ротировать токен и закоммититься,
+            # остальные видят его уже отозванным буквально через мгновение.
+            # В пределах короткого окна просто выдаём им ещё одну свежую пару
+            # токенов вместо того, чтобы валить все сессии пользователя.
+            grace = timedelta(seconds=_REFRESH_REUSE_GRACE_SECONDS)
+            if (
+                stored.replaced_by_id is not None
+                and datetime.now(timezone.utc) - stored.revoked_at <= grace
+            ):
+                grace_user = await self.user_repo.get_by_id(stored.user_id)
+                if grace_user is None or not grace_user.is_active:
+                    raise AuthenticationError("Пользователь недоступен")
+                new_access, new_refresh, _ = await self._issue_tokens_internal(
+                    grace_user, user_agent, ip_address,
+                )
+                await self.session.commit()
+                return new_access, new_refresh
+
+            # Токен отозван явно (logout/бан) или "воскрес" спустя долгое время
+            # после ротации — вот это уже похоже на кражу, а не на гонку вкладок
             await self.token_repo.revoke_all_for_user(stored.user_id)
             await self.session.commit()
             raise AuthenticationError(
