@@ -347,6 +347,49 @@ class AdminPhoneChangeRequestOut(PhoneChangeRequestOut):
     pending_rivals: int = 1
 
 
+# Заявка на сброс пароля — для пользователей без Telegram, которым
+# самостоятельный сброс (PasswordResetStartIn, только channel=telegram)
+# недоступен. Идентифицируется по телефону — заявитель ещё не залогинен
+# (забыл пароль), поэтому эндпоинт подачи без авторизации.
+class PasswordResetRequestCreateIn(BaseModel):
+    phone: str
+    new_password: str = Field(..., min_length=8, max_length=100)
+    new_password_confirm: str = Field(..., min_length=8, max_length=100)
+    user_comment: str | None = Field(None, min_length=1, max_length=1000)
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v: str) -> str:
+        return _normalize_phone(v)
+
+    @model_validator(mode='after')
+    def validate_passwords_match(self) -> 'PasswordResetRequestCreateIn':
+        if self.new_password != self.new_password_confirm:
+            raise ValueError('Пароли не совпадают')
+        return self
+
+
+class PasswordResetRequestOut(BaseModel):
+    id: int
+    status: str
+    created_at: datetime
+
+
+class AdminPasswordResetRequestOut(BaseModel):
+    id: int
+    user_id: int
+    user_full_name: str | None
+    user_phone: str | None
+    user_type: str | None
+    organization_name: str | None
+    user_comment: str | None
+    status: str
+    admin_response: str | None
+    resolved_by_admin_id: int | None
+    created_at: datetime
+    resolved_at: datetime | None
+
+
 # смена пароля
 class PasswordChange(BaseModel):
     password: str = Field(..., min_length=8, max_length=100)

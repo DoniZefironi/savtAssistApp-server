@@ -13,6 +13,8 @@ from app.schemas.auth import (
     LogoutIn,
     PasswordChange,
     PasswordResetCompleteIn,
+    PasswordResetRequestCreateIn,
+    PasswordResetRequestOut,
     PasswordResetStartIn,
     PasswordResetStartOut,
     PhoneChangeRequestCreateIn,
@@ -31,6 +33,7 @@ from app.schemas.auth import (
     UserMeOut,
 )
 from app.services.auth_service import AuthService
+from app.services.password_reset_request_service import PasswordResetRequestService
 from app.services.phone_change_service import PhoneChangeService
 from app.services.registration_request_service import RegistrationRequestService
 from app.models.role import Role
@@ -241,7 +244,21 @@ async def password_reset_complete(
         new_password=payload.new_password,
         new_password_confirm=payload.new_password_confirm
     )
-    
+
+# Заявка на сброс пароля — для тех, у кого нет Telegram и кто поэтому не
+# может пройти /password-reset/start. Пароль не меняется сразу, только после
+# одобрения администратором (см. admin_password_reset_requests.py)
+@router.post(
+    "/password-reset/request", response_model=PasswordResetRequestOut, status_code=status.HTTP_201_CREATED,
+)
+@limiter.limit("5/minute")
+async def password_reset_request(
+    request: Request,
+    payload: PasswordResetRequestCreateIn,
+    session: AsyncSession = Depends(get_session),
+):
+    return await PasswordResetRequestService(session).submit(payload)
+
 # Смена пароля
 @router.post('/password-change', status_code=status.HTTP_200_OK)
 async def change_password(
