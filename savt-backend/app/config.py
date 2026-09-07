@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     yandex_folder_id: str = ""
     yandex_api_key: str = ""
     yandex_gpt_model: str = "yandexgpt-lite"
+    # Vision-модель для анализа фото в чате бота (app/services/yandex_service.py
+    # analyze_image) — отдельный OpenAI-совместимый API Yandex AI Studio, не тот
+    # же foundationModels, что у обычного complete(). YandexGPT сама картинки не
+    # понимает, поэтому здесь сторонняя модель, хостящаяся у Yandex AI Studio
+    yandex_vision_model: str = "gemma-3-27b-it"
 
     yandex_storage_bucket: str = ""
     yandex_storage_access_key_id: str = ""

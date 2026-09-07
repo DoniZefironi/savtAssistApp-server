@@ -24,6 +24,8 @@ _SYSTEM_PROMPT = """Ты — помощник Ася, виртуальный а�
 - Используй только информацию из предоставленного контекста.
 - В контексте у каждого фрагмента указан источник в квадратных скобках. Источник "Документация ШУ" приоритетнее источников "FAQ" и "База знаний" — это точные данные по конкретному объекту, а не общая информация. Если по одному и тому же вопросу есть фрагменты и из документации, и из FAQ/базы знаний — в первую очередь опирайся на документацию, а общие источники используй только как дополнение или если документации по этому вопросу нет.
 - Если в сообщении есть блок "ШУ этого проекта" — это точные данные из системы (не из базы знаний), используй их для вопросов о том, какие ШУ есть в проекте, и об их гарантии. Если конкретного ШУ в этом списке нет — так и скажи, не придумывай.
+- Если в сообщении есть блок "Данные проекта" — это тоже точные данные из системы (не из базы знаний): название и номер проекта, компания-заказчик, даты отгрузки, гарантия проекта. Используй их для соответствующих вопросов. Если в этом блоке нет какого-то поля (например, даты отгрузки) — значит, оно ещё не заполнено в системе, так и скажи, не придумывай.
+- Если вопрос пользователя содержит блок вида "[Фото: ...]" — это не слова пользователя, а автоматическое описание фотографии, которую он прислал (сгенерировано отдельной моделью распознавания изображений). Отвечай так, будто сама видела это фото и опираешься на его содержимое.
 - Если контекст не содержит ответа — честно скажи об этом и задай уточняющий вопрос.
 - Внимательно учитывай всю историю переписки в этом чате. Если пользователь уже называл модель ШУ, суть проблемы или другие детали раньше в этом же диалоге — не спрашивай их снова и не отвечай так, будто вопрос задан с нуля: используй то, что уже известно из диалога, в самом ответе или в уточняющем вопросе. Если ты уже задавала уточняющий вопрос и пользователь на него ответил — переходи к сути, а не повторяй тот же вопрос другими словами.
 - Никогда сама не предлагай позвать/подключить оператора — это решает не твой ответ, а система отдельно. Если пользователь сам просит оператора и в этом же сообщении нет отдельного вопроса по существу — просто ответь по своей обычной логике (контекст не найден / уточняющий вопрос и т.п.), как будто просьбы оператора в сообщении не было, и никак не комментируй саму просьбу или то, кто и как решает её звать — ни отказом, ни объяснением, ни упоминанием "системы". Это не твоя тема для ответа вообще.
@@ -220,23 +222,50 @@ _WARRANTY_STATUS_LABELS = {
 }
 
 
-async def _cabinet_directory_context(session: AsyncSession, chat: Chat) -> str | None:
+async def _resolve_chat_project_id(session: AsyncSession, chat: Chat) -> int | None:
+    """project_id чата — напрямую у чата проекта, через cabinet.project_id у
+    чата ШУ, иначе None (чат поддержки, либо ШУ вне проекта)."""
+    if chat.project_id is not None:
+        return chat.project_id
+    if chat.cabinet_id is not None:
+        from app.models.cabinets import Cabinet as CabinetModel
+        cabinet = await session.get(CabinetModel, chat.cabinet_id)
+        return cabinet.project_id if cabinet else None
+    return None
+
+
+async def _project_info_context(session: AsyncSession, project_id: int) -> str | None:
+    """Поля проекта из Bitrix (название, номер, заказчик, даты отгрузки, гарантия
+    проекта) — структурированные данные из БД, не из базы знаний через RAG
+    (вопросы вида "когда у нас отгрузка", "кто заказчик по этому проекту")."""
+    from app.models.project import Project as ProjectModel
+
+    project = await session.get(ProjectModel, project_id)
+    if project is None:
+        return None
+
+    lines = [f"Название: {project.name}"]
+    if project.production_number:
+        lines.append(f"Номер проекта: {project.production_number}")
+    if project.company_name:
+        lines.append(f"Компания-заказчик: {project.company_name}")
+    if project.shipment_planned_at:
+        lines.append(f"Плановая дата отгрузки: {project.shipment_planned_at.date().isoformat()}")
+    if project.shipment_actual_at:
+        lines.append(f"Фактическая дата отгрузки: {project.shipment_actual_at.date().isoformat()}")
+    if project.warranty_starts_at:
+        lines.append(f"Гарантия проекта с: {project.warranty_starts_at.date().isoformat()}")
+    if project.warranty_ends_at:
+        lines.append(f"Гарантия проекта до: {project.warranty_ends_at.date().isoformat()}")
+    return "Данные проекта (точные данные из системы, не из базы знаний):\n" + "\n".join(lines)
+
+
+async def _cabinet_directory_context(session: AsyncSession, project_id: int) -> str | None:
     """Список ШУ проекта (номер, тип, гарантия) — структурированные данные из
     БД, которых нет и не может быть в базе знаний через RAG-поиск (вопросы вида
-    "есть ли ШУ-318 в этом проекте", "когда гарантия на ШУ-52"). Для чата
-    проекта — все ШУ проекта; для чата конкретного ШУ — он сам плюс остальные
-    ШУ того же проекта (через cabinet.project_id). Для чата без привязки к
-    проекту (support, либо ШУ вне проекта) — ничего не возвращаем: бот честно
-    не знает, о каком проекте речь, лучше молчать, чем придумывать."""
+    "есть ли ШУ-318 в этом проекте", "когда гарантия на ШУ-52")."""
     from app.models.cabinets import Cabinet as CabinetModel
     from app.utils.warranty import warranty_status
-
-    project_id = chat.project_id
-    if project_id is None and chat.cabinet_id is not None:
-        cabinet = await session.get(CabinetModel, chat.cabinet_id)
-        project_id = cabinet.project_id if cabinet else None
-    if project_id is None:
-        return None
 
     cabinets = (await session.execute(
         select(CabinetModel)
@@ -644,11 +673,14 @@ async def handle_message(
         else:
             context_text = "Контекст не найден."
 
-        # Список ШУ проекта — отдельно от RAG, это структурированные данные из
-        # БД (см. _cabinet_directory_context), не найдётся никаким поиском по
-        # документам. None для чата поддержки/ШУ вне проекта — тогда просто
-        # не добавляем блок вообще
-        directory_context = await _cabinet_directory_context(session, chat)
+        # Список ШУ проекта и поля самого проекта (даты отгрузки, заказчик и
+        # т.п.) — отдельно от RAG, это структурированные данные из БД (см.
+        # _cabinet_directory_context/_project_info_context), не найдутся никаким
+        # поиском по документам. None для чата поддержки/ШУ вне проекта —
+        # тогда просто не добавляем блоки вообще
+        project_id = await _resolve_chat_project_id(session, chat)
+        directory_context = await _cabinet_directory_context(session, project_id) if project_id else None
+        project_context = await _project_info_context(session, project_id) if project_id else None
 
         # Формируем историю для GPT
         gpt_messages = []
@@ -660,6 +692,8 @@ async def handle_message(
         prompt_text = f"Контекст из базы знаний:\n{context_text}"
         if directory_context:
             prompt_text = f"{directory_context}\n\n{prompt_text}"
+        if project_context:
+            prompt_text = f"{project_context}\n\n{prompt_text}"
         prompt_text += f"\n\nВопрос пользователя: {user_text}"
         gpt_messages.append({"role": "user", "text": prompt_text})
 

@@ -445,20 +445,38 @@ class ChatService:
 
             async def _bot_reply():
                 try:
-                    text_for_bot = data.text
-                    if not text_for_bot:
-                        # Голосовое без текста — распознаём и отвечаем на
-                        # расшифровку так же, как на обычный текст. Расшифровка
-                        # нигде не сохраняется (как и у ручного POST
-                        # /upload/transcribe) — при сбое STT бот просто
-                        # промолчит на это сообщение, как и раньше на голосовые.
+                    parts = [data.text] if data.text else []
+
+                    # Голосовое без текста — распознаём и отвечаем на
+                    # расшифровку так же, как на обычный текст. Расшифровка
+                    # нигде не сохраняется (как и у ручного POST
+                    # /upload/transcribe) — при сбое STT просто ничего не
+                    # добавляется, как и раньше на голосовые.
+                    if not data.text:
                         voice_att = next(
                             (a for a in data.attachments
                              if a.file_url and a.mime_type and a.mime_type.startswith("audio/")),
                             None,
                         )
                         if voice_att is not None:
-                            text_for_bot = await _transcribe_voice_attachment(voice_att.file_url)
+                            transcript = await _transcribe_voice_attachment(voice_att.file_url)
+                            if transcript:
+                                parts.append(transcript)
+
+                    # Фото — анализируем независимо от того, есть текст или
+                    # нет (подпись к фото и само фото дополняют друг друга).
+                    # Лимит на количество — не гонять vision-модель по всем
+                    # фото разом, если их прислали сразу много
+                    image_atts = [
+                        a for a in data.attachments
+                        if a.file_url and a.mime_type and a.mime_type.startswith("image/")
+                    ][:_MAX_BOT_IMAGES_PER_MESSAGE]
+                    for att in image_atts:
+                        description = await _analyze_image_attachment(att.file_url, att.mime_type)
+                        if description:
+                            parts.append(f"[Фото: {description}]")
+
+                    text_for_bot = "\n\n".join(parts)
                     if not text_for_bot:
                         return
                     async with AsyncSessionLocal() as bot_session:
@@ -925,6 +943,33 @@ async def _transcribe_voice_attachment(file_url: str) -> str | None:
     if len(audio_bytes) <= yandex_service.MAX_SYNC_STT_BYTES:
         return await yandex_service.transcribe_voice(audio_bytes, format="oggopus")
     return await yandex_service.transcribe_voice_long(audio_bytes, format="oggopus")
+
+
+# Сколько фото из одного сообщения анализирует бот — защита от случая, когда
+# в одном сообщении разом присылают десяток фото (каждое — отдельный платный
+# запрос к vision-модели, вдобавок последовательно, не параллельно)
+_MAX_BOT_IMAGES_PER_MESSAGE = 3
+
+_IMAGE_ANALYSIS_PROMPT = (
+    "Опиши, что изображено на этой фотографии, для сервисного специалиста по "
+    "шкафам управления: какое оборудование или что видно в кадре, есть ли "
+    "видимые повреждения, надписи, коды ошибок на экранах/индикаторах, "
+    "показания приборов. Кратко и по делу, на русском языке."
+)
+
+
+async def _analyze_image_attachment(file_url: str, mime_type: str) -> str | None:
+    """Описывает фото через vision-модель — для бота, когда в чат прислали фото
+    (с подписью или без). None — файла на диске нет или он пуст."""
+    from app.services import yandex_service
+    from app.services.upload_service import UPLOAD_ROOT
+
+    path = (UPLOAD_ROOT / file_url.removeprefix("/static/")).resolve()
+    if not path.is_relative_to(UPLOAD_ROOT.resolve()) or not await asyncio.to_thread(path.is_file):
+        return None
+
+    image_bytes = await asyncio.to_thread(path.read_bytes)
+    return await yandex_service.analyze_image(image_bytes, _IMAGE_ANALYSIS_PROMPT, mime_type=mime_type)
 
 
 def _attachment_type(mime_type: str) -> str:

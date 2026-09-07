@@ -194,6 +194,51 @@ async def _long_running_recognize(
     raise RuntimeError("Yandex LRR timeout: распознавание не завершилось вовремя")
 
 
+_MULTIMODAL_URL = "https://ai.api.cloud.yandex.net/v1/chat/completions"
+
+
+async def analyze_image(image_bytes: bytes, prompt: str, mime_type: str = "image/jpeg") -> str:
+    """Описывает содержимое фото через vision-модель Yandex AI Studio (см.
+    settings.yandex_vision_model, по умолчанию Gemma 3 27B) — для анализа фото,
+    присланных в чат бота. Это ОТДЕЛЬНЫЙ API от complete()/embed_*/ocr_image:
+    другой домен (ai.api.cloud.yandex.net, не llm./vision.), OpenAI-совместимый
+    формат запроса/ответа (messages[].content — список из text/image_url блоков,
+    ответ в choices[0].message.content), и обязательный заголовок OpenAI-Project
+    с folder_id — без него запрос отклоняется. Сама YandexGPT картинки не
+    понимает, отсюда и сторонняя модель вместо той, что использует complete()."""
+    if not settings.yandex_folder_id or not settings.yandex_api_key:
+        raise RuntimeError("Yandex API не настроен")
+
+    b64 = base64.b64encode(image_bytes).decode("ascii")
+    model_uri = f"gpt://{settings.yandex_folder_id}/{settings.yandex_vision_model}"
+    resp = await _get_client().post(
+        _MULTIMODAL_URL,
+        headers={
+            "Authorization": f"Api-Key {settings.yandex_api_key}",
+            "Content-Type": "application/json",
+            "OpenAI-Project": settings.yandex_folder_id,
+        },
+        json={
+            "model": model_uri,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{b64}"}},
+                ],
+            }],
+        },
+        timeout=60,
+    )
+    if not resp.is_success:
+        raise RuntimeError(f"Yandex vision {resp.status_code}: {resp.text}")
+    data = resp.json()
+    try:
+        return data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        raise RuntimeError(f"Yandex vision: неожиданный формат ответа: {data}")
+
+
 _VISION_URL = "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze"
 
 
