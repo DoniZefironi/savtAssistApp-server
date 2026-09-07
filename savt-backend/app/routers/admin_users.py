@@ -11,6 +11,7 @@ from app.schemas.admin_users import (
     CabinetUserOut,
     CreateAdminIn,
     CreateOperatorIn,
+    CreateUserIn,
 )
 from app.schemas.pagination import PageOut
 from app.services.admin_user_service import AdminUserService
@@ -37,6 +38,18 @@ async def create_operator(
     session: AsyncSession = Depends(get_session),
 ):
     return await AdminUserService(session).create_operator(payload, actor.id, actor_role)
+
+
+# Создать пользователя (role=user) напрямую, минуя Telegram-подтверждение —
+# для случаев, когда админ регистрирует человека сам (например, по телефону)
+@router.post("/admin/users", response_model=AdminUserListOut, status_code=status.HTTP_201_CREATED)
+async def create_user(
+    payload: CreateUserIn,
+    actor: User = Depends(require_role(RoleName.ADMIN)),
+    actor_role: str = Depends(get_role_from_token),
+    session: AsyncSession = Depends(get_session),
+):
+    return await AdminUserService(session).create_user(payload, actor.id, actor_role)
 
 
 # Пользователи (role=user)

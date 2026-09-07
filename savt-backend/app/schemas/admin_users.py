@@ -1,6 +1,7 @@
 from datetime import datetime
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.schemas.auth import _normalize_phone
 from app.schemas.project import UserProjectListItemOut
 
 
@@ -63,6 +64,42 @@ class CreateAdminIn(BaseModel):
         if " " in v:
             raise ValueError("Логин не должен содержать пробелы")
         return v.lower()
+
+
+# Прямое создание пользователя (role=user) администратором — минуя
+# Telegram-подтверждение номера: сам факт, что учётку заводит админ, и есть
+# подтверждение (та же логика, что у одобрения RegistrationRequest).
+class CreateUserIn(BaseModel):
+    phone: str
+    password: str = Field(..., min_length=8, max_length=100)
+    full_name: str = Field(..., min_length=1, max_length=200)
+    user_type: str = Field(...)
+    organization_name: str | None = Field(None)
+    contact_phone: str | None = Field(None)
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v: str) -> str:
+        return _normalize_phone(v)
+
+    @field_validator("contact_phone")
+    @classmethod
+    def validate_contact_phone(cls, v: str | None) -> str | None:
+        return _normalize_phone(v) if v else None
+
+    @field_validator("user_type")
+    @classmethod
+    def validate_user_type(cls, v: str) -> str:
+        allowed_types = ["individual", "organization"]
+        if v not in allowed_types:
+            raise ValueError(f"user_type должен быть один из {', '.join(allowed_types)}")
+        return v
+
+    @model_validator(mode="after")
+    def validate_organization_name_for_contractor(self) -> "CreateUserIn":
+        if self.user_type == "organization" and not (self.organization_name or "").strip():
+            raise ValueError('Для типа пользователя "организация" необходимо указать наименование организации')
+        return self
 
 
 class BanUserIn(BaseModel):

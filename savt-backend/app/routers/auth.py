@@ -22,6 +22,8 @@ from app.schemas.auth import (
     RegisterStartIn,
     RegisterStartOut,
     RegisterStatusOut,
+    RegistrationRequestCreateIn,
+    RegistrationRequestOut,
     ResendCodeIn,
     ResendCodeOut,
     TokenPairOut,
@@ -30,6 +32,7 @@ from app.schemas.auth import (
 )
 from app.services.auth_service import AuthService
 from app.services.phone_change_service import PhoneChangeService
+from app.services.registration_request_service import RegistrationRequestService
 from app.models.role import Role
 
 # Все эндпоинты будут доступны по префиксу
@@ -114,6 +117,20 @@ async def register_resend(
     service = AuthService(session)
     deep_link, cooldown = await service.register_resend_code(payload.registration_token)
     return ResendCodeOut(resend_after_seconds=cooldown, deep_link=deep_link)
+
+# Заявка на регистрацию — альтернатива /register/start для тех, кому не
+# подходит подтверждение через Telegram. Аккаунт не создаётся сразу, только
+# после ручного одобрения администратором (см. admin_registration_requests.py)
+@router.post(
+    "/register/request", response_model=RegistrationRequestOut, status_code=status.HTTP_201_CREATED,
+)
+@limiter.limit("5/minute")
+async def register_request(
+    request: Request,
+    payload: RegistrationRequestCreateIn,
+    session: AsyncSession = Depends(get_session),
+):
+    return await RegistrationRequestService(session).submit(payload)
 
 # Вход для администратора / оператора
 @router.post("/admin-login", response_model=TokenPairOut)

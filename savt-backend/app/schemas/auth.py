@@ -246,6 +246,80 @@ class PhoneChangeRequestCreateIn(BaseModel):
         return _normalize_phone(v)
 
 
+# Заявка на регистрацию — альтернатива самостоятельной регистрации через
+# Telegram (RegisterStartIn): те же данные формы, но плюс сам номер телефона
+# (в обычной регистрации он приходит из Telegram-контакта, здесь его неоткуда
+# взять, кроме как спросить прямо) и без подтверждения через мессенджер —
+# вместо этого заявку вручную одобряет администратор.
+class RegistrationRequestCreateIn(BaseModel):
+    phone: str
+    password: str = Field(..., min_length=8, max_length=100)
+    password_confirm: str = Field(..., min_length=8, max_length=100)
+    full_name: str = Field(..., min_length=1, max_length=200)
+    user_type: str = Field(...)
+    organization_name: str | None = Field(None)
+    contact_phone: str | None = Field(None)
+    user_comment: str | None = Field(None, min_length=1, max_length=1000)
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v: str) -> str:
+        return _normalize_phone(v)
+
+    @field_validator("contact_phone")
+    @classmethod
+    def validate_contact_phone(cls, v: str | None) -> str | None:
+        return _normalize_phone(v) if v else None
+
+    @field_validator("user_type")
+    @classmethod
+    def validate_user_type(cls, v: str) -> str:
+        allowed_types = ["individual", "organization"]
+        if v not in allowed_types:
+            raise ValueError(f"user_type должен быть один из {', '.join(allowed_types)}")
+        return v
+
+    @model_validator(mode='after')
+    def validate_passwords_match(self) -> 'RegistrationRequestCreateIn':
+        if self.password != self.password_confirm:
+            raise ValueError('Пароли не совпадают')
+        return self
+
+    @model_validator(mode='after')
+    def validate_organization_name_for_contractor(self) -> 'RegistrationRequestCreateIn':
+        if self.user_type == "organization" and not (self.organization_name or "").strip():
+            raise ValueError('Для типа пользователя "организация" необходимо указать наименование организации')
+        return self
+
+
+class RegistrationRequestOut(BaseModel):
+    id: int
+    status: str
+    created_at: datetime
+
+
+class AdminRegistrationRequestOut(BaseModel):
+    id: int
+    phone: str
+    full_name: str
+    user_type: str
+    organization_name: str | None
+    contact_phone: str | None
+    user_comment: str | None
+    status: str
+    admin_response: str | None
+    resolved_by_admin_id: int | None
+    created_user_id: int | None
+    created_at: datetime
+    resolved_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+class ApproveRegistrationRequestIn(BaseModel):
+    admin_response: str | None = Field(None, min_length=1, max_length=1000)
+
+
 class PhoneChangeRequestOut(BaseModel):
     id: int
     user_id: int

@@ -11,6 +11,7 @@ from app.schemas.admin_users import (
     CabinetUserOut,
     CreateAdminIn,
     CreateOperatorIn,
+    CreateUserIn,
 )
 from app.schemas.pagination import PageOut, make_page
 
@@ -176,6 +177,69 @@ class AdminUserService:
             user_type=user.user_type,
             organization_name=user.organization_name,
             role="operator",
+            is_active=user.is_active,
+            is_phone_verified=user.is_phone_verified,
+            is_verified=user.is_verified,
+            created_at=user.created_at,
+        )
+
+    # Прямое создание пользователя (role=user) администратором — минуя
+    # Telegram-подтверждение номера. is_phone_verified/is_verified=True сразу:
+    # сам факт, что учётку заводит админ (обычно уже связавшись с человеком не
+    # через приложение), заменяет автоматическое подтверждение через Telegram —
+    # без этого пользователь не смог бы даже войти (см. AuthService.login,
+    # логин отклоняется при is_phone_verified=False). Заводим и базовые чаты
+    # (support/notes), как при обычном завершении регистрации.
+    async def create_user(self, data: CreateUserIn, actor_id: int, actor_role: str) -> AdminUserListOut:
+        from app.core.exceptions import AlreadyExistsError
+        from app.core.security import hash_password
+        from app.models.role import Role
+        from sqlalchemy import select
+
+        existing = await self.user_repo.find_by_phone(data.phone)
+        if existing is not None:
+            raise AlreadyExistsError("Пользователь с таким номером телефона уже существует")
+
+        role = (await self.session.execute(
+            select(Role).where(Role.name == "user")
+        )).scalar_one_or_none()
+        if role is None:
+            from app.core.exceptions import NotFoundError
+            raise NotFoundError("Роль 'user' не найдена")
+
+        user = await self.user_repo.create(
+            phone=data.phone,
+            contact_phone=data.contact_phone,
+            full_name=data.full_name,
+            user_type=data.user_type,
+            organization_name=data.organization_name,
+            hashed_password=hash_password(data.password),
+            role_id=role.id,
+            is_active=True,
+            is_phone_verified=True,
+            is_verified=True,
+        )
+        await self.session.flush()
+
+        from app.services.chat_service import ChatService, chat_summary_dict
+        support_chat = await ChatService(self.session).ensure_support_and_notes(user.id)
+
+        await self._log(actor_id, actor_role, "user.create", "user", user.id, {"phone": data.phone})
+        await self.session.commit()
+
+        if support_chat is not None:
+            from app.services.realtime_events import publish_chat_created
+            await publish_chat_created(support_chat.id, chat_summary_dict(support_chat, user_name=user.full_name))
+
+        return AdminUserListOut(
+            id=user.id,
+            phone=user.phone,
+            contact_phone=user.contact_phone,
+            login=user.login,
+            full_name=user.full_name,
+            user_type=user.user_type,
+            organization_name=user.organization_name,
+            role="user",
             is_active=user.is_active,
             is_phone_verified=user.is_phone_verified,
             is_verified=user.is_verified,
