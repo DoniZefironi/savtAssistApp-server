@@ -685,12 +685,18 @@ async def handle_message(
         # пользователя ТОЛЬКО для поиска — в сам промпт уходит текст как есть
         search_query = user_text
         if len(_tokens(user_text)) <= 4:
-            prev_user_text = next(
-                (h.text for h in reversed(history[:-1]) if h.sender_id != bot_user_id and h.text),
-                None,
-            )
-            if prev_user_text:
-                search_query = f"{prev_user_text} {user_text}"
+            # Не только последнее сообщение пользователя, а несколько последних:
+            # между содержательным вопросом ("какие характеристики у ШУ 123") и
+            # текущим коротким ("технические характеристики") мог затесаться
+            # короткий "подгоняющий" ответ ("так посмотри в руководстве") без
+            # самого важного — номера ШУ. Взяв только последнее, поиск терял
+            # этот номер и промахивался мимо документа именно этого ШУ.
+            recent_user_texts = [
+                h.text for h in reversed(history[:-1])
+                if h.sender_id != bot_user_id and h.text
+            ][:3]
+            if recent_user_texts:
+                search_query = f"{' '.join(reversed(recent_user_texts))} {user_text}"
 
         # RAG: ищем релевантные куски
         context_chunks = await _retrieve_context(session, search_query, chat.cabinet_id, chat.project_id)
