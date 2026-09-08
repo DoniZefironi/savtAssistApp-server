@@ -21,15 +21,26 @@ _log = logging.getLogger(__name__)
 @router.post("/reindex", status_code=status.HTTP_202_ACCEPTED)
 async def reindex(
     force: bool = Query(False, description="true — переиндексировать всё, false — только новое"),
+    scope: str = Query(
+        "all", pattern="^(all|faq|kb_article|document)$",
+        description="что переиндексировать: all/faq/kb_article/document",
+    ),
+    project_id: int | None = Query(
+        None, gt=0,
+        description="только документы этого проекта (и его дочерних/ШУ) — имеет смысл только со scope=document или all",
+    ),
     _: User = Depends(require_role(RoleName.ADMIN)),
 ):
     async def _task():
         try:
             async with AsyncSessionLocal() as session:
-                stats = await reindex_all(session, force=force)
-                _log.info("Переиндексация завершена (force=%s): %s", force, stats)
+                stats = await reindex_all(session, force=force, scope=scope, project_id=project_id)
+                _log.info(
+                    "Переиндексация завершена (force=%s, scope=%s, project_id=%s): %s",
+                    force, scope, project_id, stats,
+                )
         except Exception:
-            _log.exception("Переиндексация (force=%s) не удалась", force)
+            _log.exception("Переиндексация (force=%s, scope=%s, project_id=%s) не удалась", force, scope, project_id)
     asyncio.create_task(_task())
     return {"status": "started", "message": "Индексация запущена в фоне, результат смотрите в логах"}
 

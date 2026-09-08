@@ -4,7 +4,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.document import Document
@@ -434,9 +434,48 @@ def schedule_reindex_document(doc_id: int) -> None:
     asyncio.create_task(_task())
 
 
-async def reindex_all(session: AsyncSession, force: bool = False) -> dict:
+async def _resolve_project_document_scope(session: AsyncSession, project_id: int) -> tuple[set[int], set[int]]:
+    """project_id + все его дочерние проекты (рекурсивно) → их ID и ID всех их
+    ШУ — та же область, что видит бот в чате этого проекта (см.
+    bot_service._resolve_project_scope, логика продублирована здесь, а не
+    импортирована, чтобы не тянуть зависимость между индексатором и ботом)."""
+    from app.models.cabinets import Cabinet as CabinetModel
+    from app.models.project import Project as ProjectModel
+
+    project_ids = {project_id}
+    frontier = {project_id}
+    while frontier:
+        rows = (await session.execute(
+            select(ProjectModel.id).where(
+                ProjectModel.parent_project_id.in_(frontier), ProjectModel.deleted_at.is_(None),
+            )
+        )).scalars().all()
+        new_ids = set(rows) - project_ids
+        if not new_ids:
+            break
+        project_ids |= new_ids
+        frontier = new_ids
+
+    cabinet_rows = (await session.execute(
+        select(CabinetModel.id).where(
+            CabinetModel.project_id.in_(project_ids), CabinetModel.deleted_at.is_(None),
+        )
+    )).scalars().all()
+    return project_ids, set(cabinet_rows)
+
+
+async def reindex_all(
+    session: AsyncSession, force: bool = False,
+    scope: str = "all", project_id: int | None = None,
+) -> dict:
     """Индексирует только ещё не проиндексированные записи.
     force=True — переиндексирует всё (старое поведение).
+
+    scope — что индексировать: "all" (по умолчанию), "faq", "kb_article" или
+    "document". project_id имеет смысл только вместе с scope="document" (или
+    "all") — ограничивает документы этим проектом и его дочерними/ШУ, как и
+    видит их бот в чате проекта; для FAQ/статей КБ (они не привязаны к
+    проекту) параметр просто не используется.
 
     Каждый элемент коммитится отдельно и сам ловит свою ошибку: раньше весь
     прогон коммитился одним разом в конце, и сбой на одном документе (например,
@@ -460,47 +499,57 @@ async def reindex_all(session: AsyncSession, force: bool = False) -> dict:
     else:
         already = set()
 
-    entries = (await session.execute(select(FaqEntry))).scalars().all()
-    for e in entries:
-        if ("faq", e.id) in already:
-            stats["skipped"] += 1
-            continue
-        try:
-            await index_faq_entry(session, e)
-            await session.commit()
-            stats["faq"] += 1
-        except Exception:
-            await session.rollback()
-            stats["failed"] += 1
-            logger.exception("Индексация FAQ %s не удалась", e.id)
+    if scope in ("all", "faq"):
+        entries = (await session.execute(select(FaqEntry))).scalars().all()
+        for e in entries:
+            if ("faq", e.id) in already:
+                stats["skipped"] += 1
+                continue
+            try:
+                await index_faq_entry(session, e)
+                await session.commit()
+                stats["faq"] += 1
+            except Exception:
+                await session.rollback()
+                stats["failed"] += 1
+                logger.exception("Индексация FAQ %s не удалась", e.id)
 
-    articles = (await session.execute(select(KbArticle))).scalars().all()
-    for a in articles:
-        if ("kb_article", a.id) in already:
-            stats["skipped"] += 1
-            continue
-        try:
-            await index_kb_article(session, a)
-            await session.commit()
-            stats["kb_article"] += 1
-        except Exception:
-            await session.rollback()
-            stats["failed"] += 1
-            logger.exception("Индексация статьи КБ %s не удалась", a.id)
+    if scope in ("all", "kb_article"):
+        articles = (await session.execute(select(KbArticle))).scalars().all()
+        for a in articles:
+            if ("kb_article", a.id) in already:
+                stats["skipped"] += 1
+                continue
+            try:
+                await index_kb_article(session, a)
+                await session.commit()
+                stats["kb_article"] += 1
+            except Exception:
+                await session.rollback()
+                stats["failed"] += 1
+                logger.exception("Индексация статьи КБ %s не удалась", a.id)
 
-    docs = (await session.execute(select(Document))).scalars().all()
-    for d in docs:
-        if ("document", d.id) in already:
-            stats["skipped"] += 1
-            continue
-        try:
-            await index_document(session, d)
-            await session.commit()
-            stats["document"] += 1
-        except Exception:
-            await session.rollback()
-            stats["failed"] += 1
-            logger.exception("Индексация документа %s не удалась", d.id)
+    if scope in ("all", "document"):
+        if project_id is not None:
+            project_ids, cabinet_ids = await _resolve_project_document_scope(session, project_id)
+            doc_stmt = select(Document).where(
+                or_(Document.project_id.in_(project_ids), Document.cabinet_id.in_(cabinet_ids))
+            )
+        else:
+            doc_stmt = select(Document)
+        docs = (await session.execute(doc_stmt)).scalars().all()
+        for d in docs:
+            if ("document", d.id) in already:
+                stats["skipped"] += 1
+                continue
+            try:
+                await index_document(session, d)
+                await session.commit()
+                stats["document"] += 1
+            except Exception:
+                await session.rollback()
+                stats["failed"] += 1
+                logger.exception("Индексация документа %s не удалась", d.id)
 
     return stats
 
