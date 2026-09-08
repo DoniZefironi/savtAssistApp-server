@@ -36,6 +36,34 @@ def _chunks(text: str) -> list[str]:
 
 
 
+# Отсекаем совсем мелкие картинки (иконки, логотипы, декоративные элементы) —
+# не тратим на них запросы к платным моделям, там всё равно нет полезного
+# для поиска содержимого
+_MIN_DOC_IMAGE_DIMENSION = 150
+# Защита от неограниченных расходов на документ с кучей картинок — считается
+# на весь документ, не на страницу
+_MAX_DOC_IMAGES_ANALYZED = 15
+
+_DOC_IMAGE_PROMPT = (
+    "Это изображение со страницы технической документации на шкаф управления "
+    "(схема, чертёж, фото компонента и т.п.). Опиши его для инженера: что "
+    "изображено, какие обозначения/подписи видны, какая связь между "
+    "элементами показана. Кратко и по делу, на русском языке."
+)
+
+
+def _doc_image_mime_type(img) -> str:
+    fmt = (getattr(img.image, "format", None) or "PNG").lower() if img.image else "png"
+    return f"image/{fmt}" if fmt in ("png", "jpeg", "webp") else "image/png"
+
+
+def _doc_image_too_small(img) -> bool:
+    if img.image is None:
+        return False
+    width, height = img.image.width, img.image.height
+    return width < _MIN_DOC_IMAGE_DIMENSION and height < _MIN_DOC_IMAGE_DIMENSION
+
+
 async def _parse_pdf(path: Path) -> str:
     try:
         from pypdf import PdfReader
@@ -45,32 +73,103 @@ async def _parse_pdf(path: Path) -> str:
         return ""
 
     parts: list[str] = []
+    images_analyzed = 0
     for page_num, page in enumerate(reader.pages):
         text = (page.extract_text() or "").strip()
         if text:
             parts.append(text)
-            continue
-        # Страница без текстового слоя — похоже на скан. Достаём встроенные
-        # изображения страницы напрямую через pypdf (без poppler/pdf2image)
-        # и распознаём их через Yandex Vision OCR.
+
         try:
             images = list(page.images)
         except Exception:
             images = []
+
         for img in images:
-            try:
-                ocr_text = await yandex_service.ocr_image(img.data)
-                if ocr_text.strip():
-                    parts.append(ocr_text)
-            except Exception:
-                logger.exception(
-                    "OCR не удался для страницы %d файла %s", page_num + 1, path
-                )
+            if images_analyzed >= _MAX_DOC_IMAGES_ANALYZED:
+                break
+            if _doc_image_too_small(img):
+                continue
+
+            if not text:
+                # Страница без текстового слоя — похоже на скан печатного
+                # текста, OCR тут полезнее описания
+                try:
+                    ocr_text = await yandex_service.ocr_image(img.data)
+                    if ocr_text.strip():
+                        parts.append(ocr_text)
+                except Exception:
+                    logger.exception(
+                        "OCR не удался для страницы %d файла %s", page_num + 1, path
+                    )
+            else:
+                # Страница с текстом плюс картинка — обычно схема/фото рядом с
+                # описанием, тут полезнее не OCR, а содержательное описание
+                try:
+                    description = await yandex_service.analyze_image(
+                        img.data, _DOC_IMAGE_PROMPT, mime_type=_doc_image_mime_type(img),
+                    )
+                    if description.strip():
+                        parts.append(f"[Изображение на стр. {page_num + 1}]: {description}")
+                except Exception:
+                    logger.exception(
+                        "Анализ изображения не удался для страницы %d файла %s", page_num + 1, path
+                    )
+
+            images_analyzed += 1
             await asyncio.sleep(0.2)
     return "\n\n".join(parts)
 
 
-def _parse_docx(path: Path) -> str:
+def _docx_image_blobs(doc) -> list[tuple[bytes, str]]:
+    """(байты, расширение) всех встроенных картинок документа — через
+    relationships пакета .docx (doc.part.rels), не через обход XML вручную.
+    Расширение берём из partname (реальное имя файла картинки внутри .docx,
+    например "media/image5.emf") — по нему, а не по гаданию, понимаем, что
+    Pillow не откроет и нужна конвертация через LibreOffice.
+
+    В отличие от PDF, .docx не хранит разбивку по страницам на уровне файла
+    (это только при печати/просмотре), поэтому "на какой странице" картинка —
+    не определить."""
+    blobs = []
+    for rel in doc.part.rels.values():
+        if "image" in rel.reltype:
+            try:
+                part = rel.target_part
+                ext = Path(str(part.partname)).suffix.lstrip(".").lower() or "png"
+                blobs.append((part.blob, ext))
+            except Exception:
+                continue
+    return blobs
+
+
+def _probe_image_bytes(data: bytes) -> tuple[int, int, str]:
+    """(ширина, высота, mime_type) картинки по байтам. (0, 0, ...) — если PIL
+    не смог открыть (например, EMF/WMF — Pillow их не читает вообще)."""
+    try:
+        from PIL import Image
+        import io
+        with Image.open(io.BytesIO(data)) as img:
+            fmt = (img.format or "PNG").lower()
+            mime = f"image/{fmt}" if fmt in ("png", "jpeg", "webp") else "image/png"
+            return img.width, img.height, mime
+    except Exception:
+        return 0, 0, "image/png"
+
+
+async def _convert_image_via_libreoffice(data: bytes, src_ext: str) -> bytes | None:
+    """PIL-нечитаемый формат (EMF/WMF и т.п.) → PNG через LibreOffice, чтобы
+    такие картинки не выпадали из анализа молча. Переиспользует тот же
+    _convert_legacy_office, что и .doc/.xls — там только subprocess.run с
+    другим --convert-to, ему всё равно, документ это или картинка."""
+    tmp_path = Path(tempfile.mktemp(suffix=f".{src_ext}"))
+    try:
+        await asyncio.to_thread(tmp_path.write_bytes, data)
+        return await _convert_legacy_office(tmp_path, "png")
+    finally:
+        await asyncio.to_thread(tmp_path.unlink, True)
+
+
+async def _parse_docx(path: Path) -> str:
     try:
         from docx import Document as DocxDocument
         doc = DocxDocument(str(path))
@@ -80,10 +179,46 @@ def _parse_docx(path: Path) -> str:
         for table in doc.tables:
             for row in table.rows:
                 parts.append(" | ".join(cell.text for cell in row.cells))
-        return "\n".join(parts)
     except Exception:
         logger.exception("Не удалось разобрать Word-документ: %s", path)
         return ""
+
+    try:
+        images = _docx_image_blobs(doc)
+    except Exception:
+        images = []
+
+    analyzed = 0
+    for data, ext in images:
+        if analyzed >= _MAX_DOC_IMAGES_ANALYZED:
+            break
+        width, height, mime_type = _probe_image_bytes(data)
+        if width == 0 and height == 0:
+            # Pillow не смог открыть — скорее всего EMF/WMF. Пробуем
+            # сконвертировать в PNG через LibreOffice прежде, чем сдаться.
+            converted = await _convert_image_via_libreoffice(data, ext)
+            if converted is None:
+                logger.warning(
+                    "Картинка формата .%s в %s не читается ни Pillow, ни LibreOffice — пропущена", ext, path,
+                )
+                continue
+            data = converted
+            width, height, mime_type = _probe_image_bytes(data)
+            if width == 0 and height == 0:
+                logger.warning("Картинка формата .%s в %s не открылась даже после конвертации", ext, path)
+                continue
+        if width < _MIN_DOC_IMAGE_DIMENSION and height < _MIN_DOC_IMAGE_DIMENSION:
+            continue
+        try:
+            description = await yandex_service.analyze_image(data, _DOC_IMAGE_PROMPT, mime_type=mime_type)
+            if description.strip():
+                parts.append(f"[Изображение в документе]: {description}")
+        except Exception:
+            logger.exception("Анализ изображения не удался для %s", path)
+        analyzed += 1
+        await asyncio.sleep(0.2)
+
+    return "\n".join(parts)
 
 
 def _parse_excel(path: Path) -> str:
@@ -177,14 +312,14 @@ async def _extract_text(file_url: str) -> str:
         tmp_path = Path(tempfile.mktemp(suffix=f".{target_ext}"))
         try:
             await asyncio.to_thread(tmp_path.write_bytes, converted)
-            return _parse_docx(tmp_path) if target_ext == "docx" else _parse_excel(tmp_path)
+            return await _parse_docx(tmp_path) if target_ext == "docx" else _parse_excel(tmp_path)
         finally:
             await asyncio.to_thread(tmp_path.unlink, True)
 
     if suffix == ".pdf":
         text = await _parse_pdf(path)
     elif suffix == ".docx":
-        text = _parse_docx(path)
+        text = await _parse_docx(path)
     elif suffix == ".xlsx":
         text = _parse_excel(path)
     elif suffix in _IMAGE_SUFFIXES:

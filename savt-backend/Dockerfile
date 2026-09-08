@@ -9,8 +9,11 @@ FROM python:3.12-slim
 
 # libreoffice-writer — конвертация старых .doc/.xls в .docx/.xlsx при
 # индексации документов ботом (см. app/services/bot_indexer.py), сами эти
-# бинарные форматы python-docx/openpyxl не читают
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libreoffice-writer \
+# бинарные форматы python-docx/openpyxl не читают.
+# libreoffice-draw — конвертация EMF/WMF (векторные схемы, вставленные в Word
+# "как рисунок") в PNG перед анализом vision-моделью: Pillow такие форматы
+# не открывает вообще, а именно draw-фильтры LibreOffice умеют их читать.
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libreoffice-writer libreoffice-draw \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /code
