@@ -169,16 +169,40 @@ async def _convert_image_via_libreoffice(data: bytes, src_ext: str) -> bytes | N
         await asyncio.to_thread(tmp_path.unlink, True)
 
 
+def _iter_docx_block_items(doc):
+    """Параграфы и таблицы в РЕАЛЬНОМ порядке документа — doc.paragraphs и
+    doc.tables по отдельности этого не дают (это два независимых плоских
+    списка), из-за чего вводный текст перед таблицей и сама таблица могли
+    оказаться на разных концах извлечённого текста и разойтись по разным
+    чанкам при разбивке. Стандартный приём для python-docx: обходим дочерние
+    элементы doc.element.body напрямую, в порядке, как они там записаны."""
+    from docx.oxml.table import CT_Tbl
+    from docx.oxml.text.paragraph import CT_P
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    for child in doc.element.body.iterchildren():
+        if isinstance(child, CT_P):
+            yield Paragraph(child, doc)
+        elif isinstance(child, CT_Tbl):
+            yield Table(child, doc)
+
+
 async def _parse_docx(path: Path) -> str:
     try:
         from docx import Document as DocxDocument
+        from docx.table import Table
+
         doc = DocxDocument(str(path))
-        parts = [p.text for p in doc.paragraphs]
-        # Технические характеристики в таких документах часто оформлены
-        # таблицами — doc.paragraphs их не видит, обходим отдельно.
-        for table in doc.tables:
-            for row in table.rows:
-                parts.append(" | ".join(cell.text for cell in row.cells))
+        parts = []
+        for block in _iter_docx_block_items(doc):
+            if isinstance(block, Table):
+                for row in block.rows:
+                    row_text = " | ".join(cell.text for cell in row.cells)
+                    if row_text.strip():
+                        parts.append(row_text)
+            elif block.text.strip():
+                parts.append(block.text)
     except Exception:
         logger.exception("Не удалось разобрать Word-документ: %s", path)
         return ""
