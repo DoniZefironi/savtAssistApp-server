@@ -178,10 +178,14 @@ _SOURCE_LABELS = {
 
 
 # Сколько кусков документации ШУ/проекта берём максимум — оставшееся до k
-# добирается из общей базы (FAQ/КБ). Раньше было 4, подняли до 6 вместе с k,
-# чтобы бот реже отвечал "не нашёл", особенно когда область поиска расширилась
-# на весь проект целиком (см. _resolve_project_scope)
-_SCOPED_DOCS_LIMIT = 6
+# добирается из общей базы (FAQ/КБ). Раньше было 6: для вопросов-перечислений
+# ("какие окна есть", "какие роли есть" и т.п.), чей ответ в руководстве
+# растянут на много кусков подряд, этого стабильно не хватало — модель видела
+# только первые 6 самых похожих на вопрос кусков и честно перечисляла только
+# то, что в них попало, пропуская остальное не по своей вине. Подняли — см.
+# также CHUNK_SIZE (bot_indexer.py), крупнее куски = меньше их нужно на тот
+# же объём текста.
+_SCOPED_DOCS_LIMIT = 12
 
 
 async def _resolve_project_scope(session: AsyncSession, project_id: int) -> tuple[set[int], set[int]]:
@@ -325,7 +329,7 @@ async def _cabinet_directory_context(session: AsyncSession, project_id: int) -> 
 
 
 async def _retrieve_context(
-    session: AsyncSession, query: str, cabinet_id: int | None, project_id: int | None = None, k: int = 7,
+    session: AsyncSession, query: str, cabinet_id: int | None, project_id: int | None = None, k: int = 13,
 ) -> list[dict]:
     from sqlalchemy import or_
     from app.models.document import Document as DocumentModel

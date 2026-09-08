@@ -17,8 +17,12 @@ from app.services import yandex_service
 logger = logging.getLogger(__name__)
 
 UPLOAD_ROOT = Path("/code/uploads")
-CHUNK_SIZE = 800
-CHUNK_OVERLAP = 100
+# Крупнее кусок — меньше их нужно, чтобы покрыть тот же объём текста, а
+# значит вопросы-перечисления ("какие окна/роли есть") реже упираются в лимит
+# количества кусков, отдаваемых модели за раз (см. _SCOPED_DOCS_LIMIT в
+# bot_service.py). Было 800/100.
+CHUNK_SIZE = 1200
+CHUNK_OVERLAP = 150
 
 
 
