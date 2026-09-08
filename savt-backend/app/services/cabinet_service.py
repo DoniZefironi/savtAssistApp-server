@@ -143,6 +143,15 @@ class CabinetService:
         self.audit.log("cabinet.update", "cabinet", cabinet_id, actor_id, actor_role, {"fields": list(changed.keys())})
         await self.session.commit()
         await self.session.refresh(cabinet)
+
+        # Имя папки ШУ на NAS складывается из object_number + admin_internal_name
+        # (см. project_folder_service._cabinet_folder_name) — при смене любого из
+        # них папку нужно перенести на новое имя, иначе документы/фото останутся
+        # висеть под старым (см. _relocate_cabinet_structure)
+        if "object_number" in changed or "admin_internal_name" in changed:
+            from app.services import project_folder_service
+            project_folder_service.schedule_cabinet_folder(cabinet_id)
+
         return await self.get(cabinet_id)
 
     # Soft-delete одного ШУ + архивация его чатов (и чатов его заявок) — общая

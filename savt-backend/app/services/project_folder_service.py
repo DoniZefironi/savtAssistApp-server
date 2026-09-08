@@ -304,6 +304,7 @@ async def sync_project_folder(session: AsyncSession, project: Project) -> None:
     # Уровень ШУ: у каждого шкафа — подпапка внутри «Фото», «Переписка», «_Маркировка»,
     # «_Руководство» (без отдельной папки-дубликата шаблона на ШУ, см. _ensure_cabinet_structure)
     for cabinet in await CabinetRepository(session).list_by_project(project.id):
+        await _relocate_cabinet_structure(root, cabinet, session)
         await _ensure_cabinet_structure(root, cabinet)
         cabinet_name = _cabinet_folder_name(cabinet)
 
@@ -332,6 +333,38 @@ def _cabinet_folder_name(cabinet: Cabinet) -> str:
     if cabinet.admin_internal_name:
         parts.append(cabinet.admin_internal_name)
     return sanitize_folder_name(" ".join(parts))
+
+
+async def _relocate_cabinet_structure(root: Path, cabinet: Cabinet, session: AsyncSession) -> None:
+    """Переносит подпапки ШУ (в _Маркировка/_Руководство/Фото/Переписка) на их
+    актуальное имя при смене номера объекта или внутреннего названия ШУ.
+
+    Без этого при смене названия просто заводилась бы новая пустая папка под
+    новым именем (см. _ensure_cabinet_structure — она только создаёт, никогда
+    не переименовывает), а все уже синхронизированные документы/фото ШУ
+    оставались бы лежать под старым именем, никак не связанные с карточкой в
+    приложении. cabinet.folder_name — то же самое отслеживание "как папка
+    называется сейчас на самом деле", что и Project.folder_name у проектов."""
+    new_name = _cabinet_folder_name(cabinet)
+    old_name = cabinet.folder_name
+    if old_name and old_name != new_name:
+        for category in CABINET_CATEGORIES:
+            old_path = root / category / old_name
+            new_path = root / category / new_name
+            if new_path == old_path or await asyncio.to_thread(new_path.exists):
+                continue
+            if not await asyncio.to_thread(old_path.is_dir):
+                continue
+            try:
+                await asyncio.to_thread(new_path.parent.mkdir, parents=True, exist_ok=True)
+                await asyncio.to_thread(old_path.rename, new_path)
+                logger.info("Папка ШУ %s перенесена: %s → %s", cabinet.id, old_path, new_path)
+            except OSError:
+                logger.exception("Не удалось перенести папку ШУ %s из %s", cabinet.id, old_path)
+
+    if cabinet.folder_name != new_name:
+        cabinet.folder_name = new_name
+        await session.commit()
 
 
 async def export_photos(
@@ -781,6 +814,10 @@ def schedule_cabinet_folder(cabinet_id: int) -> None:
     """Подпапки ШУ разбросаны по проектным категориям (см. _ensure_cabinet_structure),
     единой папки-дубликата шаблона на ШУ больше нет.
 
+    При смене номера объекта или внутреннего названия ШУ (в пределах того же
+    проекта) существующие подпапки переименовываются на новое имя — см.
+    _relocate_cabinet_structure, вызывается перед _ensure_cabinet_structure.
+
     При отвязке или переносе ШУ в другой проект старые подпапки НЕ переносятся и не
     удаляются: в них могут лежать файлы, положенные людьми вручную. Новые просто
     создаются на новом месте, старые при необходимости переносят руками — так же,
@@ -797,6 +834,7 @@ def schedule_cabinet_folder(cabinet_id: int) -> None:
                 return
             try:
                 root = await _project_root_path(project, ProjectRepository(session))
+                await _relocate_cabinet_structure(root, cabinet, session)
                 await _ensure_cabinet_structure(root, cabinet)
             except Exception:
                 logger.exception("Не удалось создать папку ШУ %s на NAS", cabinet_id)

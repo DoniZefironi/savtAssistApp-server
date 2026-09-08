@@ -61,6 +61,11 @@ class Cabinet(Base):
     )
     # soft-delete: если не NULL - ШУ считается удалённым, скрыт из поиска/списков/гео
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    # санитизированное имя подпапок ШУ на NAS, реально использованное при
+    # последней синхронизации — по нему определяем, разошлось ли имя с папками
+    # на диске, и переносим их при смене номера объекта/внутреннего названия
+    # (см. project_folder_service._relocate_cabinet_structure)
+    folder_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
 
     def __repr__(self) -> str:
         return f"<Cabinet id={self.id} object_number={self.object_number}>"
