@@ -3,7 +3,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.cabinet_addition_request import CabinetAdditionRequest
 from app.models.document_request import DocumentRequest
+from app.models.password_reset_request import PasswordResetRequest
+from app.models.phone_change_request import PhoneChangeRequest
 from app.models.project_share_request import ProjectShareRequest
+from app.models.registration_request import RegistrationRequest
 from app.models.service_request import ServiceRequest
 from app.models.user import User
 from app.repositories.chat import ChatRepository
@@ -33,6 +36,18 @@ class DashboardService:
             select(func.count(CabinetAdditionRequest.id)).where(CabinetAdditionRequest.status == "pending")
         )).scalar() or 0
 
+        pending_phone_change = (await self.session.execute(
+            select(func.count(PhoneChangeRequest.id)).where(PhoneChangeRequest.status == "pending")
+        )).scalar() or 0
+
+        pending_registration = (await self.session.execute(
+            select(func.count(RegistrationRequest.id)).where(RegistrationRequest.status == "pending")
+        )).scalar() or 0
+
+        pending_password_reset = (await self.session.execute(
+            select(func.count(PasswordResetRequest.id)).where(PasswordResetRequest.status == "pending")
+        )).scalar() or 0
+
         recent = await self._get_recent_activity()
 
         return DashboardOut(
@@ -42,6 +57,9 @@ class DashboardService:
                 pending_document_requests=pending_docs,
                 pending_addition_requests=pending_addition,
                 pending_project_share_requests=pending_share,
+                pending_phone_change_requests=pending_phone_change,
+                pending_registration_requests=pending_registration,
+                pending_password_reset_requests=pending_password_reset,
             ),
             recent_activity=recent,
         )
@@ -99,6 +117,47 @@ class DashboardService:
                 id=req.id, type="addition", status=req.status,
                 user_id=req.user_id, user_full_name=user.full_name if user else None,
                 cabinet_id=req.cabinet_id, created_at=req.created_at,
+            ))
+
+        rows = (await self.session.execute(
+            select(PhoneChangeRequest, User)
+            .outerjoin(User, User.id == PhoneChangeRequest.user_id)
+            .order_by(PhoneChangeRequest.created_at.desc())
+            .limit(10)
+        )).all()
+        for req, user in rows:
+            items.append(RecentActivityItem(
+                id=req.id, type="phone_change", status=req.status,
+                user_id=req.user_id, user_full_name=user.full_name if user else None,
+                created_at=req.created_at,
+            ))
+
+        rows = (await self.session.execute(
+            select(PasswordResetRequest, User)
+            .outerjoin(User, User.id == PasswordResetRequest.user_id)
+            .order_by(PasswordResetRequest.created_at.desc())
+            .limit(10)
+        )).all()
+        for req, user in rows:
+            items.append(RecentActivityItem(
+                id=req.id, type="password_reset", status=req.status,
+                user_id=req.user_id, user_full_name=user.full_name if user else None,
+                created_at=req.created_at,
+            ))
+
+        # Заявка на регистрацию — заявитель ещё не пользователь (см.
+        # RegistrationRequest), join на users тут не на что делать: user_id
+        # нет вообще, полное имя берётся прямо из полей самой заявки
+        rows = (await self.session.execute(
+            select(RegistrationRequest)
+            .order_by(RegistrationRequest.created_at.desc())
+            .limit(10)
+        )).scalars().all()
+        for req in rows:
+            items.append(RecentActivityItem(
+                id=req.id, type="registration", status=req.status,
+                user_id=None, user_full_name=req.full_name,
+                created_at=req.created_at,
             ))
 
         items.sort(key=lambda x: x.created_at, reverse=True)
