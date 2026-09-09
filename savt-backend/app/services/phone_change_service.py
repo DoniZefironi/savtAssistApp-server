@@ -88,6 +88,10 @@ class PhoneChangeService:
             if req.status == "pending" and req.new_phone not in rivals:
                 rivals[req.new_phone] = len(await self.repo.find_pending_for_phone(req.new_phone))
 
+        admin_names = await self.user_repo.get_names_by_ids(
+            [req.resolved_by_admin_id for req, _ in rows if req.resolved_by_admin_id]
+        )
+
         items = [
             AdminPhoneChangeRequestOut(
                 id=req.id,
@@ -98,6 +102,7 @@ class PhoneChangeService:
                 status=req.status,
                 admin_response=req.admin_response,
                 resolved_by_admin_id=req.resolved_by_admin_id,
+                resolved_by_admin_name=admin_names.get(req.resolved_by_admin_id),
                 created_at=req.created_at,
                 resolved_at=req.resolved_at,
                 user_full_name=user.full_name,

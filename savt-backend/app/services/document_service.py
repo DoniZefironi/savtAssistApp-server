@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import AlreadyExistsError, NotFoundError, PermissionDeniedError
 from app.repositories.document import DocumentRepository, DocumentRequestRepository, PhotoRepository
 from app.repositories.tag import TagRepository
+from app.repositories.user import UserRepository
 from app.services import project_folder_service
 from app.services.audit_service import AuditLogger
 from app.services.upload_service import UPLOAD_ROOT
@@ -32,6 +33,7 @@ class AdminDocumentService:
         self.photo_repo = PhotoRepository(session)
         self.request_repo = DocumentRequestRepository(session)
         self.tag_repo = TagRepository(session)
+        self.user_repo = UserRepository(session)
         self.audit = AuditLogger(session)
 
     # Заявитель узнаёт о решении, а не выясняет его, заходя в приложение
@@ -212,6 +214,9 @@ class AdminDocumentService:
             sort_by=sort_by, sort_order=sort_order,
             offset=(page - 1) * size, limit=size
         )
+        admin_names = await self.user_repo.get_names_by_ids(
+            [req.resolved_by_admin_id for req, _ in rows if req.resolved_by_admin_id]
+        )
         items = [
             DocumentRequestOut(
                 id=req.id,
@@ -230,6 +235,7 @@ class AdminDocumentService:
                 user_message=req.user_message,
                 admin_response=req.admin_response,
                 resolved_by_admin_id=req.resolved_by_admin_id,
+                resolved_by_admin_name=admin_names.get(req.resolved_by_admin_id),
                 created_at=req.created_at,
                 resolved_at=req.resolved_at,
             )

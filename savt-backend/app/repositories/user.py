@@ -110,6 +110,18 @@ class UserRepository(BaseRepository[User]):
         result = await self.session.execute(stmt)
         return result.all(), total
     # 
+    # Батч-получение имён по ID — для заявок, где нужно показать не только
+    # resolved_by_admin_id, но и имя администратора, не делая по запросу на
+    # каждую строку списка (см. project_request_service.py, document_service.py,
+    # phone_change_service.py)
+    async def get_names_by_ids(self, user_ids: list[int]) -> dict[int, str]:
+        if not user_ids:
+            return {}
+        result = await self.session.execute(
+            select(User.id, User.full_name).where(User.id.in_(user_ids))
+        )
+        return {uid: name for uid, name in result.all() if name}
+
     async def get_with_role(self, user_id: int) -> tuple | None:
         result = await self.session.execute(
             select(User, Role)

@@ -59,7 +59,14 @@ class RegistrationRequestService:
             status=status, search=search, sort_by=sort_by, sort_order=sort_order,
             offset=(page - 1) * size, limit=size,
         )
-        items = [AdminRegistrationRequestOut.model_validate(r) for r in rows]
+        admin_names = await self.user_repo.get_names_by_ids(
+            [r.resolved_by_admin_id for r in rows if r.resolved_by_admin_id]
+        )
+        items = []
+        for r in rows:
+            item = AdminRegistrationRequestOut.model_validate(r)
+            item.resolved_by_admin_name = admin_names.get(r.resolved_by_admin_id)
+            items.append(item)
         return make_page(items, total, page, size)
 
     # Одобрение — заводит настоящий аккаунт из данных заявки. is_phone_verified/

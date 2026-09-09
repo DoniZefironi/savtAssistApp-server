@@ -309,6 +309,7 @@ class AdminRegistrationRequestOut(BaseModel):
     status: str
     admin_response: str | None
     resolved_by_admin_id: int | None
+    resolved_by_admin_name: str | None = None
     created_user_id: int | None
     created_at: datetime
     resolved_at: datetime | None
@@ -342,6 +343,7 @@ class AdminPhoneChangeRequestOut(PhoneChangeRequestOut):
     organization_name: str | None
     user_is_verified: bool
     user_registered_at: datetime
+    resolved_by_admin_name: str | None = None
     # Сколько ещё pending-заявок на этот же номер, включая текущую. >1 означает,
     # что за номер борются несколько аккаунтов — одобрять надо осознанно
     pending_rivals: int = 1
@@ -386,6 +388,7 @@ class AdminPasswordResetRequestOut(BaseModel):
     status: str
     admin_response: str | None
     resolved_by_admin_id: int | None
+    resolved_by_admin_name: str | None = None
     created_at: datetime
     resolved_at: datetime | None
 

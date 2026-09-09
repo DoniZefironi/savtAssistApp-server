@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import AlreadyExistsError, NotFoundError
 from app.repositories.chat import ChatRepository
 from app.repositories.project import ProjectRepository, ProjectRequestRepository, UserProjectRepository
+from app.repositories.user import UserRepository
 from app.schemas.pagination import PageOut, make_page
 from app.schemas.requests import ApproveShareIn, ProjectShareRequestOut, RejectRequestIn
 from app.services.audit_service import AuditLogger
@@ -16,6 +17,7 @@ class ProjectRequestService:
         self.request_repo = ProjectRequestRepository(session)
         self.project_repo = ProjectRepository(session)
         self.user_project_repo = UserProjectRepository(session)
+        self.user_repo = UserRepository(session)
         self.audit = AuditLogger(session)
 
     # Все заявки на вступление в проект
@@ -29,6 +31,9 @@ class ProjectRequestService:
             status=status, resolved_by_admin_id=resolved_by_admin_id, search=search,
             sort_by=sort_by, sort_order=sort_order,
             offset=(page - 1) * size, limit=size,
+        )
+        admin_names = await self.user_repo.get_names_by_ids(
+            [req.resolved_by_admin_id for req, _, _ in rows if req.resolved_by_admin_id]
         )
         items = [
             ProjectShareRequestOut(
@@ -46,6 +51,7 @@ class ProjectRequestService:
                 status=req.status,
                 admin_response=req.admin_response,
                 resolved_by_admin_id=req.resolved_by_admin_id,
+                resolved_by_admin_name=admin_names.get(req.resolved_by_admin_id),
                 created_at=req.created_at,
                 resolved_at=req.resolved_at,
             )

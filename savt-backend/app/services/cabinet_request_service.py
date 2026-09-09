@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import AlreadyExistsError, NotFoundError
 from app.repositories.cabinet import CabinetRepository, CabinetRequestRepository
 from app.repositories.project import ProjectRepository
+from app.repositories.user import UserRepository
 from app.schemas.pagination import PageOut, make_page
 from app.schemas.requests import (
     AdditionRequestOut,
@@ -20,6 +21,7 @@ class CabinetRequestService:
         self.request_repo = CabinetRequestRepository(session)
         self.cabinet_repo = CabinetRepository(session)
         self.project_repo = ProjectRepository(session)
+        self.user_repo = UserRepository(session)
         self.audit = AuditLogger(session)
 
     # Заявитель узнаёт о решении, а не выясняет его, заходя в приложение.
@@ -46,6 +48,9 @@ class CabinetRequestService:
         )
         project_ids = list({req.project_id for req, _ in rows if req.project_id is not None})
         project_names = await self.project_repo.get_names_by_ids(project_ids)
+        admin_names = await self.user_repo.get_names_by_ids(
+            [req.resolved_by_admin_id for req, _ in rows if req.resolved_by_admin_id]
+        )
         items = [
             AdditionRequestOut(
                 id=req.id,
@@ -64,6 +69,7 @@ class CabinetRequestService:
                 cabinet_id=req.cabinet_id,
                 admin_response=req.admin_response,
                 resolved_by_admin_id=req.resolved_by_admin_id,
+                resolved_by_admin_name=admin_names.get(req.resolved_by_admin_id),
                 created_at=req.created_at,
                 resolved_at=req.resolved_at,
             )

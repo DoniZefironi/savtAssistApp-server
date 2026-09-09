@@ -21,6 +21,7 @@ class AdditionRequestOut(BaseModel):
     cabinet_id: int | None
     admin_response: str | None
     resolved_by_admin_id: int | None
+    resolved_by_admin_name: str | None = None
     created_at: datetime
     resolved_at: datetime | None
 
@@ -53,5 +54,6 @@ class ProjectShareRequestOut(BaseModel):
     status: str
     admin_response: str | None
     resolved_by_admin_id: int | None
+    resolved_by_admin_name: str | None = None
     created_at: datetime
     resolved_at: datetime | None
