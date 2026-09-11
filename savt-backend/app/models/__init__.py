@@ -42,6 +42,7 @@ from app.models.phone_change_request import PhoneChangeRequest
 from app.models.pending_registration import PendingRegistration
 from app.models.registration_request import RegistrationRequest
 from app.models.password_reset_request import PasswordResetRequest
+from app.models.promo_schedule_settings import PromoScheduleSettings
 from app.models.register_definition import RegisterDefinition
 from app.models.cabinet_register_override import CabinetRegisterOverride
 from app.models.cabinet_telemetry_event import CabinetTelemetryEvent
@@ -59,7 +60,7 @@ __all__ = [
     "WarrantyNotifLog", "Embedding", "ChatUserSettings", "ChatPinnedMessage",
     "Project", "UserProject", "ProjectShareRequest", "ProjectContact",
     "MessengerLink", "PhoneChangeRequest", "PendingRegistration", "RegistrationRequest",
-    "PasswordResetRequest",
+    "PasswordResetRequest", "PromoScheduleSettings",
     "RegisterDefinition", "CabinetRegisterOverride", "CabinetTelemetryEvent",
     "CabinetRegisterState",
 ]

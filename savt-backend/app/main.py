@@ -135,12 +135,12 @@ async def lifespan(app: FastAPI):
     # чистка старой телеметрии
     scheduler.add_job(_telemetry_history_prune_job, "cron", hour=3, minute=0)
 
-    # реклама рассылается автоматически, только если час задан явно: она уходит
-    # живым людям, включать её должно быть осознанным действием
-    promo_hour = promo_service.auto_send_hour()
-    if promo_hour is not None:
-        scheduler.add_job(promo_service.send_random_scheduled, "cron", hour=promo_hour, minute=0)
-        logger.info("Автоматическая рассылка рекламы включена: ежедневно в %02d:00", promo_hour)
+    # Проверка расписания рекламных уведомлений — раз в час; сама решает по
+    # настройкам из БД (PromoScheduleSettings, управляются из админки), пора
+    # ли слать. Регистрируется всегда — по умолчанию enabled=False, включение
+    # рассылки живым людям остаётся осознанным действием администратора,
+    # просто теперь через панель, а не .env + рестарт сервера
+    scheduler.add_job(promo_service.run_scheduled_check, "cron", minute=0)
 
     # приложение работает
     scheduler.start()

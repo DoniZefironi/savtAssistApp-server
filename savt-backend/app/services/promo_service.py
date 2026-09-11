@@ -1,12 +1,14 @@
 import json
 import logging
 import random
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import AsyncSessionLocal
+from app.models.promo_schedule_settings import PromoScheduleSettings
 from app.repositories.notification import NotificationRepository
 from app.schemas.notifications import PromoMessageOut
 from app.services.push_service import send_push
@@ -59,8 +61,12 @@ def load_messages() -> list[PromoMessageOut]:
     return _parse(raw)
 
 
-def pick_random(exclude_id: str | None = None) -> PromoMessageOut | None:
+def pick_random(
+    exclude_id: str | None = None, message_ids: list[str] | None = None,
+) -> PromoMessageOut | None:
     messages = load_messages()
+    if message_ids:
+        messages = [m for m in messages if m.id in message_ids]
     if not messages:
         return None
     # Не повторяем подряд одну и ту же, если есть из чего выбрать
@@ -69,15 +75,22 @@ def pick_random(exclude_id: str | None = None) -> PromoMessageOut | None:
 
 
 async def send_random(
-    session: AsyncSession, *, role: str | None = None, message: PromoMessageOut | None = None,
+    session: AsyncSession, *,
+    role: str | None = None,
+    message: PromoMessageOut | None = None,
+    message_ids: list[str] | None = None,
+    exclude_id: str | None = None,
 ) -> tuple[PromoMessageOut | None, int, int]:
     """Рассылает случайную (или заданную) заготовку. Возвращает
     (что отправили, скольким, скольким не стали).
 
+    message_ids — сузить случайный выбор до этого набора (см.
+    PromoScheduleSettings.message_ids); пусто/None — среди всех заготовок файла.
+
     Уважает переключатель promotional — как и обычная рассылка администратора.
     Пауза уведомлений при этом глушит только пуш: запись в истории появится,
     и человек увидит её, когда вернётся."""
-    chosen = message or pick_random()
+    chosen = message or pick_random(exclude_id=exclude_id, message_ids=message_ids)
     if chosen is None:
         return None, 0, 0
 
@@ -101,33 +114,67 @@ async def send_random(
     return chosen, len(user_ids), len(all_ids) - len(user_ids)
 
 
-async def send_random_scheduled() -> None:
-    """Ежедневный прогон. Включается PROMO_AUTO_SEND_HOUR; при пустой настройке
-    задача вообще не регистрируется (см. main.py)."""
+async def get_or_create_schedule(session: AsyncSession) -> PromoScheduleSettings:
+    """Настройки расписания — singleton, всегда одна строка (id=1). Заводится
+    лениво при первом обращении, а не миграцией, чтобы поведение по умолчанию
+    (enabled=False) было явным на уровне колонки, а не забытой строкой данных."""
+    row = await session.get(PromoScheduleSettings, 1)
+    if row is None:
+        row = PromoScheduleSettings(id=1)
+        session.add(row)
+        await session.commit()
+        await session.refresh(row)
+    return row
+
+
+async def update_schedule(session: AsyncSession, changed: dict) -> PromoScheduleSettings:
+    row = await get_or_create_schedule(session)
+    for field, value in changed.items():
+        setattr(row, field, value)
+    await session.commit()
+    await session.refresh(row)
+    return row
+
+
+async def run_scheduled_check() -> None:
+    """Прогон раз в час (см. main.py, cron minute=0) — сам решает по настройкам
+    из БД (PromoScheduleSettings), пора ли слать, а не по фиксированному часу
+    из .env: расписание меняется из админки без рестарта сервера.
+
+    Условия отправки: enabled=True, текущий час (UTC) совпадает с send_hour,
+    и с последней отправки прошло не меньше interval_days (либо отправки
+    ещё не было)."""
     async with AsyncSessionLocal() as session:
+        row = await get_or_create_schedule(session)
+        if not row.enabled:
+            return
+
+        now = datetime.now(timezone.utc)
+        if now.hour != row.send_hour:
+            return
+
+        if row.last_sent_at is not None:
+            elapsed_days = (now - row.last_sent_at).total_seconds() / 86400
+            if elapsed_days < row.interval_days:
+                return
+
         try:
-            chosen, sent, skipped = await send_random(session, role="user")
+            chosen, sent, skipped = await send_random(
+                session, role="user",
+                message_ids=row.message_ids, exclude_id=row.last_sent_message_id,
+            )
         except Exception:
             logger.exception("Реклама: плановая рассылка не удалась")
             return
-    if chosen is None:
-        logger.warning("Реклама: нечего рассылать — подборка пуста")
-    else:
+
+        if chosen is None:
+            logger.warning(
+                "Реклама: нечего рассылать — подборка пуста или выбранные заготовки не найдены в файле",
+            )
+            return
+
+        row.last_sent_at = now
+        row.last_sent_message_id = chosen.id
+        await session.commit()
         logger.info("Реклама «%s»: отправлено %d, пропущено отписавшихся %d",
                     chosen.id, sent, skipped)
-
-
-def auto_send_hour() -> int | None:
-    """Час автоматической рассылки или None, если она выключена."""
-    raw = (settings.promo_auto_send_hour or "").strip()
-    if not raw:
-        return None
-    try:
-        hour = int(raw)
-    except ValueError:
-        logger.warning("PROMO_AUTO_SEND_HOUR=%r — не число, автоматическая рассылка выключена", raw)
-        return None
-    if not 0 <= hour <= 23:
-        logger.warning("PROMO_AUTO_SEND_HOUR=%d вне 0..23 — автоматическая рассылка выключена", hour)
-        return None
-    return hour

@@ -13,6 +13,8 @@ from app.schemas.notifications import (
     NotificationSettingsOut,
     NotificationSettingsPatchIn,
     PromoMessageOut,
+    PromoScheduleOut,
+    PromoScheduleUpdateIn,
     PromoSendResultOut,
     UnreadCountOut,
 )
@@ -179,3 +181,30 @@ async def send_promo(
     )
     await session.commit()
     return PromoSendResultOut(sent_to=sent, skipped_opted_out=skipped, message=message)
+
+
+# --- расписание автоматической рассылки (PromoScheduleSettings) ---
+
+@router.get("/admin/notifications/promo/schedule", response_model=PromoScheduleOut)
+async def get_promo_schedule(
+    _: User = Depends(require_role(RoleName.ADMIN)),
+    session: AsyncSession = Depends(get_session),
+):
+    return await promo_service.get_or_create_schedule(session)
+
+
+@router.patch("/admin/notifications/promo/schedule", response_model=PromoScheduleOut)
+async def update_promo_schedule(
+    payload: PromoScheduleUpdateIn,
+    actor: User = Depends(require_role(RoleName.ADMIN)),
+    actor_role: str = Depends(get_role_from_token),
+    session: AsyncSession = Depends(get_session),
+):
+    """Раз в час фоновая проверка (promo_service.run_scheduled_check) сама
+    сверяется с этими настройками — включение/выключение и смена расписания
+    действуют сразу, без рестарта сервера."""
+    changed = payload.model_dump(exclude_unset=True)
+    AuditLogger(session).log(
+        "notification.promo_schedule_update", "promo_schedule", None, actor.id, actor_role, changed,
+    )
+    return await promo_service.update_schedule(session, changed)

@@ -77,3 +77,24 @@ class PromoSendResultOut(BaseModel):
     sent_to: int
     skipped_opted_out: int
     message: PromoMessageOut | None = None
+
+
+class PromoScheduleOut(BaseModel):
+    enabled: bool
+    interval_days: int
+    send_hour: int
+    # None/[] — случайная заготовка среди всех в файле; иначе — только среди
+    # перечисленных id (см. GET /admin/notifications/promo)
+    message_ids: list[str] | None
+    last_sent_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
+class PromoScheduleUpdateIn(BaseModel):
+    enabled: bool | None = None
+    interval_days: int | None = Field(None, ge=1, le=365)
+    send_hour: int | None = Field(None, ge=0, le=23)
+    # Явный null очищает ограничение (снова "любая заготовка") — отличается
+    # от простого отсутствия поля в запросе, см. model_dump(exclude_unset=True)
+    message_ids: list[str] | None = None
