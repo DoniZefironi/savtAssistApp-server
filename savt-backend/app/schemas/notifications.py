@@ -66,11 +66,28 @@ class BroadcastResultOut(BaseModel):
 
 
 class PromoMessageOut(BaseModel):
-    """Заготовка рекламного уведомления из файла (см. PROMO_MESSAGES_FILE)."""
-    id: str
+    """Заготовка рекламного уведомления — хранится в БД, редактируется из
+    админки (раньше жили в файле PROMO_MESSAGES_FILE, теперь не используется)."""
+    id: int
     title: str
     body: str
     data: dict = {}
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PromoMessageCreateIn(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    body: str = Field(..., min_length=1, max_length=1000)
+    data: dict = {}
+
+
+class PromoMessageUpdateIn(BaseModel):
+    title: str | None = Field(None, min_length=1, max_length=255)
+    body: str | None = Field(None, min_length=1, max_length=1000)
+    data: dict | None = None
 
 
 class PromoSendResultOut(BaseModel):
@@ -83,9 +100,9 @@ class PromoScheduleOut(BaseModel):
     enabled: bool
     interval_days: int
     send_hour: int
-    # None/[] — случайная заготовка среди всех в файле; иначе — только среди
-    # перечисленных id (см. GET /admin/notifications/promo)
-    message_ids: list[str] | None
+    # None/[] — случайная заготовка среди всех; иначе — только среди
+    # перечисленных id (см. GET /admin/notifications/promo/messages)
+    message_ids: list[int] | None
     last_sent_at: datetime | None
 
     model_config = {"from_attributes": True}
@@ -97,4 +114,4 @@ class PromoScheduleUpdateIn(BaseModel):
     send_hour: int | None = Field(None, ge=0, le=23)
     # Явный null очищает ограничение (снова "любая заготовка") — отличается
     # от простого отсутствия поля в запросе, см. model_dump(exclude_unset=True)
-    message_ids: list[str] | None = None
+    message_ids: list[int] | None = None

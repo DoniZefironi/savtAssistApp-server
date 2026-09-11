@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleName
 from app.core.dependencies import get_current_user, get_role_from_token, get_session, require_role
+from app.models.promo_message import PromoMessage
 from app.models.user import User
 from app.schemas.notifications import (
     BroadcastIn,
@@ -12,7 +13,9 @@ from app.schemas.notifications import (
     NotificationOut,
     NotificationSettingsOut,
     NotificationSettingsPatchIn,
+    PromoMessageCreateIn,
     PromoMessageOut,
+    PromoMessageUpdateIn,
     PromoScheduleOut,
     PromoScheduleUpdateIn,
     PromoSendResultOut,
@@ -142,21 +145,71 @@ async def broadcast(
     return await NotificationService(session).broadcast(payload, actor.id, actor_role)
 
 
-# --- рекламные заготовки (PROMO_MESSAGES_FILE) ---
+# --- рекламные заготовки (раньше жили в файле PROMO_MESSAGES_FILE, теперь в БД) ---
 
-@router.get("/admin/notifications/promo", response_model=list[PromoMessageOut])
+@router.get("/admin/notifications/promo/messages", response_model=list[PromoMessageOut])
 async def list_promo_messages(
     _: User = Depends(require_role(RoleName.ADMIN)),
+    session: AsyncSession = Depends(get_session),
 ):
-    """Что сейчас лежит в подборке. Файл читается заново, так что список сразу
-    показывает результат правок."""
-    return promo_service.load_messages()
+    return await promo_service.list_messages(session)
+
+
+@router.post(
+    "/admin/notifications/promo/messages", response_model=PromoMessageOut, status_code=status.HTTP_201_CREATED,
+)
+async def create_promo_message(
+    payload: PromoMessageCreateIn,
+    actor: User = Depends(require_role(RoleName.ADMIN)),
+    actor_role: str = Depends(get_role_from_token),
+    session: AsyncSession = Depends(get_session),
+):
+    msg = await promo_service.create_message(session, payload.model_dump())
+    AuditLogger(session).log(
+        "notification.promo_message_create", "promo_message", msg.id, actor.id, actor_role, {"title": msg.title},
+    )
+    await session.commit()
+    return msg
+
+
+@router.patch("/admin/notifications/promo/messages/{message_id}", response_model=PromoMessageOut)
+async def update_promo_message(
+    message_id: int,
+    payload: PromoMessageUpdateIn,
+    actor: User = Depends(require_role(RoleName.ADMIN)),
+    actor_role: str = Depends(get_role_from_token),
+    session: AsyncSession = Depends(get_session),
+):
+    changed = payload.model_dump(exclude_unset=True)
+    msg = await promo_service.update_message(session, message_id, changed)
+    AuditLogger(session).log(
+        "notification.promo_message_update", "promo_message", message_id, actor.id, actor_role,
+        {"fields": list(changed.keys())},
+    )
+    await session.commit()
+    return msg
+
+
+@router.delete("/admin/notifications/promo/messages/{message_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_promo_message(
+    message_id: int,
+    actor: User = Depends(require_role(RoleName.ADMIN)),
+    actor_role: str = Depends(get_role_from_token),
+    session: AsyncSession = Depends(get_session),
+):
+    """Заготовку, на которую ссылается расписание (message_ids), удалить можно
+    — расписание просто перестанет учитывать этот id при выборе, без ошибки."""
+    await promo_service.delete_message(session, message_id)
+    AuditLogger(session).log(
+        "notification.promo_message_delete", "promo_message", message_id, actor.id, actor_role, {},
+    )
+    await session.commit()
 
 
 @router.post("/admin/notifications/promo/send", response_model=PromoSendResultOut)
 async def send_promo(
     role: str | None = Query(None, pattern="^(user|operator|admin)$"),
-    promo_id: str | None = Query(None),
+    promo_id: int | None = Query(None),
     actor: User = Depends(require_role(RoleName.ADMIN)),
     actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
@@ -164,8 +217,8 @@ async def send_promo(
     """Разослать рекламу из подборки: случайную либо конкретную по promo_id.
     Уважает переключатель promotional, как и обычная рассылка."""
     chosen = None
-    if promo_id:
-        chosen = next((m for m in promo_service.load_messages() if m.id == promo_id), None)
+    if promo_id is not None:
+        chosen = await session.get(PromoMessage, promo_id)
         if chosen is None:
             raise HTTPException(status_code=404, detail=f"Заготовка {promo_id!r} не найдена")
 
@@ -173,7 +226,7 @@ async def send_promo(
     if message is None:
         raise HTTPException(
             status_code=400,
-            detail="Подборка рекламы пуста или файл не читается — см. PROMO_MESSAGES_FILE",
+            detail="Заготовок рекламы нет — заведите хотя бы одну через POST /admin/notifications/promo/messages",
         )
     AuditLogger(session).log(
         "notification.promo_send", "notification", None, actor.id, actor_role,

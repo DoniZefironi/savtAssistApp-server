@@ -77,8 +77,6 @@ class Settings(BaseSettings):
 
     bitrix_project_code_pepper: str = "3.1415"
 
-    promo_messages_file: str = ""
-
     # Служебный аккаунт для входа в приложение управления SIM-картами — у него
     # своя JWT-авторизация (POST /api/User/login), не статический токен, см.
     # app/services/sim_service.py

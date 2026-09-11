@@ -122,6 +122,20 @@ class DeviceTokenRepository:
         else:
             dt.user_id = user_id
             dt.platform = platform
+
+        # Клиент не всегда шлёт DELETE на старый токен при логауте/переустановке/
+        # ротации FCM-токена — старый так и оставался "живым" в базе, и send_push
+        # слал push на оба сразу (см. дубли рекламных уведомлений). Держим не
+        # больше одного токена на платформу на пользователя; между платформами
+        # (iOS у одного устройства, Android у другого) не трогаем.
+        from sqlalchemy import delete as sa_delete
+        await self.session.execute(
+            sa_delete(DeviceToken).where(
+                DeviceToken.user_id == user_id,
+                DeviceToken.platform == platform,
+                DeviceToken.token != token,
+            )
+        )
         await self.session.flush()
 
     async def delete(self, token: str, user_id: int) -> bool:

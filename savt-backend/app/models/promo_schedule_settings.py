@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Boolean, DateTime, Integer, String, func
+from sqlalchemy import Boolean, DateTime, Integer, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -20,12 +20,13 @@ class PromoScheduleSettings(Base):
     interval_days: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     # час отправки, 0-23, по UTC — так же, как и остальные cron-задачи в main.py
     send_hour: Mapped[int] = mapped_column(Integer, default=10, server_default="10")
-    # None/пусто — выбор случайной заготовки среди ВСЕХ в файле; иначе — только
-    # среди перечисленных id (см. PromoMessageOut.id)
+    # None/пусто — выбор случайной заготовки среди ВСЕХ в PromoMessage; иначе —
+    # только среди перечисленных id
     message_ids: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     last_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # не повторять ту же заготовку два раза подряд в автоматической рассылке
-    last_sent_message_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # (ссылка на PromoMessage.id)
+    last_sent_message_id: Mapped[int | None] = mapped_column(nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(),
     )

@@ -1,72 +1,61 @@
-import json
 import logging
 import random
 from datetime import datetime, timezone
-from pathlib import Path
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
+from app.core.exceptions import NotFoundError
 from app.database import AsyncSessionLocal
+from app.models.promo_message import PromoMessage
 from app.models.promo_schedule_settings import PromoScheduleSettings
 from app.repositories.notification import NotificationRepository
-from app.schemas.notifications import PromoMessageOut
 from app.services.push_service import send_push
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_FILE = Path(__file__).resolve().parent.parent / "data" / "promo_messages.json"
+
+# --- заготовки (CRUD, раньше жили в файле PROMO_MESSAGES_FILE) ---
+
+async def list_messages(session: AsyncSession) -> list[PromoMessage]:
+    result = await session.execute(select(PromoMessage).order_by(PromoMessage.id))
+    return list(result.scalars().all())
 
 
-def _messages_path() -> Path:
-    return Path(settings.promo_messages_file) if settings.promo_messages_file else _DEFAULT_FILE
+async def create_message(session: AsyncSession, data: dict) -> PromoMessage:
+    msg = PromoMessage(**data)
+    session.add(msg)
+    await session.commit()
+    await session.refresh(msg)
+    return msg
 
 
-def _parse(raw: dict) -> list[PromoMessageOut]:
-    messages = []
-    for index, item in enumerate(raw.get("messages") or []):
-        if not isinstance(item, dict):
-            continue
-        title, body = item.get("title"), item.get("body")
-        if not title or not body:
-            logger.warning("Реклама: запись %s без title/body — пропускаю", index)
-            continue
-        messages.append(PromoMessageOut(
-            id=str(item.get("id") or index),
-            title=str(title)[:255],
-            body=str(body)[:1000],
-            data={k: str(v) for k, v in (item.get("data") or {}).items()},
-        ))
-    return messages
+async def update_message(session: AsyncSession, message_id: int, changed: dict) -> PromoMessage:
+    msg = await session.get(PromoMessage, message_id)
+    if msg is None:
+        raise NotFoundError("Заготовка не найдена")
+    for field, value in changed.items():
+        setattr(msg, field, value)
+    await session.commit()
+    await session.refresh(msg)
+    return msg
 
 
-def load_messages() -> list[PromoMessageOut]:
-    """Читает подборку с диска на каждый вызов — файл правят руками, и держать
-    его в памяти значило бы требовать перезапуск после каждой правки.
-
-    Битый или отсутствующий файл — не повод ронять рассылку: возвращаем пустой
-    список, вызывающий скажет об этом внятно."""
-    path = _messages_path()
-    try:
-        raw = json.loads(path.read_text("utf-8"))
-    except FileNotFoundError:
-        logger.warning("Реклама: файл %s не найден", path)
-        return []
-    except (OSError, json.JSONDecodeError):
-        logger.exception("Реклама: не удалось прочитать %s", path)
-        return []
-    if not isinstance(raw, dict):
-        logger.warning("Реклама: ожидался объект с ключом messages в %s", path)
-        return []
-    return _parse(raw)
+async def delete_message(session: AsyncSession, message_id: int) -> None:
+    msg = await session.get(PromoMessage, message_id)
+    if msg is None:
+        raise NotFoundError("Заготовка не найдена")
+    await session.delete(msg)
+    await session.commit()
 
 
-def pick_random(
-    exclude_id: str | None = None, message_ids: list[str] | None = None,
-) -> PromoMessageOut | None:
-    messages = load_messages()
+async def pick_random(
+    session: AsyncSession, exclude_id: int | None = None, message_ids: list[int] | None = None,
+) -> PromoMessage | None:
+    stmt = select(PromoMessage)
     if message_ids:
-        messages = [m for m in messages if m.id in message_ids]
+        stmt = stmt.where(PromoMessage.id.in_(message_ids))
+    messages = list((await session.execute(stmt)).scalars().all())
     if not messages:
         return None
     # Не повторяем подряд одну и ту же, если есть из чего выбрать
@@ -77,20 +66,20 @@ def pick_random(
 async def send_random(
     session: AsyncSession, *,
     role: str | None = None,
-    message: PromoMessageOut | None = None,
-    message_ids: list[str] | None = None,
-    exclude_id: str | None = None,
-) -> tuple[PromoMessageOut | None, int, int]:
+    message: PromoMessage | None = None,
+    message_ids: list[int] | None = None,
+    exclude_id: int | None = None,
+) -> tuple[PromoMessage | None, int, int]:
     """Рассылает случайную (или заданную) заготовку. Возвращает
     (что отправили, скольким, скольким не стали).
 
     message_ids — сузить случайный выбор до этого набора (см.
-    PromoScheduleSettings.message_ids); пусто/None — среди всех заготовок файла.
+    PromoScheduleSettings.message_ids); пусто/None — среди всех заготовок.
 
     Уважает переключатель promotional — как и обычная рассылка администратора.
     Пауза уведомлений при этом глушит только пуш: запись в истории появится,
     и человек увидит её, когда вернётся."""
-    chosen = message or pick_random(exclude_id=exclude_id, message_ids=message_ids)
+    chosen = message or await pick_random(session, exclude_id=exclude_id, message_ids=message_ids)
     if chosen is None:
         return None, 0, 0
 
@@ -98,7 +87,7 @@ async def send_random(
     all_ids = await repo.get_all_user_ids(role)
     user_ids = await repo.filter_by_setting(all_ids, "promotional")
 
-    data = {**chosen.data, "promo_id": chosen.id}
+    data = {**(chosen.data or {}), "promo_id": chosen.id}
     for user_id in user_ids:
         await repo.create(
             user_id=user_id, type_="promotional",
@@ -113,6 +102,8 @@ async def send_random(
         )
     return chosen, len(user_ids), len(all_ids) - len(user_ids)
 
+
+# --- расписание автоматической рассылки ---
 
 async def get_or_create_schedule(session: AsyncSession) -> PromoScheduleSettings:
     """Настройки расписания — singleton, всегда одна строка (id=1). Заводится
@@ -169,7 +160,7 @@ async def run_scheduled_check() -> None:
 
         if chosen is None:
             logger.warning(
-                "Реклама: нечего рассылать — подборка пуста или выбранные заготовки не найдены в файле",
+                "Реклама: нечего рассылать — заготовок нет или выбранные id не найдены",
             )
             return
 
