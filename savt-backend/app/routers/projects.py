@@ -43,6 +43,26 @@ async def add_by_qr(
     result = await service.add_by_qr(user_id=current_user.id, unique_code=payload.parse_unique_code())
     return AddProjectByQrOut(**result)
 
+# Закрепить проект наверх списка
+@router.post("/{project_id}/pin", status_code=status.HTTP_204_NO_CONTENT)
+async def pin_project(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    service = UserProjectService(session)
+    await service.pin_project(current_user.id, project_id)
+
+# Открепить
+@router.delete("/{project_id}/pin", status_code=status.HTTP_204_NO_CONTENT)
+async def unpin_project(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    service = UserProjectService(session)
+    await service.unpin_project(current_user.id, project_id)
+
 # Покинуть проект — теряет доступ разом ко всем его шкафам (доступ выводится
 # из членства, точечно выйти из одного ШУ нельзя)
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -23,6 +23,13 @@ class UserProject(Base):
     )
     # дата привязки
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # закреп проекта наверх списка (GET /projects), см. POST/DELETE
+    # /projects/{id}/pin — живёт прямо на членстве, а не в user_favorites:
+    # закреп имеет смысл только для проекта, к которому есть доступ, и должен
+    # исчезать сам, когда пользователь покидает проект (строка UserProject
+    # удаляется целиком — отдельно чистить закреп не нужно)
+    is_pinned: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     def __repr__(self) -> str:
         return f"<UserProject id={self.id} user_id={self.user_id} project_id={self.project_id} primary={self.is_primary}>"

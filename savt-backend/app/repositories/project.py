@@ -373,9 +373,16 @@ class UserProjectRepository(BaseRepository[UserProject]):
             select(UserProject, Project)
             .join(Project, Project.id == UserProject.project_id)
             .where(UserProject.user_id == user_id, Project.deleted_at.is_(None))
-            .order_by(UserProject.is_primary.desc(), UserProject.added_at.desc())
+            .order_by(
+                UserProject.is_pinned.desc(), UserProject.is_primary.desc(), UserProject.added_at.desc(),
+            )
         )
         return result.all()
+
+    async def set_pinned(self, up: UserProject, pinned: bool) -> None:
+        up.is_pinned = pinned
+        up.pinned_at = datetime.now(timezone.utc) if pinned else None
+        await self.session.flush()
 
     async def get_with_project(self, user_id: int, project_id: int):
         result = await self.session.execute(

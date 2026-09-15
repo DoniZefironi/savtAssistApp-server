@@ -3,7 +3,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import AlreadyExistsError, NotFoundError
 from app.repositories.cabinet import CabinetRepository
 from app.repositories.chat import ChatRepository
-from app.repositories.favorite import FavoriteRepository
 from app.repositories.project import ProjectRepository, ProjectRequestRepository, UserProjectRepository
 from app.schemas.project import ProjectCabinetItem, UserProjectDetailOut, UserProjectListItemOut
 from app.utils.warranty import warranty_status as _warranty_status
@@ -17,7 +16,6 @@ class UserProjectService:
         self.user_project_repo = UserProjectRepository(session)
         self.request_repo = ProjectRequestRepository(session)
         self.chat_repo = ChatRepository(session)
-        self.favorite_repo = FavoriteRepository(session)
 
     # Список проектов пользователя. Кол-во ШУ — одним батч-запросом на все
     # проекты разом (count_by_projects), не по одному в цикле — раньше это
@@ -28,6 +26,7 @@ class UserProjectService:
         return [
             UserProjectListItemOut(
                 project_id=project.id, name=project.name, is_primary=up.is_primary,
+                is_pinned=up.is_pinned,
                 cabinet_count=cabinet_counts.get(project.id, 0),
                 company_name=project.company_name,
                 warranty_status=_warranty_status(project.warranty_ends_at),
@@ -49,6 +48,7 @@ class UserProjectService:
             project_id=project.id,
             name=project.name,
             is_primary=up.is_primary,
+            is_pinned=up.is_pinned,
             cabinets=[
                 ProjectCabinetItem(
                     id=c.id, type=c.type, object_number=c.object_number, admin_internal_name=c.admin_internal_name,
@@ -100,6 +100,23 @@ class UserProjectService:
         await self.session.commit()
         return {"status": "request_submitted", "message": "Заявка отправлена администратору на рассмотрение"}
 
+    # Закрепить/открепить проект наверх списка GET /projects. Закреп живёт на
+    # самой связи UserProject — открепляется сам, если пользователь потом
+    # покинет проект, отдельно чистить не нужно.
+    async def pin_project(self, user_id: int, project_id: int) -> None:
+        up = await self.user_project_repo.find(user_id, project_id)
+        if up is None:
+            raise NotFoundError("Проект не найден")
+        await self.user_project_repo.set_pinned(up, True)
+        await self.session.commit()
+
+    async def unpin_project(self, user_id: int, project_id: int) -> None:
+        up = await self.user_project_repo.find(user_id, project_id)
+        if up is None:
+            raise NotFoundError("Проект не найден")
+        await self.user_project_repo.set_pinned(up, False)
+        await self.session.commit()
+
     # Пользователь сам покидает проект — теряет доступ разом ко всем его
     # шкафам (доступ выводится из членства, точечно выйти из одного ШУ нельзя,
     # см. общую идею проектного доступа). Заодно архивирует его чаты по этому
@@ -110,11 +127,6 @@ class UserProjectService:
         if up is None:
             raise NotFoundError("Проект не найден")
         await self.user_project_repo.delete(up)
-
-        # Иначе в избранном остаётся запись на проект, к которому доступа уже нет
-        favorite = await self.favorite_repo.find(user_id, "project", project_id)
-        if favorite is not None:
-            await self.favorite_repo.remove(favorite)
 
         cabinet_ids = [c.id for c in await self.cabinet_repo.list_by_project(project_id)]
         from app.services.chat_service import ChatService

@@ -106,6 +106,7 @@ class UserProjectListItemOut(BaseModel):
     project_id: int
     name: str
     is_primary: bool
+    is_pinned: bool = False
     cabinet_count: int
     company_name: str | None = None
     warranty_status: str = "none"
@@ -115,6 +116,7 @@ class UserProjectDetailOut(BaseModel):
     project_id: int
     name: str
     is_primary: bool
+    is_pinned: bool = False
     cabinets: list[ProjectCabinetItem] = []
     company_name: str | None = None
     shipment_planned_at: datetime | None = None
