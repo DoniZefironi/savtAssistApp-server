@@ -28,6 +28,7 @@ from app.core.exceptions import (
     NotFoundError,
     PermissionDeniedError,
     RateLimitError,
+    ValidationError,
 )
 from app.database import engine
 from app.routers import auth as auth_router
@@ -65,6 +66,7 @@ from app.routers import admin_telemetry as admin_telemetry_router
 from app.routers import admin_sim as admin_sim_router
 from app.routers import admin_registration_requests as admin_registration_requests_router
 from app.routers import admin_password_reset_requests as admin_password_reset_requests_router
+from app.routers import reclamations as reclamations_router
 from app.services.messenger_service import MessengerSendError
 from app.core.firebase import init_firebase
 from app.services.warranty_scheduler import check_warranty_expiry
@@ -219,6 +221,11 @@ async def authentication_error_handler(_: Request, exc: AuthenticationError):
 async def invalid_code_handler(_: Request, exc: InvalidCodeError):
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
+# 400 - нарушено бизнес-правило
+@app.exception_handler(ValidationError)
+async def validation_error_handler(_: Request, exc: ValidationError):
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
 # 429 - слишком много запросов, овер
 @app.exception_handler(RateLimitError)
 async def rate_limit_handler(_: Request, exc: RateLimitError):
@@ -268,6 +275,7 @@ app.include_router(admin_telemetry_router.router)
 app.include_router(admin_sim_router.router)
 app.include_router(admin_registration_requests_router.router)
 app.include_router(admin_password_reset_requests_router.router)
+app.include_router(reclamations_router.router)
 app.mount("/static", StaticFiles(directory="/code/uploads"), name="static")
 
 # Бэзик эндпоинты

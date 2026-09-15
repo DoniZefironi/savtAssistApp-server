@@ -22,6 +22,10 @@ class AuthenticationError(DomainError):
 class InvalidCodeError(DomainError):
     pass
 
+# 400 — нарушено бизнес-правило (не код/подтверждение, см. InvalidCodeError)
+class ValidationError(DomainError):
+    pass
+
 # 429
 class RateLimitError(DomainError):
     pass
