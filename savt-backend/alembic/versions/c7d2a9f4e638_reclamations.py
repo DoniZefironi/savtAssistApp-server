@@ -22,7 +22,7 @@ def upgrade() -> None:
     op.create_table(
         "reclamations",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("user_id", sa.Integer(), sa.ForeignKey("users.id"), nullable=False, index=True),
+        sa.Column("user_id", sa.Integer(), sa.ForeignKey("users.id"), nullable=False),
 
         sa.Column("status", sa.String(20), nullable=False, server_default="review"),
         sa.Column("warranty_classification", sa.Boolean(), nullable=True),
