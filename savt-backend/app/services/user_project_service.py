@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import AlreadyExistsError, NotFoundError
 from app.repositories.cabinet import CabinetRepository
 from app.repositories.chat import ChatRepository
+from app.repositories.favorite import FavoriteRepository
 from app.repositories.project import ProjectRepository, ProjectRequestRepository, UserProjectRepository
 from app.schemas.project import ProjectCabinetItem, UserProjectDetailOut, UserProjectListItemOut
 from app.utils.warranty import warranty_status as _warranty_status
@@ -16,6 +17,7 @@ class UserProjectService:
         self.user_project_repo = UserProjectRepository(session)
         self.request_repo = ProjectRequestRepository(session)
         self.chat_repo = ChatRepository(session)
+        self.favorite_repo = FavoriteRepository(session)
 
     # Список проектов пользователя. Кол-во ШУ — одним батч-запросом на все
     # проекты разом (count_by_projects), не по одному в цикле — раньше это
@@ -108,6 +110,11 @@ class UserProjectService:
         if up is None:
             raise NotFoundError("Проект не найден")
         await self.user_project_repo.delete(up)
+
+        # Иначе в избранном остаётся запись на проект, к которому доступа уже нет
+        favorite = await self.favorite_repo.find(user_id, "project", project_id)
+        if favorite is not None:
+            await self.favorite_repo.remove(favorite)
 
         cabinet_ids = [c.id for c in await self.cabinet_repo.list_by_project(project_id)]
         from app.services.chat_service import ChatService

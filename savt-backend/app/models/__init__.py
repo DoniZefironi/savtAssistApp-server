@@ -48,6 +48,8 @@ from app.models.register_definition import RegisterDefinition
 from app.models.cabinet_register_override import CabinetRegisterOverride
 from app.models.cabinet_telemetry_event import CabinetTelemetryEvent
 from app.models.cabinet_register_state import CabinetRegisterState
+from app.models.reclamation import Reclamation
+from app.models.reclamation_attachment import ReclamationAttachment
 
 __all__ = [
     "Role", "User", "RefreshToken", "PhoneVerificationCode",
@@ -63,5 +65,5 @@ __all__ = [
     "MessengerLink", "PhoneChangeRequest", "PendingRegistration", "RegistrationRequest",
     "PasswordResetRequest", "PromoMessage", "PromoScheduleSettings",
     "RegisterDefinition", "CabinetRegisterOverride", "CabinetTelemetryEvent",
-    "CabinetRegisterState",
+    "CabinetRegisterState", "Reclamation", "ReclamationAttachment",
 ]

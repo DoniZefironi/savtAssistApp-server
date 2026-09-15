@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 
 
 class FavoriteIn(BaseModel):
-    entity_type: str = Field(..., pattern="^(document|kb_article|faq_entry)$")
+    entity_type: str = Field(..., pattern="^(document|kb_article|faq_entry|project)$")
     entity_id: int = Field(..., gt=0)
 
 
