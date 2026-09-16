@@ -6,6 +6,7 @@ from app.models.document_request import DocumentRequest
 from app.models.password_reset_request import PasswordResetRequest
 from app.models.phone_change_request import PhoneChangeRequest
 from app.models.project_share_request import ProjectShareRequest
+from app.models.reclamation import Reclamation
 from app.models.registration_request import RegistrationRequest
 from app.models.service_request import ServiceRequest
 from app.models.user import User
@@ -48,6 +49,10 @@ class DashboardService:
             select(func.count(PasswordResetRequest.id)).where(PasswordResetRequest.status == "pending")
         )).scalar() or 0
 
+        pending_reclamations = (await self.session.execute(
+            select(func.count(Reclamation.id)).where(Reclamation.status == "review")
+        )).scalar() or 0
+
         recent = await self._get_recent_activity()
 
         return DashboardOut(
@@ -60,6 +65,7 @@ class DashboardService:
                 pending_phone_change_requests=pending_phone_change,
                 pending_registration_requests=pending_registration,
                 pending_password_reset_requests=pending_password_reset,
+                pending_reclamations=pending_reclamations,
             ),
             recent_activity=recent,
         )
@@ -143,6 +149,19 @@ class DashboardService:
                 id=req.id, type="password_reset", status=req.status,
                 user_id=req.user_id, user_full_name=user.full_name if user else None,
                 created_at=req.created_at,
+            ))
+
+        rows = (await self.session.execute(
+            select(Reclamation, User)
+            .outerjoin(User, User.id == Reclamation.user_id)
+            .order_by(Reclamation.created_at.desc())
+            .limit(10)
+        )).all()
+        for req, user in rows:
+            items.append(RecentActivityItem(
+                id=req.id, type="reclamation", status=req.status,
+                user_id=req.user_id, user_full_name=user.full_name if user else None,
+                cabinet_id=req.cabinet_id, created_at=req.created_at,
             ))
 
         # Заявка на регистрацию — заявитель ещё не пользователь (см.

@@ -4254,7 +4254,7 @@ ws.onmessage = (e) => {
 ## Рут `admin/dashboard` — дашборд
 
 ### GET `/admin/dashboard`
-Единый endpoint для главного экрана администратора/оператора. Возвращает все счётчики одним запросом (5 DB-запросов) и последние 10 действий по всем типам заявок.
+Единый endpoint для главного экрана администратора/оператора. Возвращает все счётчики одним запросом-набором и последние 10 действий по всем типам заявок разом.
 
 **Доступ:** `operator`, `admin`.
 
@@ -4266,7 +4266,11 @@ ws.onmessage = (e) => {
     "open_service_requests": 5,
     "pending_document_requests": 3,
     "pending_addition_requests": 4,
-    "pending_project_share_requests": 1
+    "pending_project_share_requests": 1,
+    "pending_phone_change_requests": 0,
+    "pending_registration_requests": 2,
+    "pending_password_reset_requests": 0,
+    "pending_reclamations": 1
   },
   "recent_activity": [
     {
@@ -4283,11 +4287,13 @@ ws.onmessage = (e) => {
 }
 ```
 
-Поле `type`: `service` | `document` | `share` | `addition`. `pending_share_requests`
-переименован в `pending_project_share_requests` — раньше считал заявки на доступ
-к отдельному ШУ (убраны), теперь считает заявки на вступление в проект
-(`ProjectShareRequest`). У элементов `recent_activity` с `type: "share"` теперь
-заполнен `project_id`, а не `cabinet_id` (`null`).
+Поле `type`: `service` | `document` | `share` | `addition` | `phone_change` |
+`password_reset` | `registration` | `reclamation`. У `type: "registration"`
+`user_id` всегда `null` — заявитель ещё не пользователь на момент заявки, имя
+берётся прямо из полей самой заявки, а не через связь с аккаунтом.
+`pending_reclamations` считает только рекламации со статусом `review` (на
+рассмотрении) — как `open_service_requests` у сервисных заявок, `in_progress`/
+`resolved`/`rejected` уже не «висят» в очереди на рассмотрение.
 
 ---
 

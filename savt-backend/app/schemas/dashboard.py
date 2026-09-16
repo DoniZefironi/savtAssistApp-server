@@ -15,6 +15,9 @@ class DashboardStats(BaseModel):
     pending_phone_change_requests: int
     pending_registration_requests: int
     pending_password_reset_requests: int
+    # только "на рассмотрении" — как open у service requests, in_progress/
+    # resolved/rejected уже не "висят", ими кто-то занимается или закрыто
+    pending_reclamations: int
 
 
 class RecentActivityItem(BaseModel):
