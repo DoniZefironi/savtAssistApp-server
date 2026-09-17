@@ -350,3 +350,10 @@ async def handle_deal_event(form: dict) -> None:
         _log.info("Bitrix deal webhook: номер проекта не определился для сделки '%s'", title)
     elif created:
         _log.info("Bitrix deal webhook: создан проект id=%s ('%s')", project.id, title)
+
+async def handle_reclamation_webhook(form: dict) -> None:
+    """Обрабатывает ONCRMDYNAMICITEMUPDATE — общее событие на изменение
+    любого элемента любого смарт-процесса, поэтому сначала фильтруем по entity_type_id.
+    Поля payload временно не угадываем, а логируем целиком —
+    после первого реального срабатывания уточним точные ключи."""
+    _log.info("Reclamation webhook raw payload: %s", form)

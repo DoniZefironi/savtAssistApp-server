@@ -2,6 +2,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 
 from app.services.bitrix_webhook_service import (
     handle_deal_event,
+    handle_reclamation_webhook,
     handle_task_comment_webhook,
     handle_task_update_webhook,
     verify_token,
@@ -39,3 +40,11 @@ async def deal_webhook(request: Request, background_tasks: BackgroundTasks):
     if not verify_token(form):
         raise HTTPException(status_code=403, detail="Invalid application_token")
     background_tasks.add_task(handle_deal_event, form)
+
+
+@router.post("/reclamation", status_code=status.HTTP_204_NO_CONTENT)
+async def reclamation_webhook(request: Request, background_tasks: BackgroundTasks):
+    form = dict(await request.form())
+    if not verify_token(form):
+        raise HTTPException(status_code=403, detail="Invalid application_token")
+    background_tasks.add_task(handle_reclamation_webhook, form)

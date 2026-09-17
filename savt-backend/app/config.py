@@ -79,6 +79,10 @@ class Settings(BaseSettings):
 
     bitrix_reclamation_entity_type_id: int = 1176
 
+    # Ссылка на карточку рекламации в админке — вставляется в sourceDescription
+    # элемента Bitrix, см. reclamation_service._build_bitrix_description
+    reclamation_admin_url: str = "http://10.1.0.208:8080/admin/requests"
+
     # Служебный аккаунт для входа в приложение управления SIM-картами — у него
     # своя JWT-авторизация (POST /api/User/login), не статический токен, см.
     # app/services/sim_service.py

@@ -6,6 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.core.constants import BITRIX_USER_LOGIN as _INCOMING_USER_LOGIN
 
+from datetime import datetime
+
 _log = logging.getLogger(__name__)
 
 _client: httpx.AsyncClient | None = None
@@ -23,6 +25,33 @@ _STATUS_TO_BITRIX = {
     "postponed": "6",
     "closed": "5",
 }
+
+_RECLAMATION_STATUS_TO_STAGE = {
+    "review": "DT1176_69:NEW",
+    "in_progress": "DT1176_69:CLIENT",
+    "resolved": "DT1176_69:SUCCESS",
+    "rejected": "DT1176_69:FAIL",
+}
+
+async def update_reclamation_stage(item_id: str, status: str) -> None:
+    """Переводит элемент рекламации на нужную стадию (crm.item.update)."""
+    if not settings.bitrix_webhook_url:
+        return
+    stage_id = _RECLAMATION_STATUS_TO_STAGE.get(status)
+    if stage_id is None:
+        return
+
+    url = f"{settings.bitrix_webhook_url.rstrip('/')}/crm.item.update.json"
+    resp = await _get_client().post(url, json={
+        "entityTypeId": settings.bitrix_reclamation_entity_type_id,
+        "id": item_id,
+        "fields": {"stageId": stage_id},
+    })
+    if not resp.is_success:
+        raise RuntimeError(f"Bitrix crm.item.update {resp.status_code}: {resp.text}")
+    data = resp.json()
+    if "error" in data:
+        raise RuntimeError(f"Bitrix crm.item.update error: {data}")
 
 
 def _get_client() -> httpx.AsyncClient:
@@ -108,6 +137,35 @@ async def get_task_chat_id(task_id: str) -> str | None:
     )
     return f"chat{chat_id}" if chat_id else None
 
+async def create_reclamation_item(
+        description: str, deal_id: str | None, company_id: str | None,
+) -> str | None:
+    """Создает элемент в смарт-процессе "Журнал рекламаций и претензий"
+    (crm.item.add). Возвращает ID созданного элемента, либо None, если Bitrix не настроен."""
+    if not settings.bitrix_webhook_url:
+        return None
+
+    fields = {
+        "sourceDescription": description,
+        "begindate": datetime.now().strftime("%Y-%m-%d"),
+        "stageId": "DT1176_69:NEW",
+    }
+    if deal_id:
+        fields["parentId2"] = deal_id
+    if company_id:
+        fields["companyId"] = company_id
+
+    url = f"{settings.bitrix_webhook_url.rstrip('/')}/crm.item.add.json"
+    resp = await _get_client().post(url, json={
+        "entityTypeId": settings.bitrix_reclamation_entity_type_id,
+        "fields": fields,
+    })
+    if not resp.is_success:
+        raise RuntimeError(f"Bitrix crm.item.add {resp.status_code}: {resp.text}")
+    data = resp.json()
+    if "error" in data:
+        raise RuntimeError(f"Bitrix crm.item.add error: {data}")
+    return str(data["result"]["item"]["id"])
 
 async def get_dialog_message(dialog_id: str, message_id: str) -> dict | None:
     """Дотягивает одно конкретное сообщение чата задачи (im.dialog.messages.get)

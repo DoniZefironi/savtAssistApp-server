@@ -1,8 +1,13 @@
+import asyncio
+import logging
+
 from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.core.exceptions import NotFoundError, PermissionDeniedError, ValidationError
+from app.models.reclamation import Reclamation
 from app.repositories.cabinet import CabinetRepository
 from app.repositories.reclamation import ReclamationRepository
 from app.schemas.pagination import PageOut, make_page
@@ -16,6 +21,8 @@ from app.schemas.reclamation import (
 )
 from app.services.audit_service import AuditLogger
 from app.services.notification_service import NotificationService
+
+_log = logging.getLogger(__name__)
 
 
 class ReclamationService:
@@ -44,6 +51,8 @@ class ReclamationService:
             {"object_type": rec.object_type},
         )
         await self.session.commit()
+
+        _sync_to_bitrix(rec.id, _build_bitrix_description(rec), rec.cabinet_id)
 
         row = await self.repo.get_with_cabinet_for_user(user_id, rec.id)
         return await self._detail_out(*row)
@@ -115,6 +124,8 @@ class ReclamationService:
 
         if status_changed:
             await self._notify_status_change(rec)
+            if rec.bitrix_item_id:
+                _sync_status_to_bitrix(rec.bitrix_item_id, rec.status)
 
         return await self.get_admin(reclamation_id)
 
@@ -191,3 +202,71 @@ class ReclamationService:
             created_at=rec.created_at, resolved_at=rec.resolved_at,
             attachments=[ReclamationAttachmentOut.model_validate(a) for a in attachments],
         )
+
+
+# Модульные функции, не методы: _sync_to_bitrix запускается через
+# asyncio.create_task в своей собственной сессии, к моменту её реального
+# выполнения request-сессия (self.session) может быть уже закрыта — как и у
+# ServiceRequestService._sync_to_bitrix, см. app/services/service_request_service.py
+
+def _sync_to_bitrix(reclamation_id: int, description: str, cabinet_id: int | None) -> None:
+    async def _task():
+        from app.database import AsyncSessionLocal
+        from app.models.cabinets import Cabinet
+        from app.models.project import Project
+        from app.services import bitrix_service
+
+        deal_id = company_id = None
+        async with AsyncSessionLocal() as session:
+            if cabinet_id is not None:
+                cabinet = await session.get(Cabinet, cabinet_id)
+                if cabinet is not None and cabinet.project_id is not None:
+                    project = await session.get(Project, cabinet.project_id)
+                    if project is not None:
+                        deal_id = project.bitrix_deal_id
+                        company_id = project.bitrix_company_id
+
+            try:
+                item_id = await bitrix_service.create_reclamation_item(description, deal_id, company_id)
+            except Exception:
+                _log.exception("Bitrix item creation failed for reclamation %s", reclamation_id)
+                return
+            if not item_id:
+                return
+
+            rec = await session.get(Reclamation, reclamation_id)
+            if rec is not None:
+                rec.bitrix_item_id = item_id
+                await session.commit()
+
+    asyncio.create_task(_task())
+
+def _sync_status_to_bitrix(bitrix_item_id: str, status: str) -> None:
+    async def _task():
+        from app.services import bitrix_service
+        try:
+            await bitrix_service.update_reclamation_stage(bitrix_item_id, status)
+        except Exception:
+            _log.exception("Bitrix status sync failed for reclamation item %s", bitrix_item_id)
+
+    asyncio.create_task(_task())
+
+def _build_bitrix_description(rec: Reclamation) -> str:
+    lines = [rec.description, "", "--- Дополнительно (Savt Assist) ---"]
+    if rec.object_details:
+        lines.append(f"Данные объекта: {rec.object_details}")
+    lines.append(f"Контакт: {rec.contact_name}, {rec.contact_phone}, {rec.contact_email}")
+    if rec.customer_name:
+        lines.append(f"Заказчик: {rec.customer_name}")
+    if rec.contract_number or rec.order_number or rec.ttn_number:
+        lines.append(
+            f"Договор: {rec.contract_number or '-'}, заказ: {rec.order_number or '-'}, "
+            f"ТТН: {rec.ttn_number or '-'}"
+        )
+    if rec.occurrence_conditions:
+        lines.append(f"Условия проявления: {rec.occurrence_conditions}")
+    if rec.error_codes:
+        lines.append(f"Коды ошибок: {rec.error_codes}")
+    lines.append("")
+    lines.append(f"Подробнее: {settings.reclamation_admin_url}?tab=reclamations&reclamation_id={rec.id}")
+    return "\n".join(lines)
