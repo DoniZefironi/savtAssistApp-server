@@ -145,7 +145,14 @@ async def create_reclamation_item(
     if not settings.bitrix_webhook_url:
         return None
 
+    # "Название" обязательно для этого смарт-процесса (проверено вживую — не
+    # видно в isRequired у crm.item.fields, но crm.item.add падает без него).
+    # description здесь — уже весь собранный текст-срез, первая строка — это
+    # исходное краткое описание, им и озаглавливаем.
+    title = description.split("\n", 1)[0][:200]
+
     fields = {
+        "title": title,
         "sourceDescription": description,
         "begindate": datetime.now().strftime("%Y-%m-%d"),
         "stageId": "DT1176_69:NEW",
