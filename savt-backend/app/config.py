@@ -77,6 +77,8 @@ class Settings(BaseSettings):
 
     bitrix_project_code_pepper: str = "3.1415"
 
+    bitrix_reclamation_entity_type_id: int = 1176
+
     # Служебный аккаунт для входа в приложение управления SIM-картами — у него
     # своя JWT-авторизация (POST /api/User/login), не статический токен, см.
     # app/services/sim_service.py

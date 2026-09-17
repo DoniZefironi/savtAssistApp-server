@@ -25,6 +25,8 @@ class Reclamation(Base):
     # in_progress; до этого момента null — классификация ещё не решена
     warranty_classification: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
+    # id созданного элемента в битрикс
+    bitrix_item_id: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # --- объект рекламации ---
     # cabinet | line | component | software | documentation, см. CHECK ниже
     object_type: Mapped[str] = mapped_column(String(20), index=True)
