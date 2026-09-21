@@ -257,6 +257,49 @@ def _sync_status_to_bitrix(
 
     asyncio.create_task(_task())
 
+async def sync_reclamation_from_bitrix(item_id: str) -> None:
+    """Применяет реальное состояние элемента Bitrix к нашей рекламации —
+    вызывается из вебхука ONCRMDYNAMICITEMUPDATE (см.
+    bitrix_webhook_service.handle_reclamation_webhook), который сам несёт
+    только ID элемента, без полей, поэтому дотягиваем элемент целиком
+    (crm.item.get). Своя сессия — вызывается не из метода сервиса, а
+    напрямую из обработчика вебхука, никакой session с request нет."""
+    from app.database import AsyncSessionLocal
+    from app.repositories.reclamation import ReclamationRepository
+    from app.services import bitrix_service
+
+    async with AsyncSessionLocal() as session:
+        rec = await ReclamationRepository(session).find_by_bitrix_item_id(item_id)
+        if rec is None:
+            return
+
+        try:
+            item = await bitrix_service.get_reclamation_item(item_id)
+        except Exception:
+            _log.exception("Bitrix reclamation webhook: не удалось получить элемент %s", item_id)
+            return
+        if item is None:
+            return
+
+        stage_id = item.get("stageId")
+        new_status = bitrix_service.RECLAMATION_STAGE_TO_STATUS.get(stage_id)
+        if new_status is None or new_status == rec.status:
+            return
+
+        old_status = rec.status
+        rec.status = new_status
+        if new_status in ("resolved", "rejected") and rec.resolved_at is None:
+            rec.resolved_at = datetime.now(timezone.utc)
+
+        await session.commit()
+        _log.info(
+            "Bitrix reclamation webhook: рекламация %s статус %s -> %s (item=%s, stage=%s)",
+            rec.id, old_status, new_status, item_id, stage_id,
+        )
+
+        await ReclamationService(session)._notify_status_change(rec)
+
+
 def _build_bitrix_description(rec: Reclamation) -> str:
     lines = [rec.description, "", "--- Дополнительно (Savt Assist) ---"]
     if rec.object_details:

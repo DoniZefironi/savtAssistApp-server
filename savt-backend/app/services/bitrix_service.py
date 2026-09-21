@@ -33,6 +33,30 @@ _RECLAMATION_STATUS_TO_STAGE = {
     "resolved": "DT1176_69:SUCCESS",
     "rejected": "DT1176_69:FAIL",
 }
+# обратная карта — для вебхука из Bitrix (стадия -> наш статус), см.
+# reclamation_service.sync_reclamation_from_bitrix
+RECLAMATION_STAGE_TO_STATUS = {v: k for k, v in _RECLAMATION_STATUS_TO_STAGE.items()}
+
+
+async def get_reclamation_item(item_id: str) -> dict | None:
+    """Дотягивает элемент рекламации целиком (crm.item.get) — вебхук
+    ONCRMDYNAMICITEMUPDATE несёт только ID, без самих полей."""
+    if not settings.bitrix_webhook_url:
+        return None
+    url = f"{settings.bitrix_webhook_url.rstrip('/')}/crm.item.get.json"
+    resp = await _get_client().post(url, json={
+        "entityTypeId": settings.bitrix_reclamation_entity_type_id,
+        "id": item_id,
+    })
+    if not resp.is_success:
+        _log.warning("Bitrix crm.item.get %s: %s", resp.status_code, resp.text)
+        return None
+    data = resp.json()
+    if "error" in data:
+        _log.warning("Bitrix crm.item.get error: %s", data)
+        return None
+    return (data.get("result") or {}).get("item")
+
 
 def _read_local_file(url: str | None) -> tuple[str, bytes] | None:
     """Резолвит подписанный /static/... URL в реальный файл на диске (тот же

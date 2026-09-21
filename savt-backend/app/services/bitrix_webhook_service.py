@@ -353,7 +353,17 @@ async def handle_deal_event(form: dict) -> None:
 
 async def handle_reclamation_webhook(form: dict) -> None:
     """Обрабатывает ONCRMDYNAMICITEMUPDATE — общее событие на изменение
-    любого элемента любого смарт-процесса, поэтому сначала фильтруем по entity_type_id.
-    Поля payload временно не угадываем, а логируем целиком —
-    после первого реального срабатывания уточним точные ключи."""
-    _log.info("Reclamation webhook raw payload: %s", form)
+    ЛЮБОГО элемента ЛЮБОГО смарт-процесса на портале (проверено вживую —
+    первые реальные срабатывания пришли с ENTITY_TYPE_ID=1118 "Закупка",
+    не 1176), поэтому сначала фильтруем по ENTITY_TYPE_ID."""
+    entity_type_id = _extract(form, "[entity_type_id]")
+    if entity_type_id != str(settings.bitrix_reclamation_entity_type_id):
+        return
+
+    item_id = _extract(form, "[id]")
+    if not item_id:
+        _log.info("Reclamation webhook: не удалось извлечь id элемента из payload: %s", form)
+        return
+
+    from app.services.reclamation_service import sync_reclamation_from_bitrix
+    await sync_reclamation_from_bitrix(item_id)

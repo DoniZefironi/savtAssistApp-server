@@ -26,6 +26,12 @@ class ReclamationRepository:
     async def get_by_id(self, reclamation_id: int) -> Reclamation | None:
         return await self.session.get(Reclamation, reclamation_id)
 
+    async def find_by_bitrix_item_id(self, bitrix_item_id: str) -> Reclamation | None:
+        result = await self.session.execute(
+            select(Reclamation).where(Reclamation.bitrix_item_id == bitrix_item_id)
+        )
+        return result.scalar_one_or_none()
+
     # для пользователя — с проверкой владения прямо в условии, а не отдельным
     # if user_id != ... после загрузки (чужая заявка просто не найдётся)
     async def get_with_cabinet_for_user(self, user_id: int, reclamation_id: int):
