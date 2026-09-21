@@ -94,14 +94,21 @@ async def update_reclamation_stage(
     подтягиваем confirmation_file_url прямо с диска и шлём его как файл.
     Формат файлового поля [имя, base64] — по документации Bitrix REST для
     UF-полей типа file, вживую не перепроверяли (в отличие от остального в
-    этом сервисе) — если формат не подойдёт, будет видно по ответу API."""
+    этом сервисе) — если формат не подойдёт, будет видно по ответу API.
+
+    "Служебное. Переместить сделку на указанную стадию" (ufCrm53_1784792943558,
+    enum с единственным значением "ДА" = ID 1425) — тоже обязательно на
+    переходах через API (проверено вживую на in_progress), похоже, служебный
+    переключатель для внутренней автоматизации Bitrix (двигать связанную
+    сделку вслед за рекламацией). Ставим его на каждом переходе, не только
+    на in_progress — раз он всплыл здесь, может потребоваться и на других."""
     if not settings.bitrix_webhook_url:
         return
     stage_id = _RECLAMATION_STATUS_TO_STAGE.get(status)
     if stage_id is None:
         return
 
-    fields = {"stageId": stage_id}
+    fields = {"stageId": stage_id, "ufCrm53_1784792943558": "1425"}
     if status == "in_progress":
         fields["ufCrm53_1784791589794"] = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
     if status == "resolved" and confirmation_file_url:
