@@ -153,30 +153,44 @@ async def list_reclamation_assignees() -> list[dict]:
     ответственного в админке, вместо свободного текстового поля.
     Возвращает [{id, full_name, phone, position}]. Рабочий телефон
     (WORK_PHONE) может быть не заполнен у сотрудника — тогда откатываемся на
-    личный мобильный (PERSONAL_MOBILE), чтобы в дропдауне телефон не был пустым."""
+    личный мобильный (PERSONAL_MOBILE), чтобы в дропдауне телефон не был пустым.
+
+    Фильтр только ACTIVE=true — без USER_TYPE=employee (первая версия его
+    добавляла лишним предположением, из-за чего часть реальных пользователей
+    отфильтровывалась). user.get отдаёт результат постранично (обычно по 50),
+    поэтому дальше в цикле идём по data["next"], пока не выберем всех."""
     if not settings.bitrix_webhook_url:
         return []
     url = f"{settings.bitrix_webhook_url.rstrip('/')}/user.get.json"
-    resp = await _get_client().post(url, json={"ACTIVE": True, "USER_TYPE": "employee"})
-    if not resp.is_success:
-        _log.warning("Bitrix user.get %s: %s", resp.status_code, resp.text)
-        return []
-    data = resp.json()
-    if "error" in data:
-        _log.warning("Bitrix user.get error: %s", data)
-        return []
 
-    users = []
-    for u in data.get("result") or []:
-        full_name = " ".join(
-            part for part in (u.get("LAST_NAME"), u.get("NAME"), u.get("SECOND_NAME")) if part
-        )
-        users.append({
-            "id": int(u["ID"]),
-            "full_name": full_name or f"Пользователь {u['ID']}",
-            "phone": u.get("WORK_PHONE") or u.get("PERSONAL_MOBILE") or None,
-            "position": u.get("WORK_POSITION") or None,
-        })
+    users: list[dict] = []
+    start = 0
+    while True:
+        resp = await _get_client().post(url, json={"ACTIVE": True, "start": start})
+        if not resp.is_success:
+            _log.warning("Bitrix user.get %s: %s", resp.status_code, resp.text)
+            break
+        data = resp.json()
+        if "error" in data:
+            _log.warning("Bitrix user.get error: %s", data)
+            break
+
+        for u in data.get("result") or []:
+            full_name = " ".join(
+                part for part in (u.get("LAST_NAME"), u.get("NAME"), u.get("SECOND_NAME")) if part
+            )
+            users.append({
+                "id": int(u["ID"]),
+                "full_name": full_name or f"Пользователь {u['ID']}",
+                "phone": u.get("WORK_PHONE") or u.get("PERSONAL_MOBILE") or None,
+                "position": u.get("WORK_POSITION") or None,
+            })
+
+        next_start = data.get("next")
+        if next_start is None:
+            break
+        start = next_start
+
     return users
 
 
