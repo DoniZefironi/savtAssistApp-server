@@ -358,6 +358,10 @@ async def handle_reclamation_webhook(form: dict) -> None:
     не 1176), поэтому сначала фильтруем по ENTITY_TYPE_ID."""
     entity_type_id = _extract(form, "[entity_type_id]")
     if entity_type_id != str(settings.bitrix_reclamation_entity_type_id):
+        _log.info(
+            "Reclamation webhook: пропущено — ENTITY_TYPE_ID=%s (ждём %s)",
+            entity_type_id, settings.bitrix_reclamation_entity_type_id,
+        )
         return
 
     item_id = _extract(form, "[id]")
@@ -365,5 +369,6 @@ async def handle_reclamation_webhook(form: dict) -> None:
         _log.info("Reclamation webhook: не удалось извлечь id элемента из payload: %s", form)
         return
 
+    _log.info("Reclamation webhook: применяю элемент id=%s", item_id)
     from app.services.reclamation_service import sync_reclamation_from_bitrix
     await sync_reclamation_from_bitrix(item_id)

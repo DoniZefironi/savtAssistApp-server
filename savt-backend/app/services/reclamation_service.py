@@ -271,6 +271,7 @@ async def sync_reclamation_from_bitrix(item_id: str) -> None:
     async with AsyncSessionLocal() as session:
         rec = await ReclamationRepository(session).find_by_bitrix_item_id(item_id)
         if rec is None:
+            _log.info("Bitrix reclamation webhook: элемент %s не привязан ни к одной рекламации", item_id)
             return
 
         try:
@@ -279,11 +280,21 @@ async def sync_reclamation_from_bitrix(item_id: str) -> None:
             _log.exception("Bitrix reclamation webhook: не удалось получить элемент %s", item_id)
             return
         if item is None:
+            _log.info("Bitrix reclamation webhook: crm.item.get не вернул элемент %s", item_id)
             return
 
         stage_id = item.get("stageId")
         new_status = bitrix_service.RECLAMATION_STAGE_TO_STATUS.get(stage_id)
-        if new_status is None or new_status == rec.status:
+        if new_status is None:
+            _log.info(
+                "Bitrix reclamation webhook: неизвестная стадия %s у элемента %s", stage_id, item_id,
+            )
+            return
+        if new_status == rec.status:
+            _log.info(
+                "Bitrix reclamation webhook: рекламация %s уже в статусе %s, пропускаю",
+                rec.id, new_status,
+            )
             return
 
         old_status = rec.status
