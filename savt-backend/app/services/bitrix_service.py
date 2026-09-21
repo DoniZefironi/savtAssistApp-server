@@ -233,6 +233,7 @@ async def get_task_chat_id(task_id: str) -> str | None:
 
 async def create_reclamation_item(
         description: str, deal_id: str | None, company_id: str | None,
+        attachment_url: str | None = None,
 ) -> str | None:
     """Создает элемент в смарт-процессе "Журнал рекламаций и претензий"
     (crm.item.add). Возвращает ID созданного элемента, либо None, если Bitrix не настроен."""
@@ -255,6 +256,17 @@ async def create_reclamation_item(
         fields["parentId2"] = deal_id
     if company_id:
         fields["companyId"] = company_id
+    # "Обращение (письмо)" (ufCrm53_1784725413459) — поле НЕ множественное,
+    # принимает ровно один файл, поэтому у нас может быть несколько вложений,
+    # а в Bitrix уйдёт только первое (см. _read_local_file — то же самое, что
+    # используется для подтверждающего документа при закрытии)
+    if attachment_url:
+        file_info = _read_local_file(attachment_url)
+        if file_info:
+            name, data = file_info
+            fields["ufCrm53_1784725413459"] = [name, base64.b64encode(data).decode("ascii")]
+        else:
+            _log.warning("Bitrix reclamation create: вложение не прочиталось (%s)", attachment_url)
 
     url = f"{settings.bitrix_webhook_url.rstrip('/')}/crm.item.add.json"
     resp = await _get_client().post(url, json={

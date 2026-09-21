@@ -52,7 +52,8 @@ class ReclamationService:
         )
         await self.session.commit()
 
-        _sync_to_bitrix(rec.id, _build_bitrix_description(rec), rec.cabinet_id)
+        first_attachment_url = data.attachments[0].file_url if data.attachments else None
+        _sync_to_bitrix(rec.id, _build_bitrix_description(rec), rec.cabinet_id, first_attachment_url)
 
         row = await self.repo.get_with_cabinet_for_user(user_id, rec.id)
         return await self._detail_out(*row)
@@ -213,7 +214,9 @@ class ReclamationService:
 # выполнения request-сессия (self.session) может быть уже закрыта — как и у
 # ServiceRequestService._sync_to_bitrix, см. app/services/service_request_service.py
 
-def _sync_to_bitrix(reclamation_id: int, description: str, cabinet_id: int | None) -> None:
+def _sync_to_bitrix(
+    reclamation_id: int, description: str, cabinet_id: int | None, attachment_url: str | None,
+) -> None:
     async def _task():
         from app.database import AsyncSessionLocal
         from app.models.cabinets import Cabinet
@@ -231,7 +234,9 @@ def _sync_to_bitrix(reclamation_id: int, description: str, cabinet_id: int | Non
                         company_id = project.bitrix_company_id
 
             try:
-                item_id = await bitrix_service.create_reclamation_item(description, deal_id, company_id)
+                item_id = await bitrix_service.create_reclamation_item(
+                    description, deal_id, company_id, attachment_url,
+                )
             except Exception:
                 _log.exception("Bitrix item creation failed for reclamation %s", reclamation_id)
                 return
