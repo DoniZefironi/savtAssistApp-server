@@ -237,7 +237,7 @@ def _sync_to_bitrix(
         from app.models.project import Project
         from app.services import bitrix_service
 
-        deal_id = company_id = None
+        deal_id = company_id = project_name = None
         async with AsyncSessionLocal() as session:
             if cabinet_id is not None:
                 cabinet = await session.get(Cabinet, cabinet_id)
@@ -246,10 +246,11 @@ def _sync_to_bitrix(
                     if project is not None:
                         deal_id = project.bitrix_deal_id
                         company_id = project.bitrix_company_id
+                        project_name = project.name
 
             try:
                 item_id = await bitrix_service.create_reclamation_item(
-                    description, deal_id, company_id, attachment_url,
+                    description, deal_id, company_id, attachment_url, project_name,
                 )
             except Exception:
                 _log.exception("Bitrix item creation failed for reclamation %s", reclamation_id)

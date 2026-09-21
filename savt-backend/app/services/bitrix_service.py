@@ -298,7 +298,7 @@ async def get_task_chat_id(task_id: str) -> str | None:
 
 async def create_reclamation_item(
         description: str, deal_id: str | None, company_id: str | None,
-        attachment_url: str | None = None,
+        attachment_url: str | None = None, project_name: str | None = None,
 ) -> str | None:
     """Создает элемент в смарт-процессе "Журнал рекламаций и претензий"
     (crm.item.add). Возвращает ID созданного элемента, либо None, если Bitrix не настроен."""
@@ -307,9 +307,12 @@ async def create_reclamation_item(
 
     # "Название" обязательно для этого смарт-процесса (проверено вживую — не
     # видно в isRequired у crm.item.fields, но crm.item.add падает без него).
-    # description здесь — уже весь собранный текст-срез, первая строка — это
-    # исходное краткое описание, им и озаглавливаем.
-    title = description.split("\n", 1)[0][:200]
+    # Название проекта/сделки — как у остальных рекламаций в этом процессе
+    # (см. реальные примеры: "26РЕКЛ_14. Агрокомбинат Ждановичи" и т.п.) —
+    # префикс "26РЕКЛ_N." дописывает сам робот Bitrix при переходе в работу,
+    # нам его формировать не нужно. Если объект не ШУ (нет проекта) —
+    # откатываемся на первую строку описания, как было раньше.
+    title = (project_name or description.split("\n", 1)[0])[:200]
 
     fields = {
         "title": title,
