@@ -1,3 +1,4 @@
+import base64
 import logging
 
 import httpx
@@ -6,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.core.constants import BITRIX_USER_LOGIN as _INCOMING_USER_LOGIN
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 _log = logging.getLogger(__name__)
 
@@ -33,19 +34,68 @@ _RECLAMATION_STATUS_TO_STAGE = {
     "rejected": "DT1176_69:FAIL",
 }
 
-async def update_reclamation_stage(item_id: str, status: str) -> None:
-    """Переводит элемент рекламации на нужную стадию (crm.item.update)."""
+def _read_local_file(url: str | None) -> tuple[str, bytes] | None:
+    """Резолвит подписанный /static/... URL в реальный файл на диске (тот же
+    принцип, что и upload._resolve_static_path — снимаем подпись, проверяем
+    её и запрещаем выход за UPLOAD_ROOT) и читает байты. Нужен, чтобы
+    отправить подтверждающий документ в Bitrix прямо с диска, а не ходить
+    HTTP-запросом сами к себе через nginx."""
+    from app.core.signed_urls import strip_signature, verify_signature
+    from app.services.upload_service import UPLOAD_ROOT
+
+    if not url or not verify_signature(url):
+        return None
+    bare = strip_signature(url) or ""
+    prefix = "/static/"
+    if not bare.startswith(prefix):
+        return None
+    file_path = (UPLOAD_ROOT / bare[len(prefix):]).resolve()
+    if not file_path.is_relative_to(UPLOAD_ROOT.resolve()) or not file_path.exists():
+        return None
+    return file_path.name, file_path.read_bytes()
+
+
+async def update_reclamation_stage(
+    item_id: str, status: str, confirmation_file_url: str | None = None,
+) -> None:
+    """Переводит элемент рекламации на нужную стадию (crm.item.update).
+    При переходе в "в работе" Bitrix требует заполненный "Дедлайн"
+    (ufCrm53_1784791589794, проверено вживую — как и с "Название" при
+    создании, это не видно в isRequired у crm.item.fields, обязательность
+    настроена отдельно на уровне стадии). У нас своего понятия дедлайна нет,
+    подставляем "сегодня + 7 дней" — как и daysBeforeClose у самого типа.
+
+    При переходе в "исполнено" Bitrix точно так же требует заполненный
+    "Подтверждающий документ" (ufCrm53_1784725447065, файловое поле) —
+    подтягиваем confirmation_file_url прямо с диска и шлём его как файл.
+    Формат файлового поля [имя, base64] — по документации Bitrix REST для
+    UF-полей типа file, вживую не перепроверяли (в отличие от остального в
+    этом сервисе) — если формат не подойдёт, будет видно по ответу API."""
     if not settings.bitrix_webhook_url:
         return
     stage_id = _RECLAMATION_STATUS_TO_STAGE.get(status)
     if stage_id is None:
         return
 
+    fields = {"stageId": stage_id}
+    if status == "in_progress":
+        fields["ufCrm53_1784791589794"] = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+    if status == "resolved" and confirmation_file_url:
+        file_info = _read_local_file(confirmation_file_url)
+        if file_info:
+            name, data = file_info
+            fields["ufCrm53_1784725447065"] = [name, base64.b64encode(data).decode("ascii")]
+        else:
+            _log.warning(
+                "Bitrix reclamation item %s: confirmation file unreadable (%s), sending without it",
+                item_id, confirmation_file_url,
+            )
+
     url = f"{settings.bitrix_webhook_url.rstrip('/')}/crm.item.update.json"
     resp = await _get_client().post(url, json={
         "entityTypeId": settings.bitrix_reclamation_entity_type_id,
         "id": item_id,
-        "fields": {"stageId": stage_id},
+        "fields": fields,
     })
     if not resp.is_success:
         raise RuntimeError(f"Bitrix crm.item.update {resp.status_code}: {resp.text}")

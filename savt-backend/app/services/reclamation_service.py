@@ -125,7 +125,7 @@ class ReclamationService:
         if status_changed:
             await self._notify_status_change(rec)
             if rec.bitrix_item_id:
-                _sync_status_to_bitrix(rec.bitrix_item_id, rec.status)
+                _sync_status_to_bitrix(rec.bitrix_item_id, rec.status, rec.confirmation_file_url)
 
         return await self.get_admin(reclamation_id)
 
@@ -139,11 +139,14 @@ class ReclamationService:
         resolution_comment = changed.get("resolution_comment", rec.resolution_comment)
         responsible_name = changed.get("responsible_name", rec.responsible_name)
         warranty_classification = changed.get("warranty_classification", rec.warranty_classification)
+        confirmation_file_url = changed.get("confirmation_file_url", rec.confirmation_file_url)
 
         if new_status == "rejected" and not rejection_reason:
             raise ValidationError("Нельзя отклонить рекламацию без указания причины")
         if new_status == "resolved" and not resolution_comment:
             raise ValidationError("Нельзя закрыть рекламацию без итогового комментария")
+        if new_status == "resolved" and not confirmation_file_url:
+            raise ValidationError("Нельзя закрыть рекламацию без подтверждающего документа")
         if new_status == "in_progress":
             if not responsible_name:
                 raise ValidationError("Нельзя перевести рекламацию в работу без ответственного лица")
@@ -199,6 +202,7 @@ class ReclamationService:
             root_cause=rec.root_cause, resolution_comment=rec.resolution_comment,
             rejection_reason=rec.rejection_reason,
             responsible_name=rec.responsible_name, responsible_phone=rec.responsible_phone,
+            confirmation_file_url=rec.confirmation_file_url, confirmation_file_name=rec.confirmation_file_name,
             created_at=rec.created_at, resolved_at=rec.resolved_at,
             attachments=[ReclamationAttachmentOut.model_validate(a) for a in attachments],
         )
@@ -241,11 +245,13 @@ def _sync_to_bitrix(reclamation_id: int, description: str, cabinet_id: int | Non
 
     asyncio.create_task(_task())
 
-def _sync_status_to_bitrix(bitrix_item_id: str, status: str) -> None:
+def _sync_status_to_bitrix(
+    bitrix_item_id: str, status: str, confirmation_file_url: str | None,
+) -> None:
     async def _task():
         from app.services import bitrix_service
         try:
-            await bitrix_service.update_reclamation_stage(bitrix_item_id, status)
+            await bitrix_service.update_reclamation_stage(bitrix_item_id, status, confirmation_file_url)
         except Exception:
             _log.exception("Bitrix status sync failed for reclamation item %s", bitrix_item_id)
 

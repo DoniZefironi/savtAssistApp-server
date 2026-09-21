@@ -94,6 +94,8 @@ class ReclamationDetailOut(BaseModel):
     rejection_reason: str | None
     responsible_name: str | None
     responsible_phone: str | None
+    confirmation_file_url: str | None
+    confirmation_file_name: str | None
 
     created_at: datetime
     resolved_at: datetime | None
@@ -129,3 +131,8 @@ class AdminReclamationUpdateIn(BaseModel):
     rejection_reason: str | None = None
     responsible_name: str | None = Field(None, max_length=200)
     responsible_phone: str | None = Field(None, max_length=20)
+    # подтверждающий документ — загружается заранее через POST /upload/attachment,
+    # сюда передаётся уже готовая ссылка; обязателен при переходе в resolved
+    # (см. ReclamationService._check_transition)
+    confirmation_file_url: str | None = Field(None, max_length=500)
+    confirmation_file_name: str | None = Field(None, max_length=255)

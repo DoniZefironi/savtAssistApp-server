@@ -62,6 +62,13 @@ class Reclamation(Base):
     root_cause: Mapped[str | None] = mapped_column(Text, nullable=True)
     resolution_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # подтверждающий документ — обязателен при закрытии (resolved), см.
+    # ReclamationService._check_transition. Загружается через тот же общий
+    # POST /upload/attachment, что и остальные вложения; при закрытии
+    # отправляется в Bitrix (ufCrm53_1784725447065 "Подтверждающий документ" —
+    # там это обязательное поле именно на стадии SUCCESS, проверено вживую)
+    confirmation_file_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    confirmation_file_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # ФИО и рабочий телефон ответственного — показываются пользователю в
     # уведомлении о переходе в работу (п.7 ТЗ)
     responsible_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
