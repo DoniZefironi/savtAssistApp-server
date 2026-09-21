@@ -9,6 +9,7 @@ from app.schemas.reclamation import (
     AdminReclamationListItemOut,
     AdminReclamationOut,
     AdminReclamationUpdateIn,
+    BitrixUserOut,
     ReclamationCreateIn,
     ReclamationDetailOut,
     ReclamationListItemOut,
@@ -70,6 +71,15 @@ async def list_all_reclamations(
     return await ReclamationService(session).list_admin(
         status, object_type, warranty_classification, page, size,
     )
+
+
+# Статический путь — обязательно до /admin/reclamations/{reclamation_id},
+# иначе FastAPI попытается распарсить "bitrix-users" как reclamation_id
+@router.get("/admin/reclamations/bitrix-users", response_model=list[BitrixUserOut])
+async def list_reclamation_bitrix_users(
+    _: User = Depends(require_role(RoleName.ADMIN)),
+):
+    return await ReclamationService.list_bitrix_users()
 
 
 @router.get("/admin/reclamations/{reclamation_id}", response_model=AdminReclamationOut)

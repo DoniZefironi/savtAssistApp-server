@@ -148,6 +148,57 @@ async def update_reclamation_stage(
         raise RuntimeError(f"Bitrix crm.item.update error: {data}")
 
 
+async def list_reclamation_assignees() -> list[dict]:
+    """Активные сотрудники портала (user.get) — для дропдауна выбора
+    ответственного в админке, вместо свободного текстового поля.
+    Возвращает [{id, full_name, phone, position}]. Рабочий телефон
+    (WORK_PHONE) может быть не заполнен у сотрудника — тогда откатываемся на
+    личный мобильный (PERSONAL_MOBILE), чтобы в дропдауне телефон не был пустым."""
+    if not settings.bitrix_webhook_url:
+        return []
+    url = f"{settings.bitrix_webhook_url.rstrip('/')}/user.get.json"
+    resp = await _get_client().post(url, json={"ACTIVE": True, "USER_TYPE": "employee"})
+    if not resp.is_success:
+        _log.warning("Bitrix user.get %s: %s", resp.status_code, resp.text)
+        return []
+    data = resp.json()
+    if "error" in data:
+        _log.warning("Bitrix user.get error: %s", data)
+        return []
+
+    users = []
+    for u in data.get("result") or []:
+        full_name = " ".join(
+            part for part in (u.get("LAST_NAME"), u.get("NAME"), u.get("SECOND_NAME")) if part
+        )
+        users.append({
+            "id": int(u["ID"]),
+            "full_name": full_name or f"Пользователь {u['ID']}",
+            "phone": u.get("WORK_PHONE") or u.get("PERSONAL_MOBILE") or None,
+            "position": u.get("WORK_POSITION") or None,
+        })
+    return users
+
+
+async def update_reclamation_assignee(item_id: str, bitrix_user_id: int) -> None:
+    """Назначает ответственного (assignedById) в самой карточке Bitrix —
+    отдельно от смены стадии, вызывается при выборе ответственного в
+    дропдауне нашей админки."""
+    if not settings.bitrix_webhook_url:
+        return
+    url = f"{settings.bitrix_webhook_url.rstrip('/')}/crm.item.update.json"
+    resp = await _get_client().post(url, json={
+        "entityTypeId": settings.bitrix_reclamation_entity_type_id,
+        "id": item_id,
+        "fields": {"assignedById": bitrix_user_id},
+    })
+    if not resp.is_success:
+        raise RuntimeError(f"Bitrix crm.item.update (assignee) {resp.status_code}: {resp.text}")
+    data = resp.json()
+    if "error" in data:
+        raise RuntimeError(f"Bitrix crm.item.update (assignee) error: {data}")
+
+
 def _get_client() -> httpx.AsyncClient:
     global _client
     if _client is None:

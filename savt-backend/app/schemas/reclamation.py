@@ -136,3 +136,16 @@ class AdminReclamationUpdateIn(BaseModel):
     # (см. ReclamationService._check_transition)
     confirmation_file_url: str | None = Field(None, max_length=500)
     confirmation_file_name: str | None = Field(None, max_length=255)
+    # ID пользователя Bitrix, выбранного в дропдауне (GET /admin/reclamations/
+    # bitrix-users) — не хранится у нас в БД, используется только чтобы
+    # пробросить assignedById в саму карточку Bitrix (см. ReclamationService.update).
+    # responsible_name/responsible_phone по-прежнему передавайте отдельно —
+    # это поле их не заменяет, только дополнительно синхронизирует с Bitrix
+    responsible_bitrix_user_id: int | None = None
+
+
+class BitrixUserOut(BaseModel):
+    id: int
+    full_name: str
+    phone: str | None
+    position: str | None

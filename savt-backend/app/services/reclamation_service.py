@@ -14,6 +14,7 @@ from app.schemas.pagination import PageOut, make_page
 from app.schemas.reclamation import (
     AdminReclamationListItemOut,
     AdminReclamationOut,
+    BitrixUserOut,
     ReclamationAttachmentOut,
     ReclamationCreateIn,
     ReclamationDetailOut,
@@ -108,6 +109,10 @@ class ReclamationService:
         if rec is None:
             raise NotFoundError("Рекламация не найдена")
 
+        # не колонка модели — используется только для проброса assignedById в
+        # Bitrix ниже, в БД у нас ничего не хранит (см. AdminReclamationUpdateIn)
+        responsible_bitrix_user_id = changed.pop("responsible_bitrix_user_id", None)
+
         status_changed = "status" in changed and changed["status"] != rec.status
         if status_changed:
             self._check_transition(rec, changed)
@@ -128,7 +133,16 @@ class ReclamationService:
             if rec.bitrix_item_id:
                 _sync_status_to_bitrix(rec.bitrix_item_id, rec.status, rec.confirmation_file_url)
 
+        if responsible_bitrix_user_id and rec.bitrix_item_id:
+            _sync_assignee_to_bitrix(rec.bitrix_item_id, responsible_bitrix_user_id)
+
         return await self.get_admin(reclamation_id)
+
+    @staticmethod
+    async def list_bitrix_users() -> list[BitrixUserOut]:
+        from app.services import bitrix_service
+        users = await bitrix_service.list_reclamation_assignees()
+        return [BitrixUserOut(**u) for u in users]
 
     # Обязательные проверки из п.8 ТЗ — завязаны на итоговое состояние заявки
     # (текущее значение + то, что меняется этим PATCH), поэтому в сервисе, не
@@ -261,6 +275,21 @@ def _sync_status_to_bitrix(
             _log.exception("Bitrix status sync failed for reclamation item %s", bitrix_item_id)
 
     asyncio.create_task(_task())
+
+
+def _sync_assignee_to_bitrix(bitrix_item_id: str, bitrix_user_id: int) -> None:
+    async def _task():
+        from app.services import bitrix_service
+        try:
+            await bitrix_service.update_reclamation_assignee(bitrix_item_id, bitrix_user_id)
+        except Exception:
+            _log.exception(
+                "Bitrix assignee sync failed for reclamation item %s (user %s)",
+                bitrix_item_id, bitrix_user_id,
+            )
+
+    asyncio.create_task(_task())
+
 
 async def sync_reclamation_from_bitrix(item_id: str) -> None:
     """Применяет реальное состояние элемента Bitrix к нашей рекламации —
