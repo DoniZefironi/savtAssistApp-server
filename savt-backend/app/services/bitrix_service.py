@@ -52,13 +52,26 @@ RECLAMATION_INITIAL_STAGE = _RECLAMATION_STATUS_TO_STAGE["new"]
 # (см. update_reclamation_stage)
 _RECLAMATION_DEADLINE_FIELD = "ufCrm53_1784791589794"
 
-# "Служебное. Переместить сделку на указанную стадию" — Bitrix требует его
-# при переводе в "Принята в работу". Вариант там один ("ДА"), но его ID —
-# настройка портала: процесс уже переделывали, и ID мог смениться вместе с
-# ним. Поэтому не зашиваем числом, а спрашиваем у самого Bitrix, см.
-# _get_move_field_value_id
+# "Служебное. Переместить сделку на указанную стадию" — Bitrix требует его при
+# любом переводе стадии через API: и в "Принята в работу", и в закрывающие
+# стадии. Вариант там один ("ДА")
 _RECLAMATION_MOVE_FIELD = "ufCrm53_1784792943558"
-_move_field_value_id: str | None = None
+# "Гарантия" — да/нет, наш warranty_classification
+_RECLAMATION_WARRANTY_FIELD = "ufCrm53_1789993626262"
+# "Подтверждающий документ (Акт. Письмо SAVT)" — файловое поле
+_RECLAMATION_CONFIRMATION_FIELD = "ufCrm53_1784725447065"
+# "Дата устранения претензии" — тип date, как и "Дедлайн"
+_RECLAMATION_CLOSED_DATE_FIELD = "ufCrm53_1784797650582"
+
+# Статусы, которые в Bitrix закрывают рекламацию. Все три требуют одного и
+# того же набора обязательных полей — это выяснилось только вживую, в
+# метаданных полей такая обязательность не видна
+_CLOSING_STATUSES = ("resolved", "rejected", "invalid")
+
+# ID вариантов перечисляемых полей — это настройка портала, а не константы
+# протокола, поэтому спрашиваем их у Bitrix и кэшируем, см. _get_enum_value_id.
+# Ключ — (код поля, искомая подпись)
+_enum_value_ids: dict[tuple[str, str], str] = {}
 
 
 async def get_reclamation_item(item_id: str) -> dict | None:
@@ -102,17 +115,18 @@ def _read_local_file(url: str | None) -> tuple[str, bytes] | None:
     return file_path.name, file_path.read_bytes()
 
 
-async def _get_move_field_value_id() -> str:
-    """ID варианта "ДА" у служебного поля перевода стадии
-    (_RECLAMATION_MOVE_FIELD). Спрашиваем у Bitrix и запоминаем до перезапуска:
-    значение статично, но зашивать его числом нельзя — это настройка портала.
+async def _get_enum_value_id(field_code: str, wanted: str) -> str:
+    """ID варианта перечисляемого поля по его подписи ("ДА"/"НЕТ"). Спрашиваем
+    у Bitrix (crm.item.fields) и запоминаем до перезапуска: значения статичны,
+    но зашивать их числами нельзя — это настройка портала, а процесс уже
+    переделывали, и ID вместе с ним могли смениться.
 
     Если варианта не нашлось, бросаем исключение, а не пропускаем поле молча:
-    без него Bitrix всё равно откажет в переходе, и лучше пусть попытка ляжет
-    в очередь повторов с внятной причиной."""
-    global _move_field_value_id
-    if _move_field_value_id is not None:
-        return _move_field_value_id
+    Bitrix всё равно откажет в переходе, и лучше пусть попытка ляжет в очередь
+    повторов с внятной причиной."""
+    cached = _enum_value_ids.get((field_code, wanted))
+    if cached is not None:
+        return cached
 
     url = f"{settings.bitrix_webhook_url.rstrip('/')}/crm.item.fields.json"
     resp = await _get_client().post(url, json={
@@ -124,28 +138,26 @@ async def _get_move_field_value_id() -> str:
     if "error" in data:
         raise RuntimeError(f"Bitrix crm.item.fields error: {data}")
 
-    field = ((data.get("result") or {}).get("fields") or {}).get(_RECLAMATION_MOVE_FIELD) or {}
-    items = field.get("items") or []
-    chosen = next((i for i in items if str(i.get("VALUE", "")).strip().upper() == "ДА"), None)
-    # вариант там ровно один — если его однажды переименуют, берём
-    # единственный, вместо того чтобы падать из-за подписи
+    items = (((data.get("result") or {}).get("fields") or {}).get(field_code) or {}).get("items") or []
+    chosen = next((i for i in items if str(i.get("VALUE", "")).strip().upper() == wanted.upper()), None)
+    # если вариант в поле ровно один, берём его, не придираясь к подписи —
+    # так переименование "ДА" во что-то ещё нас не уронит
     if chosen is None and len(items) == 1:
         chosen = items[0]
     if not (chosen or {}).get("ID"):
         raise RuntimeError(
-            f"Bitrix: у поля {_RECLAMATION_MOVE_FIELD} не нашёлся вариант 'ДА' (items={items})"
+            f"Bitrix: у поля {field_code} не нашёлся вариант {wanted!r} (items={items})"
         )
 
-    _move_field_value_id = str(chosen["ID"])
-    _log.info(
-        "Bitrix: служебное поле перевода стадии — использую вариант ID=%s", _move_field_value_id,
-    )
-    return _move_field_value_id
+    value_id = str(chosen["ID"])
+    _enum_value_ids[(field_code, wanted)] = value_id
+    _log.info("Bitrix: поле %s, вариант %r -> ID=%s", field_code, wanted, value_id)
+    return value_id
 
 
 async def update_reclamation_stage(
     item_id: str, status: str, confirmation_file_url: str | None = None,
-    deadline: date | None = None,
+    deadline: date | None = None, warranty: bool | None = None,
 ) -> str | None:
     """Переводит элемент рекламации на стадию, отвечающую нашему статусу
     (crm.item.update). Возвращает код реально проставленной стадии, либо None,
@@ -156,16 +168,16 @@ async def update_reclamation_stage(
     обязательность настроена на уровне стадии, вскрылось только вживую
     (2026-09-23, на переходе в resolved).
 
-    При переходе в "исполнено" Bitrix точно так же требует заполненный
-    "Подтверждающий документ" (ufCrm53_1784725447065, файловое поле) —
+    На всех трёх закрывающих стадиях (resolved/rejected/invalid) Bitrix
+    требует "Подтверждающий документ" (ufCrm53_1784725447065, файловое поле) —
     подтягиваем confirmation_file_url прямо с диска и шлём его как файл.
     Формат файлового поля [имя, base64] — по документации Bitrix REST для
     UF-полей типа file, вживую не перепроверяли (в отличие от остального в
     этом сервисе) — если формат не подойдёт, будет видно по ответу API.
 
-    При переходе в CLIENT Bitrix требует "Служебное. Переместить сделку на
-    указанную стадию" — см. _get_move_field_value_id. Предыстория, чтобы это
-    поле не выкинули как лишнее: до переделки процесса простановка "ДА"
+    "Служебное. Переместить сделку на указанную стадию" Bitrix требует при
+    любом переводе стадии через API. Предыстория, чтобы это поле не выкинули
+    как лишнее: до переделки процесса простановка "ДА"
     запускала робота, который мгновенно доводил рекламацию до SUCCESS, минуя
     CLIENT (воспроизводилось и через интерфейс, и через API, на свежих
     карточках), из-за чего переход в in_progress у нас был полностью отключён.
@@ -186,8 +198,12 @@ async def update_reclamation_stage(
         return None
 
     fields = {"stageId": stage_id}
-    if status == "in_progress":
-        fields[_RECLAMATION_MOVE_FIELD] = await _get_move_field_value_id()
+    # служебное поле требуется на любом переводе стадии, не только в работу
+    fields[_RECLAMATION_MOVE_FIELD] = await _get_enum_value_id(_RECLAMATION_MOVE_FIELD, "ДА")
+    if warranty is not None:
+        fields[_RECLAMATION_WARRANTY_FIELD] = await _get_enum_value_id(
+            _RECLAMATION_WARRANTY_FIELD, "ДА" if warranty else "НЕТ",
+        )
 
     # Bitrix требует заполненный "Дедлайн" при переводе на стадию (проверено
     # вживую: 2026-09-23 на этом упал переход в resolved,
@@ -207,16 +223,23 @@ async def update_reclamation_stage(
                 "подставляю %s, чтобы переход на стадию не отвалился",
                 item_id, fallback,
             )
-    if status == "resolved" and confirmation_file_url:
-        file_info = _read_local_file(confirmation_file_url)
-        if file_info:
-            name, data = file_info
-            fields["ufCrm53_1784725447065"] = [name, base64.b64encode(data).decode("ascii")]
-        else:
-            _log.warning(
-                "Bitrix reclamation item %s: confirmation file unreadable (%s), sending without it",
-                item_id, confirmation_file_url,
-            )
+    if status in _CLOSING_STATUSES:
+        # "Дата устранения претензии" — Bitrix требует её на всех закрывающих
+        # стадиях. У нас это момент закрытия, то есть сегодня; отдельного поля
+        # под неё не заводим — оно бы дублировало Reclamation.resolved_at
+        fields[_RECLAMATION_CLOSED_DATE_FIELD] = datetime.now().strftime("%Y-%m-%d")
+        if confirmation_file_url:
+            file_info = _read_local_file(confirmation_file_url)
+            if file_info:
+                name, data = file_info
+                fields[_RECLAMATION_CONFIRMATION_FIELD] = [
+                    name, base64.b64encode(data).decode("ascii"),
+                ]
+            else:
+                _log.warning(
+                    "Bitrix reclamation item %s: confirmation file unreadable (%s), sending without it",
+                    item_id, confirmation_file_url,
+                )
 
     url = f"{settings.bitrix_webhook_url.rstrip('/')}/crm.item.update.json"
     resp = await _get_client().post(url, json={
@@ -450,10 +473,10 @@ async def create_reclamation_item(
         fields["parentId2"] = deal_id
     if company_id:
         fields["companyId"] = company_id
-    # "Обращение (письмо)" (ufCrm53_1784725413459) — поле НЕ множественное,
-    # принимает ровно один файл, поэтому у нас может быть несколько вложений,
-    # а в Bitrix уйдёт только первое (см. _read_local_file — то же самое, что
-    # используется для подтверждающего документа при закрытии)
+    # "Фото, видео, системные логи, документы" (ufCrm53_1784725413459) — поле
+    # НЕ множественное, принимает ровно один файл, поэтому у нас может быть
+    # несколько вложений, а в Bitrix уйдёт только первое (см. _read_local_file
+    # — то же самое, что используется для подтверждающего документа)
     if attachment_url:
         file_info = _read_local_file(attachment_url)
         if file_info:

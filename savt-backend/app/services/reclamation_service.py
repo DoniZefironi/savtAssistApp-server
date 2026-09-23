@@ -156,7 +156,7 @@ class ReclamationService:
                 # его заполненным при переходе, отдельный вызов был бы лишним
                 _sync_status_to_bitrix(
                     rec.id, rec.bitrix_item_id, rec.status, rec.confirmation_file_url,
-                    rec.deadline_at, assignee_to_push,
+                    rec.deadline_at, rec.warranty_classification, assignee_to_push,
                 )
                 assignee_to_push = None
                 deadline_changed = False
@@ -198,8 +198,13 @@ class ReclamationService:
             raise ValidationError("Нельзя отклонить рекламацию без указания причины")
         if new_status == "resolved" and not resolution_comment:
             raise ValidationError("Нельзя закрыть рекламацию без итогового комментария")
-        if new_status == "resolved" and not confirmation_file_url:
-            raise ValidationError("Нельзя закрыть рекламацию без подтверждающего документа")
+        # Bitrix требует подтверждающий документ на всех трёх закрывающих
+        # стадиях, не только при исполнении (проверено вживую 2026-09-23),
+        # поэтому и мы требуем его и при отклонении тоже
+        if new_status in ("resolved", "rejected", "invalid") and not confirmation_file_url:
+            raise ValidationError(
+                "Нельзя закрыть или отклонить рекламацию без подтверждающего документа"
+            )
         if new_status == "in_progress":
             if not responsible_name:
                 raise ValidationError("Нельзя перевести рекламацию в работу без ответственного лица")
@@ -362,7 +367,7 @@ def _sync_to_bitrix(
 
 def _sync_status_to_bitrix(
     reclamation_id: int, bitrix_item_id: str, status: str, confirmation_file_url: str | None,
-    deadline: date | None = None, assignee_id: int | None = None,
+    deadline: date | None = None, warranty: bool | None = None, assignee_id: int | None = None,
 ) -> None:
     """assignee_id отправляется здесь же, строго после стадии — почему именно
     так, а не параллельно, см. комментарий в ReclamationService.update."""
@@ -372,7 +377,7 @@ def _sync_status_to_bitrix(
         from app.services import bitrix_service
         try:
             await bitrix_service.update_reclamation_stage(
-                bitrix_item_id, status, confirmation_file_url, deadline,
+                bitrix_item_id, status, confirmation_file_url, deadline, warranty,
             )
         except Exception as exc:
             _log.exception("Bitrix status sync failed for reclamation item %s", bitrix_item_id)
@@ -382,6 +387,7 @@ def _sync_status_to_bitrix(
                     {
                         "status": status, "confirmation_file_url": confirmation_file_url,
                         "deadline": deadline.isoformat() if deadline else None,
+                        "warranty": warranty,
                     },
                     str(exc),
                 )
@@ -579,6 +585,7 @@ async def retry_bitrix_outbox() -> None:
                     pushed_stage = await bitrix_service.update_reclamation_stage(
                         bitrix_item_id, row.payload["status"], row.payload.get("confirmation_file_url"),
                         date.fromisoformat(saved_deadline) if saved_deadline else None,
+                        row.payload.get("warranty"),
                     )
                     if pushed_stage:
                         # Приводим статус к тому, что реально уехало в Bitrix.
