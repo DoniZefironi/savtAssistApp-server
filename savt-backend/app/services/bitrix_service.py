@@ -52,6 +52,14 @@ RECLAMATION_INITIAL_STAGE = _RECLAMATION_STATUS_TO_STAGE["new"]
 # (см. update_reclamation_stage)
 _RECLAMATION_DEADLINE_FIELD = "ufCrm53_1784791589794"
 
+# "Служебное. Переместить сделку на указанную стадию" — Bitrix требует его
+# при переводе в "Принята в работу". Вариант там один ("ДА"), но его ID —
+# настройка портала: процесс уже переделывали, и ID мог смениться вместе с
+# ним. Поэтому не зашиваем числом, а спрашиваем у самого Bitrix, см.
+# _get_move_field_value_id
+_RECLAMATION_MOVE_FIELD = "ufCrm53_1784792943558"
+_move_field_value_id: str | None = None
+
 
 async def get_reclamation_item(item_id: str) -> dict | None:
     """Дотягивает элемент рекламации целиком (crm.item.get) — вебхук
@@ -94,14 +102,54 @@ def _read_local_file(url: str | None) -> tuple[str, bytes] | None:
     return file_path.name, file_path.read_bytes()
 
 
+async def _get_move_field_value_id() -> str:
+    """ID варианта "ДА" у служебного поля перевода стадии
+    (_RECLAMATION_MOVE_FIELD). Спрашиваем у Bitrix и запоминаем до перезапуска:
+    значение статично, но зашивать его числом нельзя — это настройка портала.
+
+    Если варианта не нашлось, бросаем исключение, а не пропускаем поле молча:
+    без него Bitrix всё равно откажет в переходе, и лучше пусть попытка ляжет
+    в очередь повторов с внятной причиной."""
+    global _move_field_value_id
+    if _move_field_value_id is not None:
+        return _move_field_value_id
+
+    url = f"{settings.bitrix_webhook_url.rstrip('/')}/crm.item.fields.json"
+    resp = await _get_client().post(url, json={
+        "entityTypeId": settings.bitrix_reclamation_entity_type_id,
+    })
+    if not resp.is_success:
+        raise RuntimeError(f"Bitrix crm.item.fields {resp.status_code}: {resp.text}")
+    data = resp.json()
+    if "error" in data:
+        raise RuntimeError(f"Bitrix crm.item.fields error: {data}")
+
+    field = ((data.get("result") or {}).get("fields") or {}).get(_RECLAMATION_MOVE_FIELD) or {}
+    items = field.get("items") or []
+    chosen = next((i for i in items if str(i.get("VALUE", "")).strip().upper() == "ДА"), None)
+    # вариант там ровно один — если его однажды переименуют, берём
+    # единственный, вместо того чтобы падать из-за подписи
+    if chosen is None and len(items) == 1:
+        chosen = items[0]
+    if not (chosen or {}).get("ID"):
+        raise RuntimeError(
+            f"Bitrix: у поля {_RECLAMATION_MOVE_FIELD} не нашёлся вариант 'ДА' (items={items})"
+        )
+
+    _move_field_value_id = str(chosen["ID"])
+    _log.info(
+        "Bitrix: служебное поле перевода стадии — использую вариант ID=%s", _move_field_value_id,
+    )
+    return _move_field_value_id
+
+
 async def update_reclamation_stage(
     item_id: str, status: str, confirmation_file_url: str | None = None,
     deadline: date | None = None,
 ) -> str | None:
     """Переводит элемент рекламации на стадию, отвечающую нашему статусу
     (crm.item.update). Возвращает код реально проставленной стадии, либо None,
-    если стадию не двигали: Bitrix не настроен, статус не мапится, или это
-    in_progress — он отключён, см. ниже.
+    если стадию не двигали: Bitrix не настроен или статус не мапится.
 
     Bitrix требует заполненный "Дедлайн" (ufCrm53_1784791589794) при переводе
     между стадиями. Это не видно в isRequired у crm.item.fields —
@@ -115,16 +163,16 @@ async def update_reclamation_stage(
     UF-полей типа file, вживую не перепроверяли (в отличие от остального в
     этом сервисе) — если формат не подойдёт, будет видно по ответу API.
 
-    "Служебное. Переместить сделку на указанную стадию" (ufCrm53_1784792943558)
-    — требуется Bitrix при переходе в CLIENT через API. Проверено вживую
-    дважды (в т.ч. на совершенно свежем элементе, без единого нашего вызова)
-    — простановка "ДА" стабильно и мгновенно запускает в Bitrix робота,
-    который сам довершает рекламацию до SUCCESS, минуя CLIENT полностью.
-    Это сломано у самого Bitrix-процесса (ломает и ручные переходы через
-    интерфейс, не только API) — чинить может только тот, кто настраивал
-    автоматизацию этого смарт-процесса. Пока это не починено, переход в
-    in_progress в Bitrix вообще не пробрасываем — статус у нас меняется как
-    обычно, карточка Bitrix просто не трогается.
+    При переходе в CLIENT Bitrix требует "Служебное. Переместить сделку на
+    указанную стадию" — см. _get_move_field_value_id. Предыстория, чтобы это
+    поле не выкинули как лишнее: до переделки процесса простановка "ДА"
+    запускала робота, который мгновенно доводил рекламацию до SUCCESS, минуя
+    CLIENT (воспроизводилось и через интерфейс, и через API, на свежих
+    карточках), из-за чего переход в in_progress у нас был полностью отключён.
+    2026-09-23 заказчик перенастроил автоматизацию, поведение проверено
+    вручную — карточка остаётся на CLIENT, поэтому переход снова включён.
+    Если симптом вернётся (рекламация сама прыгает в "Закрыта" сразу после
+    перевода в работу) — это опять их робот, а не наш код.
 
     Стадии здесь названы кодами, а не подписями, намеренно: процесс уже
     переименовывали (CLIENT была "На исполнении", стала "Принята в работу",
@@ -133,18 +181,13 @@ async def update_reclamation_stage(
     подписи — в комментариях к _RECLAMATION_STATUS_TO_STAGE."""
     if not settings.bitrix_webhook_url:
         return None
-    if status == "in_progress":
-        _log.warning(
-            "Bitrix reclamation item %s: переход в 'в работе' не отправлен — "
-            "у процесса сломана автоматизация на этой стадии (см. докстринг)",
-            item_id,
-        )
-        return None
     stage_id = _RECLAMATION_STATUS_TO_STAGE.get(status)
     if stage_id is None:
         return None
 
     fields = {"stageId": stage_id}
+    if status == "in_progress":
+        fields[_RECLAMATION_MOVE_FIELD] = await _get_move_field_value_id()
 
     # Bitrix требует заполненный "Дедлайн" при переводе на стадию (проверено
     # вживую: 2026-09-23 на этом упал переход в resolved,
