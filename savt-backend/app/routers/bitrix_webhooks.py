@@ -2,6 +2,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 
 from app.services.bitrix_webhook_service import (
     handle_deal_event,
+    handle_reclamation_delete_webhook,
     handle_reclamation_webhook,
     handle_task_comment_webhook,
     handle_task_update_webhook,
@@ -48,3 +49,14 @@ async def reclamation_webhook(request: Request, background_tasks: BackgroundTask
     if not verify_token(form):
         raise HTTPException(status_code=403, detail="Invalid application_token")
     background_tasks.add_task(handle_reclamation_webhook, form)
+
+
+# Исходящий вебхук Bitrix24 на событие ONCRMDYNAMICITEMDELETE — отдельным
+# роутом, а не общим с обновлением: обработка принципиально разная (по
+# удалению карточку уже не дотянуть через crm.item.get)
+@router.post("/reclamation-delete", status_code=status.HTTP_204_NO_CONTENT)
+async def reclamation_delete_webhook(request: Request, background_tasks: BackgroundTasks):
+    form = dict(await request.form())
+    if not verify_token(form):
+        raise HTTPException(status_code=403, detail="Invalid application_token")
+    background_tasks.add_task(handle_reclamation_delete_webhook, form)

@@ -35,6 +35,16 @@ class Reclamation(Base):
 
     # id созданного элемента в битрикс
     bitrix_item_id: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Момент, когда мы узнали, что карточку в Bitrix удалили — из события
+    # ONCRMDYNAMICITEMDELETE либо из ответа NOT_FOUND при очередной отправке.
+    # Вместе с этим обнуляется bitrix_item_id, поэтому отличить "никогда не
+    # уезжала в Bitrix" от "уезжала, но карточку удалили" можно только по
+    # этому полю. Заявку при этом НЕ удаляем и заново НЕ заводим: карточку
+    # удалили осознанно, а претензия заявителя никуда не делась — решение,
+    # что с ней делать, за админом (см. GET /admin/reclamations/bitrix-detached)
+    bitrix_deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # --- объект рекламации ---
     # cabinet | line | component | software | documentation, см. CHECK ниже
     object_type: Mapped[str] = mapped_column(String(20), index=True)

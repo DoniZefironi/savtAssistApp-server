@@ -124,6 +124,9 @@ class AdminReclamationOut(ReclamationDetailOut):
     # id карточки на портале — чтобы администратор интеграции мог сопоставить
     # с самим Bitrix, когда что-то разъезжается
     bitrix_item_id: str | None = None
+    # заполнено, если карточку в Bitrix удалили: тогда bitrix_item_id пуст, и
+    # отличить это от "никогда не уезжала в Bitrix" можно только отсюда
+    bitrix_deleted_at: datetime | None = None
 
 
 class AdminReclamationUpdateIn(BaseModel):
@@ -163,6 +166,20 @@ class BitrixUserOut(BaseModel):
     full_name: str
     phone: str | None
     position: str | None
+
+
+class ReclamationDetachedOut(BaseModel):
+    """Рекламация, карточку которой удалили в Bitrix. Заявка осталась у нас,
+    но с порталом больше не связана — заводить её заново или закрывать,
+    решает админ. См. GET /admin/reclamations/bitrix-detached."""
+    id: int
+    status: str
+    description: str
+    user_full_name: str | None = None
+    created_at: datetime
+    bitrix_deleted_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 class ReclamationOutboxOut(BaseModel):

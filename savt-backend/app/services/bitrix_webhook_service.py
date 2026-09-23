@@ -372,3 +372,25 @@ async def handle_reclamation_webhook(form: dict) -> None:
     _log.info("Reclamation webhook: применяю элемент id=%s", item_id)
     from app.services.reclamation_service import sync_reclamation_from_bitrix
     await sync_reclamation_from_bitrix(item_id)
+
+
+async def handle_reclamation_delete_webhook(form: dict) -> None:
+    """Обрабатывает ONCRMDYNAMICITEMDELETE — карточку удалили прямо в Bitrix.
+    Фильтр по ENTITY_TYPE_ID нужен по той же причине, что и в
+    handle_reclamation_webhook: событие общее на все смарт-процессы портала."""
+    entity_type_id = _extract(form, "[entity_type_id]")
+    if entity_type_id != str(settings.bitrix_reclamation_entity_type_id):
+        _log.info(
+            "Reclamation delete webhook: пропущено — ENTITY_TYPE_ID=%s (ждём %s)",
+            entity_type_id, settings.bitrix_reclamation_entity_type_id,
+        )
+        return
+
+    item_id = _extract(form, "[id]")
+    if not item_id:
+        _log.info("Reclamation delete webhook: не удалось извлечь id элемента: %s", form)
+        return
+
+    _log.info("Reclamation delete webhook: элемент id=%s удалён", item_id)
+    from app.services.reclamation_service import handle_bitrix_item_deleted
+    await handle_bitrix_item_deleted(item_id)

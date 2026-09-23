@@ -11,6 +11,7 @@ from app.schemas.reclamation import (
     AdminReclamationUpdateIn,
     BitrixUserOut,
     ReclamationCreateIn,
+    ReclamationDetachedOut,
     ReclamationDetailOut,
     ReclamationListItemOut,
     ReclamationOutboxOut,
@@ -91,6 +92,15 @@ async def list_reclamation_bitrix_outbox(
     session: AsyncSession = Depends(get_session),
 ):
     return await ReclamationService(session).list_outbox()
+
+
+# Статический путь — по той же причине, что и bitrix-users выше
+@router.get("/admin/reclamations/bitrix-detached", response_model=list[ReclamationDetachedOut])
+async def list_reclamations_detached_from_bitrix(
+    _: User = Depends(require_role(RoleName.ADMIN)),
+    session: AsyncSession = Depends(get_session),
+):
+    return await ReclamationService(session).list_detached()
 
 
 @router.get("/admin/reclamations/{reclamation_id}", response_model=AdminReclamationOut)

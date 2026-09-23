@@ -17,6 +17,7 @@ from app.schemas.reclamation import (
     BitrixUserOut,
     ReclamationAttachmentOut,
     ReclamationCreateIn,
+    ReclamationDetachedOut,
     ReclamationDetailOut,
     ReclamationListItemOut,
     ReclamationOutboxOut,
@@ -108,6 +109,7 @@ class ReclamationService:
         return AdminReclamationOut(
             **detail.model_dump(), user_id=user.id, user_full_name=user.full_name,
             deadline_at=rec.deadline_at, bitrix_item_id=rec.bitrix_item_id,
+            bitrix_deleted_at=rec.bitrix_deleted_at,
         )
 
     async def update(
@@ -181,6 +183,19 @@ class ReclamationService:
         from app.repositories.reclamation_outbox import ReclamationOutboxRepository
         rows = await ReclamationOutboxRepository(self.session).list_pending()
         return [ReclamationOutboxOut.model_validate(r) for r in rows]
+
+    # Рекламации, чью карточку удалили в Bitrix — туда же, к администратору
+    # интеграции: заявка у нас живая, но с порталом больше не связана
+    async def list_detached(self) -> list[ReclamationDetachedOut]:
+        rows = await self.repo.list_bitrix_detached()
+        return [
+            ReclamationDetachedOut(
+                id=rec.id, status=rec.status, description=rec.description,
+                user_full_name=user.full_name if user else None,
+                created_at=rec.created_at, bitrix_deleted_at=rec.bitrix_deleted_at,
+            )
+            for rec, user in rows
+        ]
 
     # Обязательные проверки из п.8 ТЗ — завязаны на итоговое состояние заявки
     # (текущее значение + то, что меняется этим PATCH), поэтому в сервисе, не
@@ -372,8 +387,6 @@ def _sync_status_to_bitrix(
     """assignee_id отправляется здесь же, строго после стадии — почему именно
     так, а не параллельно, см. комментарий в ReclamationService.update."""
     async def _task():
-        from app.database import AsyncSessionLocal
-        from app.repositories.reclamation_outbox import ReclamationOutboxRepository
         from app.services import bitrix_service
         try:
             await bitrix_service.update_reclamation_stage(
@@ -381,17 +394,15 @@ def _sync_status_to_bitrix(
             )
         except Exception as exc:
             _log.exception("Bitrix status sync failed for reclamation item %s", bitrix_item_id)
-            async with AsyncSessionLocal() as session:
-                await ReclamationOutboxRepository(session).create(
-                    reclamation_id, "status",
-                    {
-                        "status": status, "confirmation_file_url": confirmation_file_url,
-                        "deadline": deadline.isoformat() if deadline else None,
-                        "warranty": warranty,
-                    },
-                    str(exc),
-                )
-                await session.commit()
+            await _record_bitrix_failure(
+                reclamation_id, "status",
+                {
+                    "status": status, "confirmation_file_url": confirmation_file_url,
+                    "deadline": deadline.isoformat() if deadline else None,
+                    "warranty": warranty,
+                },
+                exc,
+            )
 
         # Ответственного шлём в любом случае — админ его назначил, и от того,
         # уехала стадия или нет, это не зависит
@@ -401,9 +412,27 @@ def _sync_status_to_bitrix(
     asyncio.create_task(_task())
 
 
-async def _push_assignee(reclamation_id: int, bitrix_item_id: str, bitrix_user_id: int) -> None:
+async def _record_bitrix_failure(
+    reclamation_id: int, operation: str, payload: dict, exc: Exception,
+) -> None:
+    """Куда девать сбой отправки. Если карточку удалили — отвязываем
+    рекламацию: повторять нечего и некуда. Всё остальное считаем временным и
+    кладём в очередь повторов."""
     from app.database import AsyncSessionLocal
     from app.repositories.reclamation_outbox import ReclamationOutboxRepository
+
+    async with AsyncSessionLocal() as session:
+        rec = await session.get(Reclamation, reclamation_id)
+        if rec is not None and rec.bitrix_item_id and _is_item_gone(str(exc)):
+            await mark_bitrix_item_deleted(session, rec, f"NOT_FOUND при отправке ({operation})")
+        else:
+            await ReclamationOutboxRepository(session).create(
+                reclamation_id, operation, payload, str(exc),
+            )
+        await session.commit()
+
+
+async def _push_assignee(reclamation_id: int, bitrix_item_id: str, bitrix_user_id: int) -> None:
     from app.services import bitrix_service
     try:
         await bitrix_service.update_reclamation_assignee(bitrix_item_id, bitrix_user_id)
@@ -412,11 +441,9 @@ async def _push_assignee(reclamation_id: int, bitrix_item_id: str, bitrix_user_i
             "Bitrix assignee sync failed for reclamation item %s (user %s)",
             bitrix_item_id, bitrix_user_id,
         )
-        async with AsyncSessionLocal() as session:
-            await ReclamationOutboxRepository(session).create(
-                reclamation_id, "assignee", {"bitrix_user_id": bitrix_user_id}, str(exc),
-            )
-            await session.commit()
+        await _record_bitrix_failure(
+            reclamation_id, "assignee", {"bitrix_user_id": bitrix_user_id}, exc,
+        )
 
 
 def _sync_deadline_to_bitrix(reclamation_id: int, bitrix_item_id: str, deadline: date | None) -> None:
@@ -424,20 +451,16 @@ def _sync_deadline_to_bitrix(reclamation_id: int, bitrix_item_id: str, deadline:
     дедлайн уезжает не отсюда, а вместе со стадией (Bitrix всё равно требует
     его при переходе) — см. ReclamationService.update."""
     async def _task():
-        from app.database import AsyncSessionLocal
-        from app.repositories.reclamation_outbox import ReclamationOutboxRepository
         from app.services import bitrix_service
         try:
             await bitrix_service.update_reclamation_deadline(bitrix_item_id, deadline)
         except Exception as exc:
             _log.exception("Bitrix deadline sync failed for reclamation item %s", bitrix_item_id)
-            async with AsyncSessionLocal() as session:
-                await ReclamationOutboxRepository(session).create(
-                    reclamation_id, "deadline",
-                    {"deadline": deadline.isoformat() if deadline else None},
-                    str(exc),
-                )
-                await session.commit()
+            await _record_bitrix_failure(
+                reclamation_id, "deadline",
+                {"deadline": deadline.isoformat() if deadline else None},
+                exc,
+            )
 
     asyncio.create_task(_task())
 
@@ -447,6 +470,53 @@ def _sync_assignee_to_bitrix(reclamation_id: int, bitrix_item_id: str, bitrix_us
     меняется тем же запросом, ответственный уезжает не отсюда, а из
     _sync_status_to_bitrix — строго после стадии."""
     asyncio.create_task(_push_assignee(reclamation_id, bitrix_item_id, bitrix_user_id))
+
+
+def _is_item_gone(error_text: str) -> bool:
+    """Ответ Bitrix про удалённую карточку. Отличать важно: обычный сбой имеет
+    смысл повторять, а удаление — неустранимо, и повторы будут долбиться
+    вечно (реально накопилось 10 попыток, прежде чем это заметили)."""
+    return "NOT_FOUND" in error_text
+
+
+async def mark_bitrix_item_deleted(session, rec, reason: str) -> None:
+    """Карточки в Bitrix больше нет: отвязываем рекламацию и снимаем с неё все
+    недоставленные операции — отправлять их некуда.
+
+    Саму заявку не трогаем и заново в Bitrix не заводим: карточку удалили
+    осознанно, а претензия заявителя никуда не делась. Что с ней делать,
+    решает админ, см. GET /admin/reclamations/bitrix-detached."""
+    from sqlalchemy import delete
+    from app.models.reclamation_bitrix_outbox import ReclamationBitrixOutbox
+
+    _log.warning(
+        "Рекламация %s: карточка Bitrix %s удалена (%s) — отвязываю",
+        rec.id, rec.bitrix_item_id, reason,
+    )
+    rec.bitrix_item_id = None
+    rec.bitrix_deleted_at = datetime.now(timezone.utc)
+    await session.execute(
+        delete(ReclamationBitrixOutbox).where(
+            ReclamationBitrixOutbox.reclamation_id == rec.id
+        )
+    )
+
+
+async def handle_bitrix_item_deleted(item_id: str) -> None:
+    """Событие ONCRMDYNAMICITEMDELETE — карточку удалили прямо в Bitrix.
+    Узнаём сразу, не дожидаясь, пока очередная отправка упрётся в NOT_FOUND."""
+    from app.database import AsyncSessionLocal
+    from app.repositories.reclamation import ReclamationRepository
+
+    async with AsyncSessionLocal() as session:
+        rec = await ReclamationRepository(session).find_by_bitrix_item_id(item_id)
+        if rec is None:
+            _log.info(
+                "Bitrix reclamation delete: элемент %s не привязан ни к одной рекламации", item_id,
+            )
+            return
+        await mark_bitrix_item_deleted(session, rec, "событие удаления")
+        await session.commit()
 
 
 async def sync_reclamation_from_bitrix(item_id: str) -> None:
@@ -623,11 +693,17 @@ async def retry_bitrix_outbox() -> None:
                 await outbox_repo.delete(row)
                 _log.info("Reclamation outbox: повтор успешен (id=%s, operation=%s)", row.id, row.operation)
             except Exception as exc:
-                outbox_repo.mark_failed_attempt(row, str(exc))
-                _log.warning(
-                    "Reclamation outbox: повтор не удался (id=%s, operation=%s, попытка %s): %s",
-                    row.id, row.operation, row.attempts, exc,
-                )
+                # Удалённую карточку повторять бессмысленно — отвязываем
+                # рекламацию, и это разом снимает все её операции из очереди
+                rec = await session.get(Reclamation, row.reclamation_id)
+                if rec is not None and rec.bitrix_item_id and _is_item_gone(str(exc)):
+                    await mark_bitrix_item_deleted(session, rec, "NOT_FOUND при повторе")
+                else:
+                    outbox_repo.mark_failed_attempt(row, str(exc))
+                    _log.warning(
+                        "Reclamation outbox: повтор не удался (id=%s, operation=%s, попытка %s): %s",
+                        row.id, row.operation, row.attempts, exc,
+                    )
 
             await session.commit()
 

@@ -32,6 +32,20 @@ class ReclamationRepository:
         )
         return result.scalar_one_or_none()
 
+    async def list_bitrix_detached(self):
+        """Рекламации, чью карточку удалили в Bitrix (см.
+        reclamation_service.mark_bitrix_item_deleted). Свежие сверху —
+        разбираться начинают с последних."""
+        from app.models.user import User
+
+        result = await self.session.execute(
+            select(Reclamation, User)
+            .join(User, User.id == Reclamation.user_id)
+            .where(Reclamation.bitrix_deleted_at.is_not(None))
+            .order_by(Reclamation.bitrix_deleted_at.desc())
+        )
+        return result.all()
+
     # для пользователя — с проверкой владения прямо в условии, а не отдельным
     # if user_id != ... после загрузки (чужая заявка просто не найдётся)
     async def get_with_cabinet_for_user(self, user_id: int, reclamation_id: int):
