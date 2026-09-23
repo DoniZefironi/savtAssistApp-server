@@ -105,8 +105,8 @@ class ReclamationDetailOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-# --- админка: пока без Битрикса роль "закреплённых специалистов" временно
-# исполняет админ вручную (см. Reclamation.__doc__ в app/models/reclamation.py) ---
+# --- админка: обработка идёт и отсюда, и на стороне Bitrix — статусы
+# синхронизируются в обе стороны (см. Reclamation.__doc__) ---
 
 class AdminReclamationListItemOut(ReclamationListItemOut):
     user_id: int
@@ -144,8 +144,9 @@ class AdminReclamationUpdateIn(BaseModel):
     responsible_name: str | None = Field(None, max_length=200)
     responsible_phone: str | None = Field(None, max_length=20)
     # подтверждающий документ — загружается заранее через POST /upload/attachment,
-    # сюда передаётся уже готовая ссылка; обязателен при переходе в resolved
-    # (см. ReclamationService._check_transition)
+    # сюда передаётся уже готовая ссылка; обязателен при переходе в любой из
+    # трёх закрывающих статусов: resolved, rejected, invalid — Bitrix требует
+    # его на всех трёх стадиях (см. ReclamationService._check_transition)
     confirmation_file_url: str | None = Field(None, max_length=500)
     confirmation_file_name: str | None = Field(None, max_length=255)
     # ID пользователя Bitrix, выбранного в дропдауне (GET /admin/reclamations/
