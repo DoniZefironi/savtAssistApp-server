@@ -633,17 +633,18 @@ async def retry_bitrix_outbox() -> None:
 
 
 def _build_bitrix_description(rec: Reclamation) -> str:
+    """Текстовая сводка в sourceDescription — только то, подо что в
+    смарт-процессе НЕТ своего поля. Договор/заказ/ТТН, заводской номер и данные
+    ПКИ раньше дублировались сюда текстом, теперь у них есть нативные поля
+    (см. bitrix_service.create_reclamation_item), и в описании им делать нечего."""
     lines = [rec.description, "", "--- Дополнительно (Savt Assist) ---"]
-    if rec.object_details:
+    # для line и component object_details целиком уходит в свои поля, а для
+    # software/documentation поля нет — только тут его и покажем
+    if rec.object_details and rec.object_type not in ("line", "component"):
         lines.append(f"Данные объекта: {rec.object_details}")
     lines.append(f"Контакт: {rec.contact_name}, {rec.contact_phone}, {rec.contact_email}")
     if rec.customer_name:
         lines.append(f"Заказчик: {rec.customer_name}")
-    if rec.contract_number or rec.order_number or rec.ttn_number:
-        lines.append(
-            f"Договор: {rec.contract_number or '-'}, заказ: {rec.order_number or '-'}, "
-            f"ТТН: {rec.ttn_number or '-'}"
-        )
     if rec.occurrence_conditions:
         lines.append(f"Условия проявления: {rec.occurrence_conditions}")
     if rec.error_codes:
