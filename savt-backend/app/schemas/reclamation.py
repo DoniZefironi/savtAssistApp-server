@@ -113,11 +113,22 @@ class AdminReclamationListItemOut(ReclamationListItemOut):
     # ФИО подавшего аккаунта — не путать с contact_name (снимок с формы заявки,
     # может отличаться, если подано не от своего имени)
     user_full_name: str | None = None
+    # Название стадии карточки в Bitrix — только для админки; стадий там шесть,
+    # а наших статусов четыре, часть стадий схлопывается в один наш статус
+    # (см. Reclamation.bitrix_stage_id). null — рекламация ещё не доехала до
+    # Bitrix либо стоит на стадии, которой нет в нашем справочнике
+    bitrix_stage_name: str | None = None
 
 
 class AdminReclamationOut(ReclamationDetailOut):
     user_id: int
     user_full_name: str | None = None
+    # см. AdminReclamationListItemOut.bitrix_stage_name; в карточке отдаём ещё
+    # и сырой код стадии с id элемента — чтобы администратор интеграции мог
+    # сопоставить с самим Bitrix, когда что-то разъезжается
+    bitrix_item_id: str | None = None
+    bitrix_stage_id: str | None = None
+    bitrix_stage_name: str | None = None
 
 
 class AdminReclamationUpdateIn(BaseModel):
@@ -142,6 +153,11 @@ class AdminReclamationUpdateIn(BaseModel):
     # responsible_name/responsible_phone по-прежнему передавайте отдельно —
     # это поле их не заменяет, только дополнительно синхронизирует с Bitrix
     responsible_bitrix_user_id: int | None = None
+    # Стадия карточки в Bitrix — нужна только чтобы отличить "Новая рекламация"
+    # от "На рассмотрении": обе = наш review, через status разницу не выразить.
+    # Допустимы ровно эти две стадии и только пока рекламация в review —
+    # остальные стадии двигаются сменой status, см. ReclamationService.update
+    bitrix_stage_id: str | None = Field(None, max_length=50)
 
 
 class BitrixUserOut(BaseModel):

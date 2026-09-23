@@ -27,6 +27,14 @@ class Reclamation(Base):
 
     # id созданного элемента в битрикс
     bitrix_item_id: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # реальная стадия карточки в Bitrix (DT1176_69:*) — стадий там шесть, а
+    # наших статусов четыре, и часть стадий схлопывается в один наш статус
+    # ("Новая рекламация"/"На рассмотрении" -> review, "Отклонена"/"Ошибочные
+    # рекламации" -> rejected). Заявителю по-прежнему показываем только status,
+    # а админу — ещё и эту стадию, иначе из админки не видно, что специалист
+    # в Bitrix вообще подвинул карточку. Обновляется и когда стадию двигаем мы,
+    # и по вебхуку, см. reclamation_service.sync_reclamation_from_bitrix
+    bitrix_stage_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
     # --- объект рекламации ---
     # cabinet | line | component | software | documentation, см. CHECK ниже
     object_type: Mapped[str] = mapped_column(String(20), index=True)

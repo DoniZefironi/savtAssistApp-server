@@ -27,6 +27,14 @@ from app.services.notification_service import NotificationService
 _log = logging.getLogger(__name__)
 
 
+def _bitrix_stage_name(stage_id: str | None) -> str | None:
+    """Подпись стадии Bitrix для админки. None — рекламация ещё не доехала до
+    Bitrix либо стоит на стадии, которой нет в нашем справочнике (её могли
+    завести на портале уже после того, как мы сняли справочник)."""
+    from app.services import bitrix_service
+    return bitrix_service.RECLAMATION_STAGE_NAMES.get(stage_id) if stage_id else None
+
+
 class ReclamationService:
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -55,7 +63,10 @@ class ReclamationService:
         await self.session.commit()
 
         first_attachment_url = data.attachments[0].file_url if data.attachments else None
-        _sync_to_bitrix(rec.id, _build_bitrix_description(rec), rec.cabinet_id, first_attachment_url)
+        _sync_to_bitrix(
+            rec.id, _build_bitrix_description(rec), rec.cabinet_id, first_attachment_url,
+            rec.object_type, rec.object_details, rec.contract_number, rec.order_number, rec.ttn_number,
+        )
 
         row = await self.repo.get_with_cabinet_for_user(user_id, rec.id)
         return await self._detail_out(*row)
@@ -90,6 +101,7 @@ class ReclamationService:
         items = [
             AdminReclamationListItemOut(
                 **self._list_fields(rec, cabinet), user_id=user.id, user_full_name=user.full_name,
+                bitrix_stage_name=_bitrix_stage_name(rec.bitrix_stage_id),
             )
             for rec, user, cabinet in rows
         ]
@@ -101,7 +113,11 @@ class ReclamationService:
             raise NotFoundError("Рекламация не найдена")
         rec, user, cabinet = row
         detail = await self._detail_out(rec, cabinet)
-        return AdminReclamationOut(**detail.model_dump(), user_id=user.id, user_full_name=user.full_name)
+        return AdminReclamationOut(
+            **detail.model_dump(), user_id=user.id, user_full_name=user.full_name,
+            bitrix_item_id=rec.bitrix_item_id, bitrix_stage_id=rec.bitrix_stage_id,
+            bitrix_stage_name=_bitrix_stage_name(rec.bitrix_stage_id),
+        )
 
     async def update(
         self, reclamation_id: int, changed: dict, actor_id: int, actor_role: str,
@@ -113,19 +129,31 @@ class ReclamationService:
         # не колонка модели — используется только для проброса assignedById в
         # Bitrix ниже, в БД у нас ничего не хранит (см. AdminReclamationUpdateIn)
         responsible_bitrix_user_id = changed.pop("responsible_bitrix_user_id", None)
+        # Колонка у нас есть, но generic-циклом ниже её писать нельзя: менять
+        # её допустимо только вместе с реальным переводом карточки в Bitrix,
+        # иначе админка покажет стадию, которой на портале нет
+        bitrix_stage_id = changed.pop("bitrix_stage_id", None)
 
         status_changed = "status" in changed and changed["status"] != rec.status
         if status_changed:
             self._check_transition(rec, changed)
+        if bitrix_stage_id is not None:
+            self._check_stage_change(rec, changed, bitrix_stage_id)
 
         for field, value in changed.items():
             setattr(rec, field, value)
         if status_changed and rec.status in ("resolved", "rejected"):
             rec.resolved_at = datetime.now(timezone.utc)
 
+        # попнутые выше поля в changed уже не попадут, а это действия админа
+        # на самом портале — в аудите они нужны не меньше остальных
+        audit_meta = {"fields": list(changed.keys())}
+        if bitrix_stage_id is not None:
+            audit_meta["bitrix_stage_id"] = bitrix_stage_id
+        if responsible_bitrix_user_id is not None:
+            audit_meta["responsible_bitrix_user_id"] = responsible_bitrix_user_id
         self.audit.log(
-            "reclamation.update", "reclamation", rec.id, actor_id, actor_role,
-            {"fields": list(changed.keys())},
+            "reclamation.update", "reclamation", rec.id, actor_id, actor_role, audit_meta,
         )
         await self.session.commit()
 
@@ -136,6 +164,11 @@ class ReclamationService:
 
         if responsible_bitrix_user_id and rec.bitrix_item_id:
             _sync_assignee_to_bitrix(rec.id, rec.bitrix_item_id, responsible_bitrix_user_id)
+
+        # у себя bitrix_stage_id проставится уже после успешной отправки —
+        # стадия в админке должна отражать портал, а не наше намерение
+        if bitrix_stage_id is not None and bitrix_stage_id != rec.bitrix_stage_id:
+            _sync_stage_to_bitrix(rec.id, rec.bitrix_item_id, bitrix_stage_id)
 
         return await self.get_admin(reclamation_id)
 
@@ -177,6 +210,30 @@ class ReclamationService:
                 raise ValidationError(
                     "Нельзя перевести рекламацию в работу без классификации (гарантия/не гарантия)"
                 )
+
+    @staticmethod
+    def _check_stage_change(rec, changed: dict, stage_id: str) -> None:
+        """Ручной перевод карточки между "Новая рекламация" и "На рассмотрении"
+        — единственное, что нельзя выразить сменой статуса (обе стадии = наш
+        review). Всё остальное двигается статусом, а "Принята в работу" не
+        двигается вообще, пока на стороне Bitrix не починят автоматизацию
+        (см. bitrix_service.update_reclamation_stage)."""
+        from app.services import bitrix_service
+
+        if stage_id not in bitrix_service.RECLAMATION_ADMIN_SETTABLE_STAGES:
+            raise ValidationError(
+                "Вручную можно выставить только стадию «Новая рекламация» или "
+                "«На рассмотрении» — остальные меняются сменой статуса рекламации"
+            )
+        if not rec.bitrix_item_id:
+            raise ValidationError("Рекламация ещё не создана в Bitrix — стадию менять негде")
+        # сверяем с итоговым статусом, а не с текущим: статус могли менять
+        # этим же PATCH (та же логика, что в _check_transition)
+        if changed.get("status", rec.status) != "review":
+            raise ValidationError(
+                "Стадию «Новая рекламация»/«На рассмотрении» можно выставить только "
+                "у рекламации со статусом «на рассмотрении»"
+            )
 
     async def _notify_status_change(self, rec) -> None:
         if rec.status == "in_progress":
@@ -236,8 +293,42 @@ class ReclamationService:
 # выполнения request-сессия (self.session) может быть уже закрыта — как и у
 # ServiceRequestService._sync_to_bitrix, см. app/services/service_request_service.py
 
+def _build_bitrix_native_fields(
+    object_type: str, object_details: dict | None, cabinet,
+    contract_number: str | None, order_number: str | None, ttn_number: str | None,
+) -> tuple[str | None, str | None, str | None]:
+    """Собирает значения для трёх новых нативных полей процесса (появились
+    2026-09-23) — заводской номер, № договора/заказа/ТТН, данные ПКИ.
+    Возвращает (object_serial_number, contract_info, component_info)."""
+    object_serial_number = component_info = None
+    if object_type == "cabinet" and cabinet is not None:
+        object_serial_number = cabinet.object_number
+    elif object_type == "line" and object_details:
+        object_serial_number = object_details.get("serial_number")
+    elif object_type == "component" and object_details:
+        d = object_details
+        component_info = ", ".join(
+            f"{label}: {value}" for label, value in (
+                ("наименование", d.get("name")), ("модель", d.get("model")),
+                ("артикул", d.get("article")), ("серийный номер", d.get("serial_number")),
+            ) if value
+        ) or None
+
+    contract_info = ", ".join(
+        part for part in (
+            f"Договор: {contract_number}" if contract_number else None,
+            f"Заказ: {order_number}" if order_number else None,
+            f"ТТН/CMR: {ttn_number}" if ttn_number else None,
+        ) if part
+    ) or None
+
+    return object_serial_number, contract_info, component_info
+
+
 def _sync_to_bitrix(
     reclamation_id: int, description: str, cabinet_id: int | None, attachment_url: str | None,
+    object_type: str, object_details: dict | None,
+    contract_number: str | None, order_number: str | None, ttn_number: str | None,
 ) -> None:
     async def _task():
         from app.database import AsyncSessionLocal
@@ -247,6 +338,7 @@ def _sync_to_bitrix(
         from app.services import bitrix_service
 
         deal_id = company_id = project_name = None
+        cabinet = None
         async with AsyncSessionLocal() as session:
             if cabinet_id is not None:
                 cabinet = await session.get(Cabinet, cabinet_id)
@@ -257,9 +349,14 @@ def _sync_to_bitrix(
                         company_id = project.bitrix_company_id
                         project_name = project.name
 
+            object_serial_number, contract_info, component_info = _build_bitrix_native_fields(
+                object_type, object_details, cabinet, contract_number, order_number, ttn_number,
+            )
+
             try:
                 item_id = await bitrix_service.create_reclamation_item(
                     description, deal_id, company_id, attachment_url, project_name,
+                    object_serial_number, contract_info, component_info,
                 )
                 if not item_id:
                     return  # Bitrix не настроен вообще — не сбой, повторять нечего
@@ -270,6 +367,8 @@ def _sync_to_bitrix(
                     {
                         "description": description, "deal_id": deal_id, "company_id": company_id,
                         "attachment_url": attachment_url, "project_name": project_name,
+                        "object_serial_number": object_serial_number, "contract_info": contract_info,
+                        "component_info": component_info,
                     },
                     str(exc),
                 )
@@ -279,6 +378,7 @@ def _sync_to_bitrix(
             rec = await session.get(Reclamation, reclamation_id)
             if rec is not None:
                 rec.bitrix_item_id = item_id
+                rec.bitrix_stage_id = bitrix_service.RECLAMATION_INITIAL_STAGE
                 await session.commit()
 
     asyncio.create_task(_task())
@@ -291,7 +391,9 @@ def _sync_status_to_bitrix(
         from app.repositories.reclamation_outbox import ReclamationOutboxRepository
         from app.services import bitrix_service
         try:
-            await bitrix_service.update_reclamation_stage(bitrix_item_id, status, confirmation_file_url)
+            pushed_stage = await bitrix_service.update_reclamation_stage(
+                bitrix_item_id, status, confirmation_file_url,
+            )
         except Exception as exc:
             _log.exception("Bitrix status sync failed for reclamation item %s", bitrix_item_id)
             async with AsyncSessionLocal() as session:
@@ -300,6 +402,44 @@ def _sync_status_to_bitrix(
                     {"status": status, "confirmation_file_url": confirmation_file_url},
                     str(exc),
                 )
+                await session.commit()
+            return
+
+        # None — стадию не двигали (например, in_progress отключён), тогда и
+        # у себя ничего не меняем, иначе админка покажет стадию, которой в
+        # Bitrix на самом деле нет
+        if pushed_stage:
+            async with AsyncSessionLocal() as session:
+                rec = await session.get(Reclamation, reclamation_id)
+                if rec is not None:
+                    rec.bitrix_stage_id = pushed_stage
+                    await session.commit()
+
+    asyncio.create_task(_task())
+
+
+def _sync_stage_to_bitrix(reclamation_id: int, bitrix_item_id: str, stage_id: str) -> None:
+    async def _task():
+        from app.database import AsyncSessionLocal
+        from app.repositories.reclamation_outbox import ReclamationOutboxRepository
+        from app.services import bitrix_service
+        try:
+            await bitrix_service.set_reclamation_stage(bitrix_item_id, stage_id)
+        except Exception as exc:
+            _log.exception(
+                "Bitrix stage sync failed for reclamation item %s (stage %s)", bitrix_item_id, stage_id,
+            )
+            async with AsyncSessionLocal() as session:
+                await ReclamationOutboxRepository(session).create(
+                    reclamation_id, "stage", {"stage_id": stage_id}, str(exc),
+                )
+                await session.commit()
+            return
+
+        async with AsyncSessionLocal() as session:
+            rec = await session.get(Reclamation, reclamation_id)
+            if rec is not None:
+                rec.bitrix_stage_id = stage_id
                 await session.commit()
 
     asyncio.create_task(_task())
@@ -352,18 +492,37 @@ async def sync_reclamation_from_bitrix(item_id: str) -> None:
             _log.info("Bitrix reclamation webhook: crm.item.get не вернул элемент %s", item_id)
             return
 
+        # Стадию запоминаем всегда, даже если наш статус от неё не меняется:
+        # стадий в Bitrix шесть, а статусов у нас четыре, и переход
+        # "Новая рекламация" -> "На рассмотрении" целиком укладывается внутрь
+        # нашего review. Без этого из админки не видно, что специалист вообще
+        # взял рекламацию в работу (см. Reclamation.bitrix_stage_id)
         stage_id = item.get("stageId")
+        stage_changed = bool(stage_id) and stage_id != rec.bitrix_stage_id
+        if stage_changed:
+            rec.bitrix_stage_id = stage_id
+
         new_status = bitrix_service.RECLAMATION_STAGE_TO_STATUS.get(stage_id)
         if new_status is None:
+            if stage_changed:
+                await session.commit()
             _log.info(
                 "Bitrix reclamation webhook: неизвестная стадия %s у элемента %s", stage_id, item_id,
             )
             return
         if new_status == rec.status:
-            _log.info(
-                "Bitrix reclamation webhook: рекламация %s уже в статусе %s, пропускаю",
-                rec.id, new_status,
-            )
+            if stage_changed:
+                await session.commit()
+                _log.info(
+                    "Bitrix reclamation webhook: рекламация %s — стадия Bitrix теперь %s, "
+                    "наш статус %s не меняется",
+                    rec.id, stage_id, new_status,
+                )
+            else:
+                _log.info(
+                    "Bitrix reclamation webhook: рекламация %s уже в статусе %s, пропускаю",
+                    rec.id, new_status,
+                )
             return
 
         old_status = rec.status
@@ -413,20 +572,32 @@ async def retry_bitrix_outbox() -> None:
                     item_id = await bitrix_service.create_reclamation_item(
                         row.payload["description"], row.payload.get("deal_id"),
                         row.payload.get("company_id"), row.payload.get("attachment_url"),
-                        row.payload.get("project_name"),
+                        row.payload.get("project_name"), row.payload.get("object_serial_number"),
+                        row.payload.get("contract_info"), row.payload.get("component_info"),
                     )
                     if not item_id:
                         raise RuntimeError("Bitrix не настроен (BITRIX_WEBHOOK_URL пуст)")
                     rec.bitrix_item_id = item_id
+                    rec.bitrix_stage_id = bitrix_service.RECLAMATION_INITIAL_STAGE
 
                 elif row.operation == "status":
                     rec = await session.get(Reclamation, row.reclamation_id)
                     bitrix_item_id = rec.bitrix_item_id if rec is not None else None
                     if not bitrix_item_id:
                         raise RuntimeError("У рекламации всё ещё нет bitrix_item_id (create не прошёл)")
-                    await bitrix_service.update_reclamation_stage(
+                    pushed_stage = await bitrix_service.update_reclamation_stage(
                         bitrix_item_id, row.payload["status"], row.payload.get("confirmation_file_url"),
                     )
+                    if pushed_stage:
+                        rec.bitrix_stage_id = pushed_stage
+
+                elif row.operation == "stage":
+                    rec = await session.get(Reclamation, row.reclamation_id)
+                    bitrix_item_id = rec.bitrix_item_id if rec is not None else None
+                    if not bitrix_item_id:
+                        raise RuntimeError("У рекламации всё ещё нет bitrix_item_id (create не прошёл)")
+                    await bitrix_service.set_reclamation_stage(bitrix_item_id, row.payload["stage_id"])
+                    rec.bitrix_stage_id = row.payload["stage_id"]
 
                 elif row.operation == "assignee":
                     rec = await session.get(Reclamation, row.reclamation_id)
