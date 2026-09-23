@@ -44,7 +44,7 @@ class ReclamationBitrixOutbox(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "operation IN ('create', 'status', 'assignee', 'stage')",
+            "operation IN ('create', 'status', 'assignee', 'stage', 'deadline')",
             name="ck_reclamation_bitrix_outbox_operation",
         ),
     )

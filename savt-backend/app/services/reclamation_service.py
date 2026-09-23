@@ -1,7 +1,7 @@
 import asyncio
 import logging
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -101,6 +101,7 @@ class ReclamationService:
         items = [
             AdminReclamationListItemOut(
                 **self._list_fields(rec, cabinet), user_id=user.id, user_full_name=user.full_name,
+                deadline_at=rec.deadline_at,
                 bitrix_stage_name=_bitrix_stage_name(rec.bitrix_stage_id),
             )
             for rec, user, cabinet in rows
@@ -115,6 +116,7 @@ class ReclamationService:
         detail = await self._detail_out(rec, cabinet)
         return AdminReclamationOut(
             **detail.model_dump(), user_id=user.id, user_full_name=user.full_name,
+            deadline_at=rec.deadline_at,
             bitrix_item_id=rec.bitrix_item_id, bitrix_stage_id=rec.bitrix_stage_id,
             bitrix_stage_name=_bitrix_stage_name(rec.bitrix_stage_id),
         )
@@ -133,6 +135,8 @@ class ReclamationService:
         # её допустимо только вместе с реальным переводом карточки в Bitrix,
         # иначе админка покажет стадию, которой на портале нет
         bitrix_stage_id = changed.pop("bitrix_stage_id", None)
+
+        deadline_changed = "deadline_at" in changed and changed["deadline_at"] != rec.deadline_at
 
         status_changed = "status" in changed and changed["status"] != rec.status
         if status_changed:
@@ -157,13 +161,30 @@ class ReclamationService:
         )
         await self.session.commit()
 
+        # Ответственного отправляем в той же задаче ПОСЛЕ стадии, а не
+        # параллельно с ней: любое наше обновление карточки возвращается к нам
+        # вебхуком, и если ответственный уедет раньше стадии, вебхук прочитает
+        # ещё старую стадию и откатит статус (ровно так 2026-09-23 у №16
+        # выставленный админом resolved сам вернулся в review)
+        assignee_to_push = responsible_bitrix_user_id if rec.bitrix_item_id else None
+
         if status_changed:
             await self._notify_status_change(rec)
             if rec.bitrix_item_id:
-                _sync_status_to_bitrix(rec.id, rec.bitrix_item_id, rec.status, rec.confirmation_file_url)
+                # дедлайн уезжает вместе со стадией — Bitrix всё равно требует
+                # его заполненным при переходе, отдельный вызов был бы лишним
+                _sync_status_to_bitrix(
+                    rec.id, rec.bitrix_item_id, rec.status, rec.confirmation_file_url,
+                    rec.deadline_at, assignee_to_push,
+                )
+                assignee_to_push = None
+                deadline_changed = False
 
-        if responsible_bitrix_user_id and rec.bitrix_item_id:
-            _sync_assignee_to_bitrix(rec.id, rec.bitrix_item_id, responsible_bitrix_user_id)
+        if deadline_changed and rec.bitrix_item_id:
+            _sync_deadline_to_bitrix(rec.id, rec.bitrix_item_id, rec.deadline_at)
+
+        if assignee_to_push:
+            _sync_assignee_to_bitrix(rec.id, rec.bitrix_item_id, assignee_to_push)
 
         # у себя bitrix_stage_id проставится уже после успешной отправки —
         # стадия в админке должна отражать портал, а не наше намерение
@@ -385,29 +406,35 @@ def _sync_to_bitrix(
 
 def _sync_status_to_bitrix(
     reclamation_id: int, bitrix_item_id: str, status: str, confirmation_file_url: str | None,
+    deadline: date | None = None, assignee_id: int | None = None,
 ) -> None:
+    """assignee_id отправляется здесь же, строго после стадии — почему именно
+    так, а не параллельно, см. комментарий в ReclamationService.update."""
     async def _task():
         from app.database import AsyncSessionLocal
         from app.repositories.reclamation_outbox import ReclamationOutboxRepository
         from app.services import bitrix_service
         try:
             pushed_stage = await bitrix_service.update_reclamation_stage(
-                bitrix_item_id, status, confirmation_file_url,
+                bitrix_item_id, status, confirmation_file_url, deadline,
             )
         except Exception as exc:
             _log.exception("Bitrix status sync failed for reclamation item %s", bitrix_item_id)
             async with AsyncSessionLocal() as session:
                 await ReclamationOutboxRepository(session).create(
                     reclamation_id, "status",
-                    {"status": status, "confirmation_file_url": confirmation_file_url},
+                    {
+                        "status": status, "confirmation_file_url": confirmation_file_url,
+                        "deadline": deadline.isoformat() if deadline else None,
+                    },
                     str(exc),
                 )
                 await session.commit()
-            return
+            pushed_stage = None
 
-        # None — стадию не двигали (например, in_progress отключён), тогда и
-        # у себя ничего не меняем, иначе админка покажет стадию, которой в
-        # Bitrix на самом деле нет
+        # None — стадию не двигали (in_progress отключён) либо отправка
+        # сорвалась; у себя тогда ничего не меняем, иначе админка покажет
+        # стадию, которой в Bitrix на самом деле нет
         if pushed_stage:
             async with AsyncSessionLocal() as session:
                 rec = await session.get(Reclamation, reclamation_id)
@@ -415,7 +442,30 @@ def _sync_status_to_bitrix(
                     rec.bitrix_stage_id = pushed_stage
                     await session.commit()
 
+        # Ответственного шлём в любом случае — админ его назначил, и от того,
+        # уехала стадия или нет, это не зависит
+        if assignee_id:
+            await _push_assignee(reclamation_id, bitrix_item_id, assignee_id)
+
     asyncio.create_task(_task())
+
+
+async def _push_assignee(reclamation_id: int, bitrix_item_id: str, bitrix_user_id: int) -> None:
+    from app.database import AsyncSessionLocal
+    from app.repositories.reclamation_outbox import ReclamationOutboxRepository
+    from app.services import bitrix_service
+    try:
+        await bitrix_service.update_reclamation_assignee(bitrix_item_id, bitrix_user_id)
+    except Exception as exc:
+        _log.exception(
+            "Bitrix assignee sync failed for reclamation item %s (user %s)",
+            bitrix_item_id, bitrix_user_id,
+        )
+        async with AsyncSessionLocal() as session:
+            await ReclamationOutboxRepository(session).create(
+                reclamation_id, "assignee", {"bitrix_user_id": bitrix_user_id}, str(exc),
+            )
+            await session.commit()
 
 
 def _sync_stage_to_bitrix(reclamation_id: int, bitrix_item_id: str, stage_id: str) -> None:
@@ -445,25 +495,34 @@ def _sync_stage_to_bitrix(reclamation_id: int, bitrix_item_id: str, stage_id: st
     asyncio.create_task(_task())
 
 
-def _sync_assignee_to_bitrix(reclamation_id: int, bitrix_item_id: str, bitrix_user_id: int) -> None:
+def _sync_deadline_to_bitrix(reclamation_id: int, bitrix_item_id: str, deadline: date | None) -> None:
+    """Срок поменяли без смены статуса. Когда статус меняется тем же запросом,
+    дедлайн уезжает не отсюда, а вместе со стадией (Bitrix всё равно требует
+    его при переходе) — см. ReclamationService.update."""
     async def _task():
         from app.database import AsyncSessionLocal
         from app.repositories.reclamation_outbox import ReclamationOutboxRepository
         from app.services import bitrix_service
         try:
-            await bitrix_service.update_reclamation_assignee(bitrix_item_id, bitrix_user_id)
+            await bitrix_service.update_reclamation_deadline(bitrix_item_id, deadline)
         except Exception as exc:
-            _log.exception(
-                "Bitrix assignee sync failed for reclamation item %s (user %s)",
-                bitrix_item_id, bitrix_user_id,
-            )
+            _log.exception("Bitrix deadline sync failed for reclamation item %s", bitrix_item_id)
             async with AsyncSessionLocal() as session:
                 await ReclamationOutboxRepository(session).create(
-                    reclamation_id, "assignee", {"bitrix_user_id": bitrix_user_id}, str(exc),
+                    reclamation_id, "deadline",
+                    {"deadline": deadline.isoformat() if deadline else None},
+                    str(exc),
                 )
                 await session.commit()
 
     asyncio.create_task(_task())
+
+
+def _sync_assignee_to_bitrix(reclamation_id: int, bitrix_item_id: str, bitrix_user_id: int) -> None:
+    """Назначение ответственного само по себе, без смены статуса. Когда статус
+    меняется тем же запросом, ответственный уезжает не отсюда, а из
+    _sync_status_to_bitrix — строго после стадии."""
+    asyncio.create_task(_push_assignee(reclamation_id, bitrix_item_id, bitrix_user_id))
 
 
 async def sync_reclamation_from_bitrix(item_id: str) -> None:
@@ -497,21 +556,54 @@ async def sync_reclamation_from_bitrix(item_id: str) -> None:
         # "Новая рекламация" -> "На рассмотрении" целиком укладывается внутрь
         # нашего review. Без этого из админки не видно, что специалист вообще
         # взял рекламацию в работу (см. Reclamation.bitrix_stage_id)
+        # has_changes — набралось ли что коммитить на ранних выходах ниже:
+        # стадию и дедлайн мы принимаем из Bitrix даже тогда, когда статус
+        # менять не станем
         stage_id = item.get("stageId")
-        stage_changed = bool(stage_id) and stage_id != rec.bitrix_stage_id
-        if stage_changed:
+        has_changes = bool(stage_id) and stage_id != rec.bitrix_stage_id
+        if has_changes:
             rec.bitrix_stage_id = stage_id
+
+        # Дедлайн тянем обратно всегда — его могли поменять прямо в карточке,
+        # и в отличие от статуса тут нечего затирать: в Bitrix он такой же
+        # единственный, как у нас (см. Reclamation.deadline_at)
+        bitrix_deadline = bitrix_service.parse_reclamation_deadline(item)
+        if bitrix_deadline != rec.deadline_at:
+            _log.info(
+                "Bitrix reclamation webhook: рекламация %s — дедлайн %s -> %s",
+                rec.id, rec.deadline_at, bitrix_deadline,
+            )
+            rec.deadline_at = bitrix_deadline
+            has_changes = True
+
+        # Пока у рекламации висит неотправленная смена стадии, карточка в
+        # Bitrix заведомо отстала от нас, и принимать из неё статус нельзя:
+        # иначе наш же неудавшийся push откатывает то, что админ только что
+        # выставил. Случилось 2026-09-23 на №16 — обновление ответственного
+        # вернулось вебхуком раньше, чем уехала стадия, и resolved сам стал
+        # review. Реальную стадию при этом всё равно запоминаем: она
+        # фактическая, просто не даём ей менять наш статус.
+        from app.repositories.reclamation_outbox import ReclamationOutboxRepository
+        if await ReclamationOutboxRepository(session).has_pending_stage_change(rec.id):
+            if has_changes:
+                await session.commit()
+            _log.info(
+                "Bitrix reclamation webhook: рекламация %s — есть неотправленная смена стадии, "
+                "статус из Bitrix (стадия %s) не применяю",
+                rec.id, stage_id,
+            )
+            return
 
         new_status = bitrix_service.RECLAMATION_STAGE_TO_STATUS.get(stage_id)
         if new_status is None:
-            if stage_changed:
+            if has_changes:
                 await session.commit()
             _log.info(
                 "Bitrix reclamation webhook: неизвестная стадия %s у элемента %s", stage_id, item_id,
             )
             return
         if new_status == rec.status:
-            if stage_changed:
+            if has_changes:
                 await session.commit()
                 _log.info(
                     "Bitrix reclamation webhook: рекламация %s — стадия Bitrix теперь %s, "
@@ -585,11 +677,21 @@ async def retry_bitrix_outbox() -> None:
                     bitrix_item_id = rec.bitrix_item_id if rec is not None else None
                     if not bitrix_item_id:
                         raise RuntimeError("У рекламации всё ещё нет bitrix_item_id (create не прошёл)")
+                    saved_deadline = row.payload.get("deadline")
                     pushed_stage = await bitrix_service.update_reclamation_stage(
                         bitrix_item_id, row.payload["status"], row.payload.get("confirmation_file_url"),
+                        date.fromisoformat(saved_deadline) if saved_deadline else None,
                     )
                     if pushed_stage:
                         rec.bitrix_stage_id = pushed_stage
+                        # Приводим статус к тому, что реально уехало в Bitrix.
+                        # Пока попытка висела в очереди, наш статус мог
+                        # откатиться вебхуком — карточка-то стояла на старой
+                        # стадии. Ждать, что вебхук от этого же обновления всё
+                        # исправит сам, нельзя: он прилетает раньше, чем
+                        # закоммитится удаление строки ниже, и его отсечёт
+                        # защита в sync_reclamation_from_bitrix
+                        rec.status = row.payload["status"]
 
                 elif row.operation == "stage":
                     rec = await session.get(Reclamation, row.reclamation_id)
@@ -598,6 +700,16 @@ async def retry_bitrix_outbox() -> None:
                         raise RuntimeError("У рекламации всё ещё нет bitrix_item_id (create не прошёл)")
                     await bitrix_service.set_reclamation_stage(bitrix_item_id, row.payload["stage_id"])
                     rec.bitrix_stage_id = row.payload["stage_id"]
+
+                elif row.operation == "deadline":
+                    rec = await session.get(Reclamation, row.reclamation_id)
+                    bitrix_item_id = rec.bitrix_item_id if rec is not None else None
+                    if not bitrix_item_id:
+                        raise RuntimeError("У рекламации всё ещё нет bitrix_item_id (create не прошёл)")
+                    saved = row.payload.get("deadline")
+                    await bitrix_service.update_reclamation_deadline(
+                        bitrix_item_id, date.fromisoformat(saved) if saved else None,
+                    )
 
                 elif row.operation == "assignee":
                     rec = await session.get(Reclamation, row.reclamation_id)

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 from pydantic import BaseModel, Field
 
@@ -113,6 +113,8 @@ class AdminReclamationListItemOut(ReclamationListItemOut):
     # ФИО подавшего аккаунта — не путать с contact_name (снимок с формы заявки,
     # может отличаться, если подано не от своего имени)
     user_full_name: str | None = None
+    # срок отработки, синхронизируется с "Дедлайном" карточки Bitrix
+    deadline_at: date | None = None
     # Название стадии карточки в Bitrix — только для админки; стадий там шесть,
     # а наших статусов четыре, часть стадий схлопывается в один наш статус
     # (см. Reclamation.bitrix_stage_id). null — рекламация ещё не доехала до
@@ -123,6 +125,7 @@ class AdminReclamationListItemOut(ReclamationListItemOut):
 class AdminReclamationOut(ReclamationDetailOut):
     user_id: int
     user_full_name: str | None = None
+    deadline_at: date | None = None
     # см. AdminReclamationListItemOut.bitrix_stage_name; в карточке отдаём ещё
     # и сырой код стадии с id элемента — чтобы администратор интеграции мог
     # сопоставить с самим Bitrix, когда что-то разъезжается
@@ -153,6 +156,11 @@ class AdminReclamationUpdateIn(BaseModel):
     # responsible_name/responsible_phone по-прежнему передавайте отдельно —
     # это поле их не заменяет, только дополнительно синхронизирует с Bitrix
     responsible_bitrix_user_id: int | None = None
+    # Срок отработки рекламации, "ГГГГ-ММ-ДД". Уходит в поле "Дедлайн" карточки
+    # Bitrix и подтягивается оттуда обратно, если его поменяли на портале.
+    # Bitrix требует это поле заполненным при смене стадии, так что лучше
+    # задать его до перевода статуса — иначе подставится "сегодня + 7 дней"
+    deadline_at: date | None = None
     # Стадия карточки в Bitrix — нужна только чтобы отличить "Новая рекламация"
     # от "На рассмотрении": обе = наш review, через status разницу не выразить.
     # Допустимы ровно эти две стадии и только пока рекламация в review —

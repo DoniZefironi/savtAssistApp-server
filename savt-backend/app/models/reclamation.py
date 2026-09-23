@@ -1,5 +1,5 @@
-from datetime import datetime
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, String, Text, func
+from datetime import date, datetime
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -77,6 +77,13 @@ class Reclamation(Base):
     # там это обязательное поле именно на стадии SUCCESS, проверено вживую)
     confirmation_file_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     confirmation_file_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Срок, к которому рекламацию обязуются отработать. Заводится админом и
+    # синхронизируется с полем "Дедлайн" карточки Bitrix (ufCrm53_1784791589794,
+    # тип date — без времени, отсюда Date, а не DateTime) в обе стороны.
+    # Bitrix требует это поле заполненным при переводе карточки между стадиями,
+    # так что без него смена статуса в Bitrix не проходит — см.
+    # bitrix_service.update_reclamation_stage
+    deadline_at: Mapped[date | None] = mapped_column(Date, nullable=True)
     # ФИО и рабочий телефон ответственного — показываются пользователю в
     # уведомлении о переходе в работу (п.7 ТЗ)
     responsible_name: Mapped[str | None] = mapped_column(String(200), nullable=True)

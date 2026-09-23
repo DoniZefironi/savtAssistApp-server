@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.core.constants import BITRIX_USER_LOGIN as _INCOMING_USER_LOGIN
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 _log = logging.getLogger(__name__)
 
@@ -57,6 +57,10 @@ RECLAMATION_STAGE_TO_STATUS.update({
 # переименует стадию у себя, подпись станет устаревшей, но ничего не
 # сломается — маппинг статусов завязан на коды, а не на названия
 RECLAMATION_INITIAL_STAGE = "DT1176_69:NEW"
+
+# "Дедлайн" — Bitrix требует его заполненным при переводе карточки на стадию
+# (см. update_reclamation_stage)
+_RECLAMATION_DEADLINE_FIELD = "ufCrm53_1784791589794"
 
 # Стадии, которые админ может выставить руками (bitrix_stage_id в
 # PATCH /admin/reclamations/{id}) — только те две, что схлопываются в наш
@@ -119,6 +123,7 @@ def _read_local_file(url: str | None) -> tuple[str, bytes] | None:
 
 async def update_reclamation_stage(
     item_id: str, status: str, confirmation_file_url: str | None = None,
+    deadline: date | None = None,
 ) -> str | None:
     """Переводит элемент рекламации на нужную стадию (crm.item.update).
     Возвращает код реально проставленной стадии, либо None, если стадию не
@@ -167,11 +172,26 @@ async def update_reclamation_stage(
     if stage_id is None:
         return None
 
-    # Дедлайн (ufCrm53_1784791589794) нужен только для перехода в in_progress,
-    # который сейчас целиком заблокирован выше — код оставлен для восстановления
-    # одной строкой (убрать блок "if status == in_progress: return" выше),
-    # когда автоматизацию на стороне Bitrix починят.
     fields = {"stageId": stage_id}
+
+    # Bitrix требует заполненный "Дедлайн" при переводе на стадию (проверено
+    # вживую: 2026-09-23 на этом упал переход в resolved,
+    # 400 CRM_FIELD_ERROR_REQUIRED). Наш дедлайн главнее — его заводит админ
+    # осознанно, так что если он есть, отправляем его.
+    if deadline is not None:
+        fields[_RECLAMATION_DEADLINE_FIELD] = deadline.strftime("%Y-%m-%d")
+    else:
+        # своего значения нет — не роняем переход из-за пустого поля, но и не
+        # затираем дедлайн, если его успели проставить на стороне Bitrix
+        item = await get_reclamation_item(item_id)
+        if item is not None and not item.get(_RECLAMATION_DEADLINE_FIELD):
+            fallback = (datetime.now() + timedelta(days=7)).date()
+            fields[_RECLAMATION_DEADLINE_FIELD] = fallback.strftime("%Y-%m-%d")
+            _log.info(
+                "Bitrix reclamation item %s: дедлайн не задан ни у нас, ни в Bitrix — "
+                "подставляю %s, чтобы переход на стадию не отвалился",
+                item_id, fallback,
+            )
     if status == "resolved" and confirmation_file_url:
         file_info = _read_local_file(confirmation_file_url)
         if file_info:
@@ -195,6 +215,41 @@ async def update_reclamation_stage(
     if "error" in data:
         raise RuntimeError(f"Bitrix crm.item.update error: {data}")
     return stage_id
+
+
+def parse_reclamation_deadline(item: dict) -> date | None:
+    """Достаёт "Дедлайн" из ответа crm.item.get. Поле объявлено как date, но
+    Bitrix для таких полей обычно отдаёт полный ISO с временем и зоной
+    ("2026-09-30T03:00:00+03:00"), поэтому берём только дату и допускаем оба
+    варианта — и с временем, и голую дату."""
+    raw = item.get(_RECLAMATION_DEADLINE_FIELD)
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw)).date()
+    except ValueError:
+        _log.warning("Bitrix: не разобрал дедлайн %r, пропускаю", raw)
+        return None
+
+
+async def update_reclamation_deadline(item_id: str, deadline: date | None) -> None:
+    """Отправляет дедлайн в карточку отдельно от смены стадии — вызывается,
+    когда админ поменял только срок. Пустое значение очищает поле в Bitrix."""
+    if not settings.bitrix_webhook_url:
+        return
+    url = f"{settings.bitrix_webhook_url.rstrip('/')}/crm.item.update.json"
+    resp = await _get_client().post(url, json={
+        "entityTypeId": settings.bitrix_reclamation_entity_type_id,
+        "id": item_id,
+        "fields": {
+            _RECLAMATION_DEADLINE_FIELD: deadline.strftime("%Y-%m-%d") if deadline else "",
+        },
+    })
+    if not resp.is_success:
+        raise RuntimeError(f"Bitrix crm.item.update (deadline) {resp.status_code}: {resp.text}")
+    data = resp.json()
+    if "error" in data:
+        raise RuntimeError(f"Bitrix crm.item.update (deadline) error: {data}")
 
 
 async def set_reclamation_stage(item_id: str, stage_id: str) -> None:
