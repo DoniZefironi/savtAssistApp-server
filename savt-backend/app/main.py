@@ -72,6 +72,7 @@ from app.core.firebase import init_firebase
 from app.services.warranty_scheduler import check_warranty_expiry
 from app.services.project_folder_service import sync_all_project_folders
 from app.services.service_request_service import sync_statuses_from_bitrix
+from app.services.reclamation_service import retry_bitrix_outbox
 from app.services import promo_service
 from app.core.limiter import limiter
 from app.database import AsyncSessionLocal
@@ -132,6 +133,8 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(sync_all_project_folders, "cron", hour=2, minute=0)
     # синхронизация с битриксом
     scheduler.add_job(sync_statuses_from_bitrix, "interval", minutes=15)
+    # повтор недоставленных синхронизаций рекламаций с Bitrix (п.8 ТЗ)
+    scheduler.add_job(retry_bitrix_outbox, "interval", minutes=15)
     # синрхонизация бота с чатами
     scheduler.add_job(_bot_follow_up_job, "interval", minutes=10)
     # чистка старой телеметрии

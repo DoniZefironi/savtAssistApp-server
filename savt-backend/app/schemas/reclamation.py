@@ -149,3 +149,17 @@ class BitrixUserOut(BaseModel):
     full_name: str
     phone: str | None
     position: str | None
+
+
+class ReclamationOutboxOut(BaseModel):
+    """Недоставленная попытка синхронизации с Bitrix (п.8 ТЗ) — для
+    администратора интеграции, см. GET /admin/reclamations/bitrix-outbox."""
+    id: int
+    reclamation_id: int
+    operation: str
+    attempts: int
+    last_error: str | None
+    created_at: datetime
+    last_attempted_at: datetime | None
+
+    model_config = {"from_attributes": True}

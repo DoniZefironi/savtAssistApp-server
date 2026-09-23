@@ -13,6 +13,7 @@ from app.schemas.reclamation import (
     ReclamationCreateIn,
     ReclamationDetailOut,
     ReclamationListItemOut,
+    ReclamationOutboxOut,
 )
 from app.services.reclamation_service import ReclamationService
 
@@ -80,6 +81,15 @@ async def list_reclamation_bitrix_users(
     _: User = Depends(require_role(RoleName.ADMIN)),
 ):
     return await ReclamationService.list_bitrix_users()
+
+
+# Статический путь — по той же причине, что и bitrix-users выше
+@router.get("/admin/reclamations/bitrix-outbox", response_model=list[ReclamationOutboxOut])
+async def list_reclamation_bitrix_outbox(
+    _: User = Depends(require_role(RoleName.ADMIN)),
+    session: AsyncSession = Depends(get_session),
+):
+    return await ReclamationService(session).list_outbox()
 
 
 @router.get("/admin/reclamations/{reclamation_id}", response_model=AdminReclamationOut)

@@ -19,6 +19,7 @@ from app.schemas.reclamation import (
     ReclamationCreateIn,
     ReclamationDetailOut,
     ReclamationListItemOut,
+    ReclamationOutboxOut,
 )
 from app.services.audit_service import AuditLogger
 from app.services.notification_service import NotificationService
@@ -131,10 +132,10 @@ class ReclamationService:
         if status_changed:
             await self._notify_status_change(rec)
             if rec.bitrix_item_id:
-                _sync_status_to_bitrix(rec.bitrix_item_id, rec.status, rec.confirmation_file_url)
+                _sync_status_to_bitrix(rec.id, rec.bitrix_item_id, rec.status, rec.confirmation_file_url)
 
         if responsible_bitrix_user_id and rec.bitrix_item_id:
-            _sync_assignee_to_bitrix(rec.bitrix_item_id, responsible_bitrix_user_id)
+            _sync_assignee_to_bitrix(rec.id, rec.bitrix_item_id, responsible_bitrix_user_id)
 
         return await self.get_admin(reclamation_id)
 
@@ -143,6 +144,13 @@ class ReclamationService:
         from app.services import bitrix_service
         users = await bitrix_service.list_reclamation_assignees()
         return [BitrixUserOut(**u) for u in users]
+
+    # Для "администратора интеграции" из ТЗ (п.3 — "обрабатывает ошибки
+    # интеграции") — что сейчас не долетело до Bitrix и почему
+    async def list_outbox(self) -> list[ReclamationOutboxOut]:
+        from app.repositories.reclamation_outbox import ReclamationOutboxRepository
+        rows = await ReclamationOutboxRepository(self.session).list_pending()
+        return [ReclamationOutboxOut.model_validate(r) for r in rows]
 
     # Обязательные проверки из п.8 ТЗ — завязаны на итоговое состояние заявки
     # (текущее значение + то, что меняется этим PATCH), поэтому в сервисе, не
@@ -235,6 +243,7 @@ def _sync_to_bitrix(
         from app.database import AsyncSessionLocal
         from app.models.cabinets import Cabinet
         from app.models.project import Project
+        from app.repositories.reclamation_outbox import ReclamationOutboxRepository
         from app.services import bitrix_service
 
         deal_id = company_id = project_name = None
@@ -252,10 +261,19 @@ def _sync_to_bitrix(
                 item_id = await bitrix_service.create_reclamation_item(
                     description, deal_id, company_id, attachment_url, project_name,
                 )
-            except Exception:
+                if not item_id:
+                    return  # Bitrix не настроен вообще — не сбой, повторять нечего
+            except Exception as exc:
                 _log.exception("Bitrix item creation failed for reclamation %s", reclamation_id)
-                return
-            if not item_id:
+                await ReclamationOutboxRepository(session).create(
+                    reclamation_id, "create",
+                    {
+                        "description": description, "deal_id": deal_id, "company_id": company_id,
+                        "attachment_url": attachment_url, "project_name": project_name,
+                    },
+                    str(exc),
+                )
+                await session.commit()
                 return
 
             rec = await session.get(Reclamation, reclamation_id)
@@ -266,28 +284,44 @@ def _sync_to_bitrix(
     asyncio.create_task(_task())
 
 def _sync_status_to_bitrix(
-    bitrix_item_id: str, status: str, confirmation_file_url: str | None,
+    reclamation_id: int, bitrix_item_id: str, status: str, confirmation_file_url: str | None,
 ) -> None:
     async def _task():
+        from app.database import AsyncSessionLocal
+        from app.repositories.reclamation_outbox import ReclamationOutboxRepository
         from app.services import bitrix_service
         try:
             await bitrix_service.update_reclamation_stage(bitrix_item_id, status, confirmation_file_url)
-        except Exception:
+        except Exception as exc:
             _log.exception("Bitrix status sync failed for reclamation item %s", bitrix_item_id)
+            async with AsyncSessionLocal() as session:
+                await ReclamationOutboxRepository(session).create(
+                    reclamation_id, "status",
+                    {"status": status, "confirmation_file_url": confirmation_file_url},
+                    str(exc),
+                )
+                await session.commit()
 
     asyncio.create_task(_task())
 
 
-def _sync_assignee_to_bitrix(bitrix_item_id: str, bitrix_user_id: int) -> None:
+def _sync_assignee_to_bitrix(reclamation_id: int, bitrix_item_id: str, bitrix_user_id: int) -> None:
     async def _task():
+        from app.database import AsyncSessionLocal
+        from app.repositories.reclamation_outbox import ReclamationOutboxRepository
         from app.services import bitrix_service
         try:
             await bitrix_service.update_reclamation_assignee(bitrix_item_id, bitrix_user_id)
-        except Exception:
+        except Exception as exc:
             _log.exception(
                 "Bitrix assignee sync failed for reclamation item %s (user %s)",
                 bitrix_item_id, bitrix_user_id,
             )
+            async with AsyncSessionLocal() as session:
+                await ReclamationOutboxRepository(session).create(
+                    reclamation_id, "assignee", {"bitrix_user_id": bitrix_user_id}, str(exc),
+                )
+                await session.commit()
 
     asyncio.create_task(_task())
 
@@ -344,6 +378,79 @@ async def sync_reclamation_from_bitrix(item_id: str) -> None:
         )
 
         await ReclamationService(session)._notify_status_change(rec)
+
+
+async def retry_bitrix_outbox() -> None:
+    """Раз в 15 минут (см. main.py) разбирает недоставленные попытки
+    синхронизации с Bitrix (п.8 ТЗ, ReclamationBitrixOutbox) — повторяет их
+    теми же данными, что были на момент сбоя (payload), не текущим
+    состоянием рекламации (оно могло уйти дальше за это время). При успехе
+    строка удаляется, при повторном сбое — attempts++/last_error обновляются,
+    без ограничения на число попыток (видно администратору интеграции через
+    GET /admin/reclamations/bitrix-outbox, разбираться вручную, если застряло
+    надолго)."""
+    from app.database import AsyncSessionLocal
+    from app.repositories.reclamation_outbox import ReclamationOutboxRepository
+    from app.services import bitrix_service
+
+    async with AsyncSessionLocal() as session:
+        outbox_repo = ReclamationOutboxRepository(session)
+        rows = await outbox_repo.list_pending()
+
+        for row in rows:
+            try:
+                if row.operation == "create":
+                    rec = await session.get(Reclamation, row.reclamation_id)
+                    if rec is None:
+                        await outbox_repo.delete(row)
+                        await session.commit()
+                        continue
+                    if rec.bitrix_item_id:
+                        # уже создалось как-то иначе (например, починили руками) — не дублируем
+                        await outbox_repo.delete(row)
+                        await session.commit()
+                        continue
+                    item_id = await bitrix_service.create_reclamation_item(
+                        row.payload["description"], row.payload.get("deal_id"),
+                        row.payload.get("company_id"), row.payload.get("attachment_url"),
+                        row.payload.get("project_name"),
+                    )
+                    if not item_id:
+                        raise RuntimeError("Bitrix не настроен (BITRIX_WEBHOOK_URL пуст)")
+                    rec.bitrix_item_id = item_id
+
+                elif row.operation == "status":
+                    rec = await session.get(Reclamation, row.reclamation_id)
+                    bitrix_item_id = rec.bitrix_item_id if rec is not None else None
+                    if not bitrix_item_id:
+                        raise RuntimeError("У рекламации всё ещё нет bitrix_item_id (create не прошёл)")
+                    await bitrix_service.update_reclamation_stage(
+                        bitrix_item_id, row.payload["status"], row.payload.get("confirmation_file_url"),
+                    )
+
+                elif row.operation == "assignee":
+                    rec = await session.get(Reclamation, row.reclamation_id)
+                    bitrix_item_id = rec.bitrix_item_id if rec is not None else None
+                    if not bitrix_item_id:
+                        raise RuntimeError("У рекламации всё ещё нет bitrix_item_id (create не прошёл)")
+                    await bitrix_service.update_reclamation_assignee(
+                        bitrix_item_id, row.payload["bitrix_user_id"],
+                    )
+
+                else:
+                    _log.warning("Reclamation outbox: неизвестная операция %s (id=%s)", row.operation, row.id)
+                    continue
+
+                await outbox_repo.delete(row)
+                _log.info("Reclamation outbox: повтор успешен (id=%s, operation=%s)", row.id, row.operation)
+            except Exception as exc:
+                outbox_repo.mark_failed_attempt(row, str(exc))
+                _log.warning(
+                    "Reclamation outbox: повтор не удался (id=%s, operation=%s, попытка %s): %s",
+                    row.id, row.operation, row.attempts, exc,
+                )
+
+            await session.commit()
 
 
 def _build_bitrix_description(rec: Reclamation) -> str:

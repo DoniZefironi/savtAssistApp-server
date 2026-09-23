@@ -50,6 +50,7 @@ from app.models.cabinet_telemetry_event import CabinetTelemetryEvent
 from app.models.cabinet_register_state import CabinetRegisterState
 from app.models.reclamation import Reclamation
 from app.models.reclamation_attachment import ReclamationAttachment
+from app.models.reclamation_bitrix_outbox import ReclamationBitrixOutbox
 
 __all__ = [
     "Role", "User", "RefreshToken", "PhoneVerificationCode",
@@ -65,5 +66,5 @@ __all__ = [
     "MessengerLink", "PhoneChangeRequest", "PendingRegistration", "RegistrationRequest",
     "PasswordResetRequest", "PromoMessage", "PromoScheduleSettings",
     "RegisterDefinition", "CabinetRegisterOverride", "CabinetTelemetryEvent",
-    "CabinetRegisterState", "Reclamation", "ReclamationAttachment",
+    "CabinetRegisterState", "Reclamation", "ReclamationAttachment", "ReclamationBitrixOutbox",
 ]
