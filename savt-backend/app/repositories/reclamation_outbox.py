@@ -21,15 +21,15 @@ class ReclamationOutboxRepository:
         await self.session.flush()
         return row
 
-    async def has_pending_stage_change(self, reclamation_id: int) -> bool:
-        """Есть ли у этой рекламации неотправленная смена стадии. Пока такая
+    async def has_pending_status_change(self, reclamation_id: int) -> bool:
+        """Есть ли у этой рекламации неотправленная смена статуса. Пока такая
         висит, карточка в Bitrix заведомо отстала от нас, и принимать из неё
         статус по вебхуку нельзя — см. sync_reclamation_from_bitrix."""
         result = await self.session.execute(
             select(ReclamationBitrixOutbox.id)
             .where(
                 ReclamationBitrixOutbox.reclamation_id == reclamation_id,
-                ReclamationBitrixOutbox.operation.in_(("status", "stage")),
+                ReclamationBitrixOutbox.operation == "status",
             )
             .limit(1)
         )

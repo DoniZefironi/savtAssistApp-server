@@ -19,7 +19,8 @@ from app.services.reclamation_service import ReclamationService
 
 router = APIRouter(tags=["reclamations"])
 
-_STATUS_PATTERN = "^(review|in_progress|resolved|rejected)$"
+# один к одному со стадиями смарт-процесса Bitrix, см. Reclamation.__doc__
+_STATUS_PATTERN = "^(new|review|in_progress|resolved|rejected|invalid)$"
 _OBJECT_TYPE_PATTERN = "^(cabinet|line|component|software|documentation)$"
 
 

@@ -13,10 +13,9 @@ class ReclamationBitrixOutbox(Base):
     задача retry_bitrix_outbox (см. reclamation_service.py), раз в 15 минут,
     как и sync_statuses_from_bitrix у сервисных заявок.
 
-    operation: create — заведение карточки, status — перевод стадии, выведенной
-    из нашего статуса, assignee — назначение ответственного, stage — ручной
-    перевод между "Новая рекламация" и "На рассмотрении" (обе = наш review,
-    статусом их не различить, см. ReclamationService._check_stage_change).
+    operation: create — заведение карточки, status — перевод на стадию,
+    соответствующую нашему статусу, assignee — назначение ответственного,
+    deadline — срок отработки.
 
     payload — то, с чем именно вызывать bitrix_service при повторе (не
     текущее состояние Reclamation на момент повтора, а снимок на момент
@@ -44,7 +43,7 @@ class ReclamationBitrixOutbox(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "operation IN ('create', 'status', 'assignee', 'stage', 'deadline')",
+            "operation IN ('create', 'status', 'assignee', 'deadline')",
             name="ck_reclamation_bitrix_outbox_operation",
         ),
     )

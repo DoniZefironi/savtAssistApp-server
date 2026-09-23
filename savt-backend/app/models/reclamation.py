@@ -8,18 +8,26 @@ from app.database import Base
 
 class Reclamation(Base):
     """Рекламация — гарантийная/негарантийная претензия по ШУ, линии, ПКИ, ПО
-    или документации. Пока без интеграции с Битрикс24 — обработка (смена
-    статуса, классификация, назначение ответственного) временно делается
-    вручную из админки, roles=admin; когда подключится Битрикс, источник этих
-    же полей сменится с ручного PATCH на вебхук, модель данных не изменится."""
+    или документации. Обрабатывается и из админки (roles=admin), и на стороне
+    Bitrix24 — изменения приезжают вебхуком, см. reclamation_service."""
     __tablename__ = "reclamations"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     # кто подал
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
 
-    # статус: review (на рассмотрении) -> in_progress (в работе) -> resolved/rejected
-    status: Mapped[str] = mapped_column(String(20), server_default="review", index=True)
+    # Статусы соответствуют стадиям смарт-процесса Bitrix один к одному —
+    # отдельного поля под стадию нет намеренно: пока "Новая рекламация" и
+    # "На рассмотрении" схлопывались в один review, обратная синхронизация была
+    # принципиально неполной (из Bitrix уже не восстановить, какая из двух).
+    # Карту статус<->стадия держит bitrix_service._RECLAMATION_STATUS_TO_STAGE:
+    #   new         Новая рекламация
+    #   review      На рассмотрении
+    #   in_progress Принята в работу
+    #   resolved    Закрыта
+    #   rejected    Отклонена
+    #   invalid     Ошибочные рекламации
+    status: Mapped[str] = mapped_column(String(20), server_default="new", index=True)
     # гарантийный случай или нет — отдельный флаг, а не часть статуса (как
     # ServiceRequest.is_under_warranty), проставляется вместе с переходом в
     # in_progress; до этого момента null — классификация ещё не решена
@@ -27,14 +35,6 @@ class Reclamation(Base):
 
     # id созданного элемента в битрикс
     bitrix_item_id: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    # реальная стадия карточки в Bitrix (DT1176_69:*) — стадий там шесть, а
-    # наших статусов четыре, и часть стадий схлопывается в один наш статус
-    # ("Новая рекламация"/"На рассмотрении" -> review, "Отклонена"/"Ошибочные
-    # рекламации" -> rejected). Заявителю по-прежнему показываем только status,
-    # а админу — ещё и эту стадию, иначе из админки не видно, что специалист
-    # в Bitrix вообще подвинул карточку. Обновляется и когда стадию двигаем мы,
-    # и по вебхуку, см. reclamation_service.sync_reclamation_from_bitrix
-    bitrix_stage_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
     # --- объект рекламации ---
     # cabinet | line | component | software | documentation, см. CHECK ниже
     object_type: Mapped[str] = mapped_column(String(20), index=True)
@@ -101,7 +101,7 @@ class Reclamation(Base):
             name="ck_reclamation_object_type",
         ),
         CheckConstraint(
-            "status IN ('review', 'in_progress', 'resolved', 'rejected')",
+            "status IN ('new', 'review', 'in_progress', 'resolved', 'rejected', 'invalid')",
             name="ck_reclamation_status",
         ),
     )

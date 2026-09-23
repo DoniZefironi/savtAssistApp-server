@@ -115,30 +115,25 @@ class AdminReclamationListItemOut(ReclamationListItemOut):
     user_full_name: str | None = None
     # срок отработки, синхронизируется с "Дедлайном" карточки Bitrix
     deadline_at: date | None = None
-    # Название стадии карточки в Bitrix — только для админки; стадий там шесть,
-    # а наших статусов четыре, часть стадий схлопывается в один наш статус
-    # (см. Reclamation.bitrix_stage_id). null — рекламация ещё не доехала до
-    # Bitrix либо стоит на стадии, которой нет в нашем справочнике
-    bitrix_stage_name: str | None = None
 
 
 class AdminReclamationOut(ReclamationDetailOut):
     user_id: int
     user_full_name: str | None = None
     deadline_at: date | None = None
-    # см. AdminReclamationListItemOut.bitrix_stage_name; в карточке отдаём ещё
-    # и сырой код стадии с id элемента — чтобы администратор интеграции мог
-    # сопоставить с самим Bitrix, когда что-то разъезжается
+    # id карточки на портале — чтобы администратор интеграции мог сопоставить
+    # с самим Bitrix, когда что-то разъезжается
     bitrix_item_id: str | None = None
-    bitrix_stage_id: str | None = None
-    bitrix_stage_name: str | None = None
 
 
 class AdminReclamationUpdateIn(BaseModel):
     """Частичное обновление (exclude_unset). Проверки вроде "нельзя отклонить
     без причины" — в сервисе при смене статуса, не здесь: правило зависит от
     итогового состояния объекта (какой статус ставится), а не от одного поля."""
-    status: str | None = Field(None, pattern="^(review|in_progress|resolved|rejected)$")
+    # один к одному со стадиями смарт-процесса Bitrix, см. Reclamation.__doc__
+    status: str | None = Field(
+        None, pattern="^(new|review|in_progress|resolved|rejected|invalid)$"
+    )
     warranty_classification: bool | None = None
     root_cause: str | None = None
     resolution_comment: str | None = None
@@ -161,11 +156,6 @@ class AdminReclamationUpdateIn(BaseModel):
     # Bitrix требует это поле заполненным при смене стадии, так что лучше
     # задать его до перевода статуса — иначе подставится "сегодня + 7 дней"
     deadline_at: date | None = None
-    # Стадия карточки в Bitrix — нужна только чтобы отличить "Новая рекламация"
-    # от "На рассмотрении": обе = наш review, через status разницу не выразить.
-    # Допустимы ровно эти две стадии и только пока рекламация в review —
-    # остальные стадии двигаются сменой status, см. ReclamationService.update
-    bitrix_stage_id: str | None = Field(None, max_length=50)
 
 
 class BitrixUserOut(BaseModel):

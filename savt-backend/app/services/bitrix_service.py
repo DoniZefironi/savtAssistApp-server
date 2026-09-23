@@ -27,57 +27,30 @@ _STATUS_TO_BITRIX = {
     "closed": "5",
 }
 
+# Соответствие статус <-> стадия смарт-процесса, строго один к одному: каждой
+# стадии Bitrix отвечает ровно один наш статус и наоборот. Раньше "Новая
+# рекламация"/"На рассмотрении" схлопывались в review, а "Отклонена"/"Ошибочные
+# рекламации" — в rejected, из-за чего обратная синхронизация в принципе не
+# могла быть полной: по вебхуку уже не восстановить, какая из двух стадий
+# имелась в виду. Привязываемся к кодам, а не к подписям — подписи на портале
+# уже переименовывали, коды пережили это без правок.
 _RECLAMATION_STATUS_TO_STAGE = {
-    "review": "DT1176_69:NEW",
-    "in_progress": "DT1176_69:CLIENT",
-    "resolved": "DT1176_69:SUCCESS",
-    # с 2026-09-23 процесс переработан: появилась стадия, буквально
-    # называющаяся "Отклонена" (UC_RNKN52) — переносим сюда наш rejected
-    # вместо старой FAIL ("Ошибочные рекламации", осталась в процессе, но
-    # больше не наша целевая стадия при отправке статуса из приложения)
-    "rejected": "DT1176_69:UC_RNKN52",
+    "new": "DT1176_69:NEW",              # Новая рекламация
+    "review": "DT1176_69:UC_DPZ1YJ",     # На рассмотрении
+    "in_progress": "DT1176_69:CLIENT",   # Принята в работу
+    "resolved": "DT1176_69:SUCCESS",     # Закрыта
+    "rejected": "DT1176_69:UC_RNKN52",   # Отклонена
+    "invalid": "DT1176_69:FAIL",         # Ошибочные рекламации
 }
 # обратная карта — для вебхука из Bitrix (стадия -> наш статус), см.
 # reclamation_service.sync_reclamation_from_bitrix
 RECLAMATION_STAGE_TO_STATUS = {v: k for k, v in _RECLAMATION_STATUS_TO_STAGE.items()}
-# синонимы стадий, которых нет среди наших "целевых" (выше), но которые
-# реально можно получить по вебхуку, если кто-то в Bitrix двигает карточку
-# руками: UC_DPZ1YJ "На рассмотрении" — новая промежуточная стадия между
-# NEW и CLIENT, по смыслу всё ещё наш review; FAIL "Ошибочные рекламации" —
-# старая стадия отказа, оставлена в процессе, трактуем как rejected
-RECLAMATION_STAGE_TO_STATUS.update({
-    "DT1176_69:UC_DPZ1YJ": "review",
-    "DT1176_69:FAIL": "rejected",
-})
 
-# Человекочитаемые названия стадий — показываем в админке рядом с нашим
-# статусом, чтобы было видно, где карточка на самом деле стоит в Bitrix
-# (наших статусов четыре, стадий шесть, см. RECLAMATION_STAGE_TO_STATUS).
-# Названия зафиксированы по crm.status.list на 2026-09-23; если заказчик
-# переименует стадию у себя, подпись станет устаревшей, но ничего не
-# сломается — маппинг статусов завязан на коды, а не на названия
-RECLAMATION_INITIAL_STAGE = "DT1176_69:NEW"
+RECLAMATION_INITIAL_STAGE = _RECLAMATION_STATUS_TO_STAGE["new"]
 
 # "Дедлайн" — Bitrix требует его заполненным при переводе карточки на стадию
 # (см. update_reclamation_stage)
 _RECLAMATION_DEADLINE_FIELD = "ufCrm53_1784791589794"
-
-# Стадии, которые админ может выставить руками (bitrix_stage_id в
-# PATCH /admin/reclamations/{id}) — только те две, что схлопываются в наш
-# review: разницу между ними через status выразить нечем. Остальные стадии
-# выставляются сменой статуса, а "Принята в работу" (CLIENT) не выставляется
-# вообще — именно на ней у процесса сломана автоматизация, см.
-# update_reclamation_stage
-RECLAMATION_ADMIN_SETTABLE_STAGES = ("DT1176_69:NEW", "DT1176_69:UC_DPZ1YJ")
-
-RECLAMATION_STAGE_NAMES = {
-    "DT1176_69:NEW": "Новая рекламация",
-    "DT1176_69:UC_DPZ1YJ": "На рассмотрении",
-    "DT1176_69:CLIENT": "Принята в работу",
-    "DT1176_69:SUCCESS": "Закрыта",
-    "DT1176_69:FAIL": "Ошибочные рекламации",
-    "DT1176_69:UC_RNKN52": "Отклонена",
-}
 
 
 async def get_reclamation_item(item_id: str) -> dict | None:
@@ -125,16 +98,15 @@ async def update_reclamation_stage(
     item_id: str, status: str, confirmation_file_url: str | None = None,
     deadline: date | None = None,
 ) -> str | None:
-    """Переводит элемент рекламации на нужную стадию (crm.item.update).
-    Возвращает код реально проставленной стадии, либо None, если стадию не
-    двигали (Bitrix не настроен, статус не мапится, или это in_progress —
-    он отключён, см. ниже) — вызывающий по этому значению решает, обновлять
-    ли у себя Reclamation.bitrix_stage_id.
-    При переходе в "в работе" Bitrix требует заполненный "Дедлайн"
-    (ufCrm53_1784791589794, проверено вживую — как и с "Название" при
-    создании, это не видно в isRequired у crm.item.fields, обязательность
-    настроена отдельно на уровне стадии). У нас своего понятия дедлайна нет,
-    подставляем "сегодня + 7 дней" — как и daysBeforeClose у самого типа.
+    """Переводит элемент рекламации на стадию, отвечающую нашему статусу
+    (crm.item.update). Возвращает код реально проставленной стадии, либо None,
+    если стадию не двигали: Bitrix не настроен, статус не мапится, или это
+    in_progress — он отключён, см. ниже.
+
+    Bitrix требует заполненный "Дедлайн" (ufCrm53_1784791589794) при переводе
+    между стадиями. Это не видно в isRequired у crm.item.fields —
+    обязательность настроена на уровне стадии, вскрылось только вживую
+    (2026-09-23, на переходе в resolved).
 
     При переходе в "исполнено" Bitrix точно так же требует заполненный
     "Подтверждающий документ" (ufCrm53_1784725447065, файловое поле) —
@@ -158,7 +130,7 @@ async def update_reclamation_stage(
     переименовывали (CLIENT была "На исполнении", стала "Принята в работу",
     SUCCESS была "Завершенные рекламации", стала "Закрыта"), и привязываться
     в описании к подписям — значит снова получить устаревший текст. Текущие
-    подписи — в RECLAMATION_STAGE_NAMES."""
+    подписи — в комментариях к _RECLAMATION_STATUS_TO_STAGE."""
     if not settings.bitrix_webhook_url:
         return None
     if status == "in_progress":
@@ -250,29 +222,6 @@ async def update_reclamation_deadline(item_id: str, deadline: date | None) -> No
     data = resp.json()
     if "error" in data:
         raise RuntimeError(f"Bitrix crm.item.update (deadline) error: {data}")
-
-
-async def set_reclamation_stage(item_id: str, stage_id: str) -> None:
-    """Двигает карточку на конкретную стадию по её коду — в отличие от
-    update_reclamation_stage, который выводит стадию из нашего статуса.
-    Нужен там, где статусом стадию не выразить: "Новая рекламация" и
-    "На рассмотрении" — это один и тот же наш review.
-
-    Какие стадии сюда вообще допустимо передавать, решает вызывающий, см.
-    RECLAMATION_ADMIN_SETTABLE_STAGES и ReclamationService._check_stage_change."""
-    if not settings.bitrix_webhook_url:
-        return
-    url = f"{settings.bitrix_webhook_url.rstrip('/')}/crm.item.update.json"
-    resp = await _get_client().post(url, json={
-        "entityTypeId": settings.bitrix_reclamation_entity_type_id,
-        "id": item_id,
-        "fields": {"stageId": stage_id},
-    })
-    if not resp.is_success:
-        raise RuntimeError(f"Bitrix crm.item.update (stage) {resp.status_code}: {resp.text}")
-    data = resp.json()
-    if "error" in data:
-        raise RuntimeError(f"Bitrix crm.item.update (stage) error: {data}")
 
 
 async def list_reclamation_assignees() -> list[dict]:

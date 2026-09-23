@@ -49,8 +49,10 @@ class DashboardService:
             select(func.count(PasswordResetRequest.id)).where(PasswordResetRequest.status == "pending")
         )).scalar() or 0
 
+        # "ещё не взяли в работу" — это обе ранние стадии смарт-процесса:
+        # new ("Новая рекламация") и review ("На рассмотрении")
         pending_reclamations = (await self.session.execute(
-            select(func.count(Reclamation.id)).where(Reclamation.status == "review")
+            select(func.count(Reclamation.id)).where(Reclamation.status.in_(("new", "review")))
         )).scalar() or 0
 
         recent = await self._get_recent_activity()
