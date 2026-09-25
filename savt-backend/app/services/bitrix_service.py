@@ -78,6 +78,10 @@ _STATUSES_WITH_REQUIRED_FIELDS = ("in_progress",) + _CLOSING_STATUSES
 # протокола, поэтому спрашиваем их у Bitrix и кэшируем, см. _get_enum_value_id.
 # Ключ — (код поля, искомая подпись)
 _enum_value_ids: dict[tuple[str, str], str] = {}
+# сырые варианты (ID + подпись) перечисляемого поля — общий кэш для прямого
+# поиска (_get_enum_value_id, подпись -> ID, для отправки) и обратного
+# (parse_reclamation_warranty, ID -> подпись, для чтения из вебхука)
+_enum_field_items: dict[str, list[dict]] = {}
 
 
 async def get_reclamation_item(item_id: str) -> dict | None:
@@ -121,16 +125,11 @@ def _read_local_file(url: str | None) -> tuple[str, bytes] | None:
     return file_path.name, file_path.read_bytes()
 
 
-async def _get_enum_value_id(field_code: str, wanted: str) -> str:
-    """ID варианта перечисляемого поля по его подписи ("ДА"/"НЕТ"). Спрашиваем
-    у Bitrix (crm.item.fields) и запоминаем до перезапуска: значения статичны,
-    но зашивать их числами нельзя — это настройка портала, а процесс уже
-    переделывали, и ID вместе с ним могли смениться.
-
-    Если варианта не нашлось, бросаем исключение, а не пропускаем поле молча:
-    Bitrix всё равно откажет в переходе, и лучше пусть попытка ляжет в очередь
-    повторов с внятной причиной."""
-    cached = _enum_value_ids.get((field_code, wanted))
+async def _get_enum_field_items(field_code: str) -> list[dict]:
+    """Сырые варианты (ID + подпись) перечисляемого поля, с кэшем до
+    перезапуска. Общий источник и для _get_enum_value_id (подпись -> ID), и
+    для чтения обратно из вебхука (ID -> подпись, см. parse_reclamation_warranty)."""
+    cached = _enum_field_items.get(field_code)
     if cached is not None:
         return cached
 
@@ -145,6 +144,23 @@ async def _get_enum_value_id(field_code: str, wanted: str) -> str:
         raise RuntimeError(f"Bitrix crm.item.fields error: {data}")
 
     items = (((data.get("result") or {}).get("fields") or {}).get(field_code) or {}).get("items") or []
+    _enum_field_items[field_code] = items
+    return items
+
+
+async def _get_enum_value_id(field_code: str, wanted: str) -> str:
+    """ID варианта перечисляемого поля по его подписи ("ДА"/"НЕТ"). Значения
+    статичны, но зашивать их числами нельзя — это настройка портала, а
+    процесс уже переделывали, и ID вместе с ним могли смениться.
+
+    Если варианта не нашлось, бросаем исключение, а не пропускаем поле молча:
+    Bitrix всё равно откажет в переходе, и лучше пусть попытка ляжет в очередь
+    повторов с внятной причиной."""
+    cached = _enum_value_ids.get((field_code, wanted))
+    if cached is not None:
+        return cached
+
+    items = await _get_enum_field_items(field_code)
     chosen = next((i for i in items if str(i.get("VALUE", "")).strip().upper() == wanted.upper()), None)
     # если вариант в поле ровно один, берём его, не придираясь к подписи —
     # так переименование "ДА" во что-то ещё нас не уронит
@@ -264,6 +280,32 @@ async def update_reclamation_stage(
     return stage_id
 
 
+async def parse_reclamation_warranty(item: dict) -> bool | None:
+    """Достаёт "Гарантию" из ответа crm.item.get и переводит ID варианта в
+    bool через тот же кэш, что и при отправке (_get_enum_field_items).
+
+    Пустое значение поля -> None, это надёжный финальный ответ: гарантия
+    реально не проставлена. А вот непустое, но НЕраспознанное значение (сеть
+    недоступна при резолве вариантов, или пришёл ID, которого нет в кэше)
+    — намеренно бросает исключение, а не возвращает None молча: иначе
+    временный сбой сети тихо затирал бы уже известную в нашей БД
+    классификацию на пустоту. Вызывающий (sync_reclamation_from_bitrix)
+    ловит это и оставляет старое значение как есть."""
+    raw = item.get(_RECLAMATION_WARRANTY_FIELD)
+    if not raw:
+        return None
+    items = await _get_enum_field_items(_RECLAMATION_WARRANTY_FIELD)
+    label = next((i.get("VALUE") for i in items if str(i.get("ID")) == str(raw)), None)
+    if label is None:
+        raise RuntimeError(f"Bitrix: не распознан вариант {raw!r} поля Гарантия (items={items})")
+    label = str(label).strip().upper()
+    if label == "ДА":
+        return True
+    if label == "НЕТ":
+        return False
+    raise RuntimeError(f"Bitrix: неожиданная подпись варианта Гарантии: {label!r}")
+
+
 def parse_reclamation_deadline(item: dict) -> date | None:
     """Достаёт "Дедлайн" из ответа crm.item.get. Поле объявлено как date, но
     Bitrix для таких полей обычно отдаёт полный ISO с временем и зоной
@@ -319,6 +361,34 @@ async def update_reclamation_warranty(item_id: str, warranty: bool) -> None:
     data = resp.json()
     if "error" in data:
         raise RuntimeError(f"Bitrix crm.item.update (warranty) error: {data}")
+
+
+async def add_reclamation_comment(item_id: str, text: str) -> None:
+    """Комментарий в таймлайн карточки (crm.timeline.comment.add) — канал для
+    текстовых полей, под которые в процессе нет отдельного UF-поля:
+    коренная причина, итоговый комментарий, причина отклонения (см.
+    reclamation_service._sync_comment_to_bitrix). Одностороннее "показать" —
+    специалист видит текст в карточке, не заходя в нашу админку, но обратно
+    не читаем: если ответит комментарием сам, к нам это не приедет.
+
+    ENTITY_TYPE для смарт-процессов — не название сущности, как у классических
+    сделок/лидов, а "DYNAMIC_<entityTypeId>". Проверено вживую 2026-09-25 на
+    карточке 97."""
+    if not settings.bitrix_webhook_url:
+        return
+    url = f"{settings.bitrix_webhook_url.rstrip('/')}/crm.timeline.comment.add.json"
+    resp = await _get_client().post(url, json={
+        "fields": {
+            "ENTITY_ID": item_id,
+            "ENTITY_TYPE": f"DYNAMIC_{settings.bitrix_reclamation_entity_type_id}",
+            "COMMENT": text,
+        },
+    })
+    if not resp.is_success:
+        raise RuntimeError(f"Bitrix crm.timeline.comment.add {resp.status_code}: {resp.text}")
+    data = resp.json()
+    if "error" in data:
+        raise RuntimeError(f"Bitrix crm.timeline.comment.add error: {data}")
 
 
 async def list_reclamation_assignees() -> list[dict]:

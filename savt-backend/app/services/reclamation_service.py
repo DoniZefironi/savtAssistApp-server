@@ -155,6 +155,19 @@ class ReclamationService:
         if status_changed:
             self._check_transition(rec, changed)
 
+        # Под эти три текстовых поля в Bitrix нет отдельного UF-поля —
+        # изменения уходят одним комментарием в таймлайн карточки, см.
+        # _sync_comment_to_bitrix. Сравниваем со старым значением ДО setattr
+        # ниже, тем же порядком, что deadline_changed/warranty_changed выше
+        comment_lines = []
+        for field, label in (
+            ("root_cause", "Коренная причина"),
+            ("resolution_comment", "Итоговый комментарий"),
+            ("rejection_reason", "Причина отклонения"),
+        ):
+            if field in changed and changed[field] and changed[field] != getattr(rec, field):
+                comment_lines.append(f"{label}: {changed[field]}")
+
         for field, value in changed.items():
             setattr(rec, field, value)
         if status_changed and rec.status in ("resolved", "rejected", "invalid"):
@@ -192,6 +205,9 @@ class ReclamationService:
 
         if deadline_changed and rec.bitrix_item_id:
             _sync_deadline_to_bitrix(rec.id, rec.bitrix_item_id, rec.deadline_at)
+
+        if comment_lines and rec.bitrix_item_id:
+            _sync_comment_to_bitrix(rec.id, rec.bitrix_item_id, "\n".join(comment_lines))
 
         if warranty_changed and rec.bitrix_item_id and rec.warranty_classification is not None:
             _sync_warranty_to_bitrix(rec.id, rec.bitrix_item_id, rec.warranty_classification)
@@ -554,6 +570,22 @@ def _sync_warranty_to_bitrix(reclamation_id: int, bitrix_item_id: str, warranty:
     asyncio.create_task(_task())
 
 
+def _sync_comment_to_bitrix(reclamation_id: int, bitrix_item_id: str, text: str) -> None:
+    """root_cause/resolution_comment/rejection_reason — под них в процессе нет
+    UF-поля, поэтому уходят одним комментарием в таймлайн карточки
+    (crm.timeline.comment.add), а не через crm.item.update. Односторонне:
+    специалист увидит текст в Bitrix, но правку там же мы не читаем обратно."""
+    async def _task():
+        from app.services import bitrix_service
+        try:
+            await bitrix_service.add_reclamation_comment(bitrix_item_id, text)
+        except Exception as exc:
+            _log.exception("Bitrix comment sync failed for reclamation item %s", bitrix_item_id)
+            await _record_bitrix_failure(reclamation_id, "comment", {"text": text}, exc)
+
+    asyncio.create_task(_task())
+
+
 def _is_item_gone(error_text: str) -> bool:
     """Ответ Bitrix про удалённую карточку. Отличать важно: обычный сбой имеет
     смысл повторять, а удаление — неустранимо, и повторы будут долбиться
@@ -660,6 +692,26 @@ async def sync_reclamation_from_bitrix(item_id: str) -> None:
                 rec.responsible_name = None
                 rec.responsible_phone = None
 
+        # Гарантию тоже тянем обратно, но осторожнее: parse_reclamation_warranty
+        # намеренно бросает исключение вместо None при сбое резолва (сеть,
+        # незнакомый ID варианта) — иначе временный сбой мог бы затереть уже
+        # известную классификацию, а не просто оставить её как есть
+        try:
+            bitrix_warranty = await bitrix_service.parse_reclamation_warranty(item)
+            warranty_changed = bitrix_warranty != rec.warranty_classification
+            if warranty_changed:
+                _log.info(
+                    "Bitrix reclamation webhook: рекламация %s — гарантия %s -> %s",
+                    rec.id, rec.warranty_classification, bitrix_warranty,
+                )
+                rec.warranty_classification = bitrix_warranty
+        except Exception:
+            _log.exception(
+                "Bitrix reclamation webhook: не удалось прочитать гарантию у рекламации %s, "
+                "оставляю как есть", rec.id,
+            )
+            warranty_changed = False
+
         # Пока у рекламации висит неотправленная смена статуса, карточка в
         # Bitrix заведомо отстала от нас, и принимать из неё статус нельзя:
         # иначе наш же неудавшийся push откатывает то, что админ только что
@@ -668,7 +720,7 @@ async def sync_reclamation_from_bitrix(item_id: str) -> None:
         # review.
         from app.repositories.reclamation_outbox import ReclamationOutboxRepository
         if await ReclamationOutboxRepository(session).has_pending_status_change(rec.id):
-            if deadline_changed or assignee_changed:
+            if deadline_changed or assignee_changed or warranty_changed:
                 await session.commit()
             _log.info(
                 "Bitrix reclamation webhook: рекламация %s — есть неотправленная смена статуса, "
@@ -679,14 +731,14 @@ async def sync_reclamation_from_bitrix(item_id: str) -> None:
 
         new_status = bitrix_service.RECLAMATION_STAGE_TO_STATUS.get(stage_id)
         if new_status is None:
-            if deadline_changed or assignee_changed:
+            if deadline_changed or assignee_changed or warranty_changed:
                 await session.commit()
             _log.info(
                 "Bitrix reclamation webhook: неизвестная стадия %s у элемента %s", stage_id, item_id,
             )
             return
         if new_status == rec.status:
-            if deadline_changed or assignee_changed:
+            if deadline_changed or assignee_changed or warranty_changed:
                 await session.commit()
             _log.info(
                 "Bitrix reclamation webhook: рекламация %s уже в статусе %s, пропускаю",
@@ -794,6 +846,15 @@ async def retry_bitrix_outbox() -> None:
                         raise RuntimeError("У рекламации всё ещё нет bitrix_item_id (create не прошёл)")
                     await bitrix_service.update_reclamation_warranty(
                         bitrix_item_id, row.payload["warranty"],
+                    )
+
+                elif row.operation == "comment":
+                    rec = await session.get(Reclamation, row.reclamation_id)
+                    bitrix_item_id = rec.bitrix_item_id if rec is not None else None
+                    if not bitrix_item_id:
+                        raise RuntimeError("У рекламации всё ещё нет bitrix_item_id (create не прошёл)")
+                    await bitrix_service.add_reclamation_comment(
+                        bitrix_item_id, row.payload["text"],
                     )
 
                 else:
