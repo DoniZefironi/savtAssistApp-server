@@ -717,6 +717,41 @@ async def list_deals(start: int = 0) -> tuple[list[dict], int | None]:
     return deals, data.get("next")
 
 
+async def get_bitrix_user(bitrix_user_id: int | str) -> dict | None:
+    """Один сотрудник по ID (user.get) — для обратной синхронизации
+    ответственного (см. reclamation_service.sync_reclamation_from_bitrix):
+    когда назначение сменили прямо в Bitrix, нужно подтянуть не только сам ID,
+    но и ФИО/телефон в responsible_name/responsible_phone, которые показываются
+    заявителю. Формат {id, full_name, phone} — тот же, что у
+    list_reclamation_assignees, но без пагинации: ID уже известен."""
+    if not settings.bitrix_webhook_url or not bitrix_user_id:
+        return None
+    url = f"{settings.bitrix_webhook_url.rstrip('/')}/user.get.json"
+    try:
+        resp = await _get_client().get(url, params={"ID": bitrix_user_id})
+    except httpx.RequestError:
+        return None
+    if not resp.is_success:
+        _log.warning("Bitrix user.get(%s) %s: %s", bitrix_user_id, resp.status_code, resp.text)
+        return None
+    data = resp.json()
+    if "error" in data:
+        _log.warning("Bitrix user.get(%s) error: %s", bitrix_user_id, data)
+        return None
+    users = data.get("result") or []
+    if not users:
+        return None
+    u = users[0]
+    full_name = " ".join(
+        part for part in (u.get("LAST_NAME"), u.get("NAME"), u.get("SECOND_NAME")) if part
+    )
+    return {
+        "id": int(u["ID"]),
+        "full_name": full_name or f"Пользователь {u['ID']}",
+        "phone": u.get("WORK_PHONE") or u.get("PERSONAL_MOBILE") or None,
+    }
+
+
 async def get_user_name(bitrix_user_id: str) -> str | None:
     """Резолвит имя автора комментария в Bitrix (user.get) — best-effort,
     используется только для подписи пересланного в приложение сообщения."""

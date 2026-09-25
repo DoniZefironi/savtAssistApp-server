@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, String, Text, func
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -110,6 +110,15 @@ class Reclamation(Base):
     # уведомлении о переходе в работу (п.7 ТЗ)
     responsible_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     responsible_phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # ID пользователя Bitrix, назначенного ответственным (assignedById).
+    # Раньше это поле нигде не хранилось — только "прокидывалось" в Bitrix и
+    # забывалось (см. AdminReclamationUpdateIn.responsible_bitrix_user_id),
+    # из-за чего было невозможно ни надёжно предвыбрать текущего ответственного
+    # в дропдауне админки (сверка по одному только ФИО ненадёжна — тёзки,
+    # смена фамилии), ни узнать, что назначение сменили прямо в Bitrix, минуя
+    # нашу админку. Обновляется и когда назначаем мы, и по вебхуку — см.
+    # reclamation_service.sync_reclamation_from_bitrix
+    responsible_bitrix_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

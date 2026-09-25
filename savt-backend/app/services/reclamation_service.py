@@ -119,8 +119,8 @@ class ReclamationService:
         detail = await self._detail_out(rec, cabinet, project)
         return AdminReclamationOut(
             **detail.model_dump(), user_id=user.id, user_full_name=user.full_name,
-            deadline_at=rec.deadline_at, bitrix_item_id=rec.bitrix_item_id,
-            bitrix_deleted_at=rec.bitrix_deleted_at,
+            deadline_at=rec.deadline_at, responsible_bitrix_user_id=rec.responsible_bitrix_user_id,
+            bitrix_item_id=rec.bitrix_item_id, bitrix_deleted_at=rec.bitrix_deleted_at,
         )
 
     async def update(
@@ -130,9 +130,17 @@ class ReclamationService:
         if rec is None:
             raise NotFoundError("Рекламация не найдена")
 
-        # не колонка модели — используется только для проброса assignedById в
-        # Bitrix ниже, в БД у нас ничего не хранит (см. AdminReclamationUpdateIn)
-        responsible_bitrix_user_id = changed.pop("responsible_bitrix_user_id", None)
+        # Выносим из общего цикла setattr не потому, что не колонка (теперь
+        # колонка), а чтобы отличить "поле не прислали" от "прислали null" —
+        # первое не должно менять ничего, второе явно снимает ответственного.
+        # _UNSET нужен именно для этого различения: changed.pop с default=None
+        # не отличил бы "не прислали" от "прислали null" (оба дали бы None)
+        _UNSET = object()
+        responsible_bitrix_user_id = changed.pop("responsible_bitrix_user_id", _UNSET)
+        if responsible_bitrix_user_id is not _UNSET:
+            rec.responsible_bitrix_user_id = responsible_bitrix_user_id
+        else:
+            responsible_bitrix_user_id = None
 
         deadline_changed = "deadline_at" in changed and changed["deadline_at"] != rec.deadline_at
 
@@ -587,9 +595,9 @@ async def sync_reclamation_from_bitrix(item_id: str) -> None:
             _log.info("Bitrix reclamation webhook: crm.item.get не вернул элемент %s", item_id)
             return
 
-        # Дедлайн тянем обратно всегда — его могли поменять прямо в карточке.
-        # deadline_changed нужен, чтобы правка доехала до БД и на ранних
-        # выходах ниже, где статус мы менять не станем
+        # Дедлайн и ответственного тянем обратно всегда — их могли поменять
+        # прямо в карточке, минуя нашу админку. *_changed нужны, чтобы правка
+        # доехала до БД и на ранних выходах ниже, где статус мы менять не станем
         stage_id = item.get("stageId")
         bitrix_deadline = bitrix_service.parse_reclamation_deadline(item)
         deadline_changed = bitrix_deadline != rec.deadline_at
@@ -600,6 +608,26 @@ async def sync_reclamation_from_bitrix(item_id: str) -> None:
             )
             rec.deadline_at = bitrix_deadline
 
+        raw_assignee = item.get("assignedById")
+        bitrix_assignee = int(raw_assignee) if raw_assignee else None
+        assignee_changed = bitrix_assignee != rec.responsible_bitrix_user_id
+        if assignee_changed:
+            bitrix_user = await bitrix_service.get_bitrix_user(bitrix_assignee) if bitrix_assignee else None
+            _log.info(
+                "Bitrix reclamation webhook: рекламация %s — ответственный %s -> %s",
+                rec.id, rec.responsible_bitrix_user_id, bitrix_assignee,
+            )
+            rec.responsible_bitrix_user_id = bitrix_assignee
+            # Резолвится best-effort: если Bitrix недоступен или сотрудник не
+            # найден, ID всё равно сохраняем, а текстовые поля просто не трогаем
+            # — лучше устаревшее ФИО, чем стереть контакт, который заявитель уже видел
+            if bitrix_user is not None:
+                rec.responsible_name = bitrix_user["full_name"]
+                rec.responsible_phone = bitrix_user["phone"]
+            elif bitrix_assignee is None:
+                rec.responsible_name = None
+                rec.responsible_phone = None
+
         # Пока у рекламации висит неотправленная смена статуса, карточка в
         # Bitrix заведомо отстала от нас, и принимать из неё статус нельзя:
         # иначе наш же неудавшийся push откатывает то, что админ только что
@@ -608,7 +636,7 @@ async def sync_reclamation_from_bitrix(item_id: str) -> None:
         # review.
         from app.repositories.reclamation_outbox import ReclamationOutboxRepository
         if await ReclamationOutboxRepository(session).has_pending_status_change(rec.id):
-            if deadline_changed:
+            if deadline_changed or assignee_changed:
                 await session.commit()
             _log.info(
                 "Bitrix reclamation webhook: рекламация %s — есть неотправленная смена статуса, "
@@ -619,14 +647,14 @@ async def sync_reclamation_from_bitrix(item_id: str) -> None:
 
         new_status = bitrix_service.RECLAMATION_STAGE_TO_STATUS.get(stage_id)
         if new_status is None:
-            if deadline_changed:
+            if deadline_changed or assignee_changed:
                 await session.commit()
             _log.info(
                 "Bitrix reclamation webhook: неизвестная стадия %s у элемента %s", stage_id, item_id,
             )
             return
         if new_status == rec.status:
-            if deadline_changed:
+            if deadline_changed or assignee_changed:
                 await session.commit()
             _log.info(
                 "Bitrix reclamation webhook: рекламация %s уже в статусе %s, пропускаю",

@@ -128,6 +128,11 @@ class AdminReclamationOut(ReclamationDetailOut):
     user_id: int
     user_full_name: str | None = None
     deadline_at: date | None = None
+    # ID ответственного в Bitrix — чтобы дропдаун выбора ответственного
+    # (GET /admin/reclamations/bitrix-users) мог предвыбрать текущее значение
+    # по ID, а не гадать по совпадению ФИО. Синхронизируется в обе стороны,
+    # как и deadline_at — см. Reclamation.responsible_bitrix_user_id
+    responsible_bitrix_user_id: int | None = None
     # id карточки на портале — чтобы администратор интеграции мог сопоставить
     # с самим Bitrix, когда что-то разъезжается
     bitrix_item_id: str | None = None
@@ -157,8 +162,10 @@ class AdminReclamationUpdateIn(BaseModel):
     confirmation_file_url: str | None = Field(None, max_length=500)
     confirmation_file_name: str | None = Field(None, max_length=255)
     # ID пользователя Bitrix, выбранного в дропдауне (GET /admin/reclamations/
-    # bitrix-users) — не хранится у нас в БД, используется только чтобы
-    # пробросить assignedById в саму карточку Bitrix (см. ReclamationService.update).
+    # bitrix-users) — сохраняется как реальная колонка и пробрасывается как
+    # assignedById в карточку Bitrix (см. ReclamationService.update). Синхронизируется
+    # в обе стороны, как и deadline_at, поэтому и в ответе (AdminReclamationOut) —
+    # можно использовать, чтобы предвыбрать текущего ответственного в дропдауне.
     # responsible_name/responsible_phone по-прежнему передавайте отдельно —
     # это поле их не заменяет, только дополнительно синхронизирует с Bitrix
     responsible_bitrix_user_id: int | None = None
