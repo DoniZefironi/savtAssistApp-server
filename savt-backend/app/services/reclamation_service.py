@@ -38,11 +38,22 @@ class ReclamationService:
     # --- пользователь ---
 
     async def create(self, user_id: int, data: ReclamationCreateIn) -> ReclamationDetailOut:
+        # Ровно одно из cabinet_id/project_id (см. Reclamation.__doc__ про
+        # ck_reclamation_cabinet_or_project и про то, зачем project_id вообще
+        # нужен всем типам, не только "line"/"component"/...): без deal_id/
+        # company_id из проекта Bitrix отказывает в создании элемента
+        # (поле "Клиент" стало обязательным 2026-09-25).
         if data.object_type == "cabinet":
             if data.cabinet_id is None:
                 raise ValidationError("Для объекта «ШУ» нужно выбрать конкретный шкаф")
             if not await self.cabinet_repo.user_has_access(user_id, data.cabinet_id):
                 raise PermissionDeniedError("У вас нет доступа к этому ШУ")
+        else:
+            if data.project_id is None:
+                raise ValidationError("Нужно выбрать проект, к которому относится рекламация")
+            from app.repositories.project import UserProjectRepository
+            if not await UserProjectRepository(self.session).find(user_id, data.project_id):
+                raise PermissionDeniedError("У вас нет доступа к этому проекту")
 
         payload = data.model_dump(exclude={"attachments"})
         rec = await self.repo.create(user_id, payload)
@@ -57,7 +68,7 @@ class ReclamationService:
 
         first_attachment_url = data.attachments[0].file_url if data.attachments else None
         _sync_to_bitrix(
-            rec.id, _build_bitrix_description(rec), rec.cabinet_id, first_attachment_url,
+            rec.id, _build_bitrix_description(rec), rec.cabinet_id, rec.project_id, first_attachment_url,
             rec.object_type, rec.object_details, rec.contract_number, rec.order_number, rec.ttn_number,
         )
 
@@ -75,8 +86,8 @@ class ReclamationService:
     ) -> PageOut[ReclamationListItemOut]:
         rows, total = await self.repo.list_for_user(user_id, status, (page - 1) * size, size)
         items = [
-            ReclamationListItemOut(**self._list_fields(rec, cabinet))
-            for rec, cabinet in rows
+            ReclamationListItemOut(**self._list_fields(rec, cabinet, project))
+            for rec, cabinet, project in rows
         ]
         return make_page(items, total, page, size)
 
@@ -93,10 +104,10 @@ class ReclamationService:
         )
         items = [
             AdminReclamationListItemOut(
-                **self._list_fields(rec, cabinet), user_id=user.id, user_full_name=user.full_name,
+                **self._list_fields(rec, cabinet, project), user_id=user.id, user_full_name=user.full_name,
                 deadline_at=rec.deadline_at,
             )
-            for rec, user, cabinet in rows
+            for rec, user, cabinet, project in rows
         ]
         return make_page(items, total, page, size)
 
@@ -104,8 +115,8 @@ class ReclamationService:
         row = await self.repo.get_with_relations(reclamation_id)
         if row is None:
             raise NotFoundError("Рекламация не найдена")
-        rec, user, cabinet = row
-        detail = await self._detail_out(rec, cabinet)
+        rec, user, cabinet, project = row
+        detail = await self._detail_out(rec, cabinet, project)
         return AdminReclamationOut(
             **detail.model_dump(), user_id=user.id, user_full_name=user.full_name,
             deadline_at=rec.deadline_at, bitrix_item_id=rec.bitrix_item_id,
@@ -276,21 +287,23 @@ class ReclamationService:
     # --- сборка ответов ---
 
     @staticmethod
-    def _list_fields(rec, cabinet) -> dict:
+    def _list_fields(rec, cabinet, project=None) -> dict:
         return dict(
             id=rec.id, object_type=rec.object_type, status=rec.status,
             warranty_classification=rec.warranty_classification,
             description=rec.description,
             cabinet_object_number=cabinet.object_number if cabinet else None,
+            project_name=project.name if project else None,
             created_at=rec.created_at, resolved_at=rec.resolved_at,
         )
 
-    async def _detail_out(self, rec, cabinet) -> ReclamationDetailOut:
+    async def _detail_out(self, rec, cabinet, project=None) -> ReclamationDetailOut:
         attachments = await self.repo.list_attachments(rec.id)
         return ReclamationDetailOut(
             id=rec.id, status=rec.status, warranty_classification=rec.warranty_classification,
             object_type=rec.object_type, cabinet_id=rec.cabinet_id,
             cabinet_object_number=cabinet.object_number if cabinet else None,
+            project_id=rec.project_id, project_name=project.name if project else None,
             object_details=rec.object_details,
             contract_number=rec.contract_number, order_number=rec.order_number, ttn_number=rec.ttn_number,
             description=rec.description, occurrence_conditions=rec.occurrence_conditions,
@@ -344,8 +357,8 @@ def _build_bitrix_native_fields(
 
 
 def _sync_to_bitrix(
-    reclamation_id: int, description: str, cabinet_id: int | None, attachment_url: str | None,
-    object_type: str, object_details: dict | None,
+    reclamation_id: int, description: str, cabinet_id: int | None, project_id: int | None,
+    attachment_url: str | None, object_type: str, object_details: dict | None,
     contract_number: str | None, order_number: str | None, ttn_number: str | None,
 ) -> None:
     async def _task():
@@ -358,14 +371,23 @@ def _sync_to_bitrix(
         deal_id = company_id = project_name = None
         cabinet = None
         async with AsyncSessionLocal() as session:
+            # Ровно один из двух задан (см. ck_reclamation_cabinet_or_project)
+            # — для "cabinet" компанию берём через связанный проект шкафа,
+            # иначе проект указан на самой рекламации напрямую
             if cabinet_id is not None:
                 cabinet = await session.get(Cabinet, cabinet_id)
-                if cabinet is not None and cabinet.project_id is not None:
-                    project = await session.get(Project, cabinet.project_id)
-                    if project is not None:
-                        deal_id = project.bitrix_deal_id
-                        company_id = project.bitrix_company_id
-                        project_name = project.name
+                project = (
+                    await session.get(Project, cabinet.project_id)
+                    if cabinet is not None and cabinet.project_id is not None else None
+                )
+            elif project_id is not None:
+                project = await session.get(Project, project_id)
+            else:
+                project = None
+            if project is not None:
+                deal_id = project.bitrix_deal_id
+                company_id = project.bitrix_company_id
+                project_name = project.name
 
             object_serial_number, contract_info, component_info = _build_bitrix_native_fields(
                 object_type, object_details, cabinet, contract_number, order_number, ttn_number,

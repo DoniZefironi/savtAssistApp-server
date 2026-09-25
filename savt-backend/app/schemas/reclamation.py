@@ -25,9 +25,12 @@ class ReclamationAttachmentOut(BaseModel):
 
 class ReclamationCreateIn(BaseModel):
     object_type: str = Field(..., pattern="^(cabinet|line|component|software|documentation)$")
-    # обязателен, только если object_type == "cabinet" — проверяется в сервисе,
-    # т.к. правило зависит от object_type, а не от самого поля
+    # Ровно одно из двух обязательно — проверяется в сервисе, т.к. правило
+    # зависит от object_type, а не от самого поля: cabinet_id при "cabinet",
+    # иначе project_id (нужен для отправки в Bitrix — см. Reclamation.__doc__
+    # в app/models/reclamation.py про поле "Клиент")
     cabinet_id: int | None = Field(None, gt=0)
+    project_id: int | None = Field(None, gt=0)
     # состав зависит от object_type: line -> {"serial_number": "..."},
     # component -> {"name", "model", "article", "serial_number"} (п.4 ТЗ),
     # software/documentation -> что понадобится по факту
@@ -60,6 +63,8 @@ class ReclamationListItemOut(BaseModel):
     # для отображения заголовка карточки в списке, когда object_type == cabinet —
     # без этого клиенту пришлось бы отдельно тянуть GET /cabinets/{id}
     cabinet_object_number: str | None = None
+    # то же самое для остальных object_type — там вместо ШУ привязка к проекту
+    project_name: str | None = None
     created_at: datetime
     resolved_at: datetime | None
 
@@ -74,6 +79,8 @@ class ReclamationDetailOut(BaseModel):
     object_type: str
     cabinet_id: int | None
     cabinet_object_number: str | None = None
+    project_id: int | None
+    project_name: str | None = None
     object_details: dict[str, Any] | None
 
     contract_number: str | None

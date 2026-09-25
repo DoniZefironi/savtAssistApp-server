@@ -2,6 +2,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.cabinets import Cabinet
+from app.models.project import Project
 from app.models.reclamation import Reclamation
 from app.models.reclamation_attachment import ReclamationAttachment
 from app.models.user import User
@@ -47,11 +48,14 @@ class ReclamationRepository:
         return result.all()
 
     # для пользователя — с проверкой владения прямо в условии, а не отдельным
-    # if user_id != ... после загрузки (чужая заявка просто не найдётся)
+    # if user_id != ... после загрузки (чужая заявка просто не найдётся).
+    # Cabinet и Project оба outerjoin — у рекламации заполнено ровно одно
+    # (см. CHECK ck_reclamation_cabinet_or_project), второй столбец просто NULL
     async def get_with_cabinet_for_user(self, user_id: int, reclamation_id: int):
         result = await self.session.execute(
-            select(Reclamation, Cabinet)
+            select(Reclamation, Cabinet, Project)
             .outerjoin(Cabinet, Cabinet.id == Reclamation.cabinet_id)
+            .outerjoin(Project, Project.id == Reclamation.project_id)
             .where(Reclamation.id == reclamation_id, Reclamation.user_id == user_id)
         )
         return result.one_or_none()
@@ -68,8 +72,9 @@ class ReclamationRepository:
         )).scalar() or 0
 
         stmt = (
-            select(Reclamation, Cabinet)
+            select(Reclamation, Cabinet, Project)
             .outerjoin(Cabinet, Cabinet.id == Reclamation.cabinet_id)
+            .outerjoin(Project, Project.id == Reclamation.project_id)
             .where(*conditions)
             .order_by(Reclamation.created_at.desc())
             .offset(offset).limit(limit)
@@ -81,9 +86,10 @@ class ReclamationRepository:
     # заявки (см. Reclamation.__doc__), поэтому владение не проверяется
     async def get_with_relations(self, reclamation_id: int):
         result = await self.session.execute(
-            select(Reclamation, User, Cabinet)
+            select(Reclamation, User, Cabinet, Project)
             .join(User, User.id == Reclamation.user_id)
             .outerjoin(Cabinet, Cabinet.id == Reclamation.cabinet_id)
+            .outerjoin(Project, Project.id == Reclamation.project_id)
             .where(Reclamation.id == reclamation_id)
         )
         return result.one_or_none()
@@ -109,9 +115,10 @@ class ReclamationRepository:
         total = (await self.session.execute(count_stmt)).scalar() or 0
 
         stmt = (
-            select(Reclamation, User, Cabinet)
+            select(Reclamation, User, Cabinet, Project)
             .join(User, User.id == Reclamation.user_id)
             .outerjoin(Cabinet, Cabinet.id == Reclamation.cabinet_id)
+            .outerjoin(Project, Project.id == Reclamation.project_id)
         )
         if conditions:
             stmt = stmt.where(*conditions)

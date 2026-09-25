@@ -48,9 +48,21 @@ class Reclamation(Base):
     # --- объект рекламации ---
     # cabinet | line | component | software | documentation, см. CHECK ниже
     object_type: Mapped[str] = mapped_column(String(20), index=True)
-    # заполнен только если object_type == cabinet — номер объекта берём через
-    # связь (Cabinet.object_number), не дублируем в этой таблице
+    # Ровно одно из cabinet_id/project_id заполнено (см. CHECK ниже, тот же
+    # паттерн, что у ServiceRequest) — cabinet_id при object_type=="cabinet"
+    # (номер объекта берём через связь Cabinet.object_number, не дублируем
+    # здесь), project_id для остальных типов, где нет конкретного ШУ, но
+    # рекламация всё равно относится к какому-то проекту/поставке.
+    #
+    # project_id обязателен для всех типов не просто для порядка: Bitrix
+    # тянет компанию-заказчика ("Клиент") и контакты из сделки проекта, и с
+    # 2026-09-25 это поле стало обязательным при создании элемента —
+    # без deal_id/company_id (см. bitrix_service.create_reclamation_item)
+    # crm.item.add падает 400 CRM_FIELD_ERROR_REQUIRED. У рекламаций без
+    # project_id (типы line/component/software/documentation до этой правки)
+    # взять компанию было неоткуда.
     cabinet_id: Mapped[int | None] = mapped_column(ForeignKey("cabinets.id"), nullable=True, index=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True, index=True)
     # для остальных типов объекта — набор полей разный (у line просто
     # serial_number, у component — наименование/модель/артикул/серийный номер
     # из п.4 ТЗ), поэтому JSONB вместо кучи специфичных nullable-колонок,
@@ -113,5 +125,13 @@ class Reclamation(Base):
         CheckConstraint(
             "status IN ('new', 'review', 'in_progress', 'resolved', 'rejected', 'invalid')",
             name="ck_reclamation_status",
+        ),
+        # На проде уже есть рекламации без обоих полей (до этой правки
+        # project_id не существовал) — в миграции констрейнт добавляется как
+        # NOT VALID, чтобы не упасть на старых данных, здесь же описан как
+        # обычный CHECK для свежих БД (create_all там данных ещё нет)
+        CheckConstraint(
+            "(cabinet_id IS NOT NULL) != (project_id IS NOT NULL)",
+            name="ck_reclamation_cabinet_or_project",
         ),
     )
