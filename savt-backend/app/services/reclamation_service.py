@@ -272,7 +272,6 @@ class ReclamationService:
         rejection_reason = changed.get("rejection_reason", rec.rejection_reason)
         resolution_comment = changed.get("resolution_comment", rec.resolution_comment)
         responsible_name = changed.get("responsible_name", rec.responsible_name)
-        warranty_classification = changed.get("warranty_classification", rec.warranty_classification)
         confirmation_file_url = changed.get("confirmation_file_url", rec.confirmation_file_url)
 
         if new_status in ("rejected", "invalid") and not rejection_reason:
@@ -286,17 +285,28 @@ class ReclamationService:
             raise ValidationError(
                 "Нельзя закрыть или отклонить рекламацию без подтверждающего документа"
             )
-        if new_status == "in_progress":
-            if not responsible_name:
-                raise ValidationError("Нельзя перевести рекламацию в работу без ответственного лица")
-            if warranty_classification is None:
-                raise ValidationError(
-                    "Нельзя перевести рекламацию в работу без классификации (гарантия/не гарантия)"
-                )
+        if new_status == "in_progress" and not responsible_name:
+            raise ValidationError("Нельзя перевести рекламацию в работу без ответственного лица")
+        # Классификация (гарантия/платно) НЕ обязательна для перехода в работу —
+        # это наше собственное правило, не Bitrix (там для этой стадии требуются
+        # только служебное поле и дедлайн, гарантия не проверяется вовсе). Раньше
+        # мы требовали её здесь же, но это мешало реальной работе: 2026-09-25
+        # снято по прямому решению — гарантию теперь можно проставить в любой
+        # момент, не обязательно до входа в работу, см. _notify_status_change,
+        # который поэтому больше не предполагает, что она уже известна.
 
     async def _notify_status_change(self, rec) -> None:
         if rec.status == "in_progress":
-            label = "В работе. Гарантия" if rec.warranty_classification else "В работе. Не гарантия"
+            # Классификация больше не обязательна к этому моменту (снято
+            # 2026-09-25) — warranty_classification может быть ещё null,
+            # и это не то же самое, что "не гарантия": заказчику нельзя
+            # молча сказать "платно" раньше, чем это реально решили
+            if rec.warranty_classification is None:
+                label = "В работе"
+            elif rec.warranty_classification:
+                label = "В работе. Гарантия"
+            else:
+                label = "В работе. Не гарантия"
             body = f"Статус изменён: «{label}»"
             if rec.responsible_name:
                 body += f". Ответственный: {rec.responsible_name}"
