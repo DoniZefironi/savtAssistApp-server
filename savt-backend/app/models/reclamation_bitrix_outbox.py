@@ -15,7 +15,8 @@ class ReclamationBitrixOutbox(Base):
 
     operation: create — заведение карточки, status — перевод на стадию,
     соответствующую нашему статусу, assignee — назначение ответственного,
-    deadline — срок отработки.
+    deadline — срок отработки, warranty — гарантия (всегда отдельно от status,
+    см. bitrix_service.update_reclamation_stage про автозакрытие карточки).
 
     payload — то, с чем именно вызывать bitrix_service при повторе (не
     текущее состояние Reclamation на момент повтора, а снимок на момент
@@ -43,7 +44,7 @@ class ReclamationBitrixOutbox(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "operation IN ('create', 'status', 'assignee', 'deadline')",
+            "operation IN ('create', 'status', 'assignee', 'deadline', 'warranty')",
             name="ck_reclamation_bitrix_outbox_operation",
         ),
     )

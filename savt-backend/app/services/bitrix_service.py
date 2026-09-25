@@ -163,7 +163,7 @@ async def _get_enum_value_id(field_code: str, wanted: str) -> str:
 
 async def update_reclamation_stage(
     item_id: str, status: str, confirmation_file_url: str | None = None,
-    deadline: date | None = None, warranty: bool | None = None,
+    deadline: date | None = None,
 ) -> str | None:
     """Переводит элемент рекламации на стадию, отвечающую нашему статусу
     (crm.item.update). Возвращает код реально проставленной стадии, либо None,
@@ -184,19 +184,20 @@ async def update_reclamation_stage(
     "Служебное. Переместить сделку на указанную стадию" Bitrix требует при
     любом переводе стадии через API — без него 400 CRM_FIELD_ERROR_REQUIRED.
 
-    ИСТОРИЯ in_progress. На стороне портала на стадии CLIENT висел робот,
-    который сам доводил карточку до SUCCESS (доказано 2026-09-23 на карточке
-    71: stageId SUCCESS, previousStageId CLIENT, movedBy=0 — ноль означает
-    автоматизацию, наш вебхук ходит под 261). Срабатывал НЕ мгновенно, с
-    задержкой в минуты — проверка сразу после перевода показывала CLIENT и
-    создавала ложное впечатление, что всё исправно. Вред был не только в
-    закрытой карточке: стадия приезжала к нам вебхуком как resolved, и
-    заявителю уходил пуш "Рекламация исполнена" по заявке, которую только
-    взяли в работу. 2026-09-25 заказчик подтвердил, что робота на портале
-    починили — переход снова включён. Если симптом вернётся (рекламация сама
-    прыгает в resolved вскоре после перевода в работу) — это опять он, чинить
-    можно только на портале, не в этом коде. Проверять не через десять
-    секунд, а минут через десять — именно на этом мы уже попадались раньше.
+    ПОЧЕМУ "Гарантия" НЕ ОТПРАВЛЯЕТСЯ ЗДЕСЬ, А ОТДЕЛЬНЫМ ВЫЗОВОМ (см.
+    update_reclamation_warranty). На стадии CLIENT висит робот портала,
+    который сам доводит карточку до SUCCESS — диагностировано 2026-09-23 на
+    карточке 71 (движение только через голый API-вызов, ufCrm53_1789993626262
+    тогда ещё не существовало как поле вовсе), затем повторно 2026-09-25 на
+    карточке 32 уже ПОСЛЕ того, как заказчик почитал робота починенным —
+    выяснилось, что чинили только ручной перевод через интерфейс Bitrix, а
+    REST API по-прежнему ловил автозакрытие. Заказчик протестировал
+    отдельно и подтвердил: конкретно в этой, второй, конфигурации
+    автоматизации триггером было именно поле "Гарантия" — если его отправить
+    ВМЕСТЕ со сменой стадии, карточка тут же уезжает в SUCCESS. Отправка
+    отдельным вызовом, без stageId в fields, это обходит. Если симптом
+    вернётся — сначала проверить, не попала ли "Гарантия" снова в один
+    запрос со stageId где-то в коде.
 
     Стадии здесь названы кодами, а не подписями, намеренно: процесс уже
     переименовывали (CLIENT была "На исполнении", стала "Принята в работу",
@@ -213,10 +214,6 @@ async def update_reclamation_stage(
     needs_required_fields = status in _STATUSES_WITH_REQUIRED_FIELDS
     if needs_required_fields:
         fields[_RECLAMATION_MOVE_FIELD] = await _get_enum_value_id(_RECLAMATION_MOVE_FIELD, "ДА")
-    if warranty is not None:
-        fields[_RECLAMATION_WARRANTY_FIELD] = await _get_enum_value_id(
-            _RECLAMATION_WARRANTY_FIELD, "ДА" if warranty else "НЕТ",
-        )
 
     # Свой дедлайн отправляем всегда, когда он есть — админ задал его осознанно
     if deadline is not None:
@@ -300,6 +297,28 @@ async def update_reclamation_deadline(item_id: str, deadline: date | None) -> No
     data = resp.json()
     if "error" in data:
         raise RuntimeError(f"Bitrix crm.item.update (deadline) error: {data}")
+
+
+async def update_reclamation_warranty(item_id: str, warranty: bool) -> None:
+    """Отправляет "Гарантию" отдельным вызовом, БЕЗ stageId в fields —
+    намеренно, см. подробную историю в докстринге update_reclamation_stage:
+    отправка этого поля вместе со сменой стадии запускала на портале
+    автозакрытие карточки (диагностировано и подтверждено заказчиком
+    2026-09-25). Раздельные вызовы этого не делают."""
+    if not settings.bitrix_webhook_url:
+        return
+    value_id = await _get_enum_value_id(_RECLAMATION_WARRANTY_FIELD, "ДА" if warranty else "НЕТ")
+    url = f"{settings.bitrix_webhook_url.rstrip('/')}/crm.item.update.json"
+    resp = await _get_client().post(url, json={
+        "entityTypeId": settings.bitrix_reclamation_entity_type_id,
+        "id": item_id,
+        "fields": {_RECLAMATION_WARRANTY_FIELD: value_id},
+    })
+    if not resp.is_success:
+        raise RuntimeError(f"Bitrix crm.item.update (warranty) {resp.status_code}: {resp.text}")
+    data = resp.json()
+    if "error" in data:
+        raise RuntimeError(f"Bitrix crm.item.update (warranty) error: {data}")
 
 
 async def list_reclamation_assignees() -> list[dict]:

@@ -143,6 +143,13 @@ class ReclamationService:
             responsible_bitrix_user_id = None
 
         deadline_changed = "deadline_at" in changed and changed["deadline_at"] != rec.deadline_at
+        # Гарантия шлётся в Bitrix отдельным вызовом, никогда не вместе со
+        # сменой стадии — см. bitrix_service.update_reclamation_stage про то,
+        # почему их совместная отправка запускала автозакрытие карточки
+        warranty_changed = (
+            "warranty_classification" in changed
+            and changed["warranty_classification"] != rec.warranty_classification
+        )
 
         status_changed = "status" in changed and changed["status"] != rec.status
         if status_changed:
@@ -174,16 +181,20 @@ class ReclamationService:
             await self._notify_status_change(rec)
             if rec.bitrix_item_id:
                 # дедлайн уезжает вместе со стадией — Bitrix всё равно требует
-                # его заполненным при переходе, отдельный вызов был бы лишним
+                # его заполненным при переходе, отдельный вызов был бы лишним.
+                # Гарантия — НЕ вместе, намеренно, см. _sync_warranty_to_bitrix
                 _sync_status_to_bitrix(
                     rec.id, rec.bitrix_item_id, rec.status, rec.confirmation_file_url,
-                    rec.deadline_at, rec.warranty_classification, assignee_to_push,
+                    rec.deadline_at, assignee_to_push,
                 )
                 assignee_to_push = None
                 deadline_changed = False
 
         if deadline_changed and rec.bitrix_item_id:
             _sync_deadline_to_bitrix(rec.id, rec.bitrix_item_id, rec.deadline_at)
+
+        if warranty_changed and rec.bitrix_item_id and rec.warranty_classification is not None:
+            _sync_warranty_to_bitrix(rec.id, rec.bitrix_item_id, rec.warranty_classification)
 
         if assignee_to_push:
             _sync_assignee_to_bitrix(rec.id, rec.bitrix_item_id, assignee_to_push)
@@ -432,15 +443,17 @@ def _sync_to_bitrix(
 
 def _sync_status_to_bitrix(
     reclamation_id: int, bitrix_item_id: str, status: str, confirmation_file_url: str | None,
-    deadline: date | None = None, warranty: bool | None = None, assignee_id: int | None = None,
+    deadline: date | None = None, assignee_id: int | None = None,
 ) -> None:
     """assignee_id отправляется здесь же, строго после стадии — почему именно
-    так, а не параллельно, см. комментарий в ReclamationService.update."""
+    так, а не параллельно, см. комментарий в ReclamationService.update.
+    Гарантию сюда намеренно не добавляем — см. _sync_warranty_to_bitrix и
+    докстринг bitrix_service.update_reclamation_stage про автозакрытие."""
     async def _task():
         from app.services import bitrix_service
         try:
             await bitrix_service.update_reclamation_stage(
-                bitrix_item_id, status, confirmation_file_url, deadline, warranty,
+                bitrix_item_id, status, confirmation_file_url, deadline,
             )
         except Exception as exc:
             _log.exception("Bitrix status sync failed for reclamation item %s", bitrix_item_id)
@@ -449,7 +462,6 @@ def _sync_status_to_bitrix(
                 {
                     "status": status, "confirmation_file_url": confirmation_file_url,
                     "deadline": deadline.isoformat() if deadline else None,
-                    "warranty": warranty,
                 },
                 exc,
             )
@@ -520,6 +532,26 @@ def _sync_assignee_to_bitrix(reclamation_id: int, bitrix_item_id: str, bitrix_us
     меняется тем же запросом, ответственный уезжает не отсюда, а из
     _sync_status_to_bitrix — строго после стадии."""
     asyncio.create_task(_push_assignee(reclamation_id, bitrix_item_id, bitrix_user_id))
+
+
+def _sync_warranty_to_bitrix(reclamation_id: int, bitrix_item_id: str, warranty: bool) -> None:
+    """Гарантия — ВСЕГДА отдельным вызовом, никогда вместе со сменой стадии,
+    даже если оба поля поменялись одним PATCH (а это частый случай — гарантия
+    обязательна именно при переходе в in_progress). Отправка "Гарантии" в
+    одном запросе со stageId запускала на портале автозакрытие карточки
+    (диагностировано и подтверждено заказчиком 2026-09-25, см. докстринг
+    bitrix_service.update_reclamation_stage) — раздельные вызовы это обходят."""
+    async def _task():
+        from app.services import bitrix_service
+        try:
+            await bitrix_service.update_reclamation_warranty(bitrix_item_id, warranty)
+        except Exception as exc:
+            _log.exception("Bitrix warranty sync failed for reclamation item %s", bitrix_item_id)
+            await _record_bitrix_failure(
+                reclamation_id, "warranty", {"warranty": warranty}, exc,
+            )
+
+    asyncio.create_task(_task())
 
 
 def _is_item_gone(error_text: str) -> bool:
@@ -725,7 +757,6 @@ async def retry_bitrix_outbox() -> None:
                     pushed_stage = await bitrix_service.update_reclamation_stage(
                         bitrix_item_id, row.payload["status"], row.payload.get("confirmation_file_url"),
                         date.fromisoformat(saved_deadline) if saved_deadline else None,
-                        row.payload.get("warranty"),
                     )
                     if pushed_stage:
                         # Приводим статус к тому, что реально уехало в Bitrix.
@@ -754,6 +785,15 @@ async def retry_bitrix_outbox() -> None:
                         raise RuntimeError("У рекламации всё ещё нет bitrix_item_id (create не прошёл)")
                     await bitrix_service.update_reclamation_assignee(
                         bitrix_item_id, row.payload["bitrix_user_id"],
+                    )
+
+                elif row.operation == "warranty":
+                    rec = await session.get(Reclamation, row.reclamation_id)
+                    bitrix_item_id = rec.bitrix_item_id if rec is not None else None
+                    if not bitrix_item_id:
+                        raise RuntimeError("У рекламации всё ещё нет bitrix_item_id (create не прошёл)")
+                    await bitrix_service.update_reclamation_warranty(
+                        bitrix_item_id, row.payload["warranty"],
                     )
 
                 else:
