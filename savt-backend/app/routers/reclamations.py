@@ -122,3 +122,15 @@ async def update_reclamation(
 ):
     changed = payload.model_dump(exclude_unset=True)
     return await ReclamationService(session).update(reclamation_id, changed, actor.id, actor_role)
+
+
+# Только для рекламаций из GET /admin/reclamations/bitrix-detached — живую
+# удалить нельзя (400), см. ReclamationService.delete_detached
+@router.delete("/admin/reclamations/{reclamation_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_reclamation(
+    reclamation_id: int,
+    actor: User = Depends(require_role(RoleName.ADMIN)),
+    actor_role: str = Depends(get_role_from_token),
+    session: AsyncSession = Depends(get_session),
+):
+    await ReclamationService(session).delete_detached(reclamation_id, actor.id, actor_role)

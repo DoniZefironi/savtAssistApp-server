@@ -171,6 +171,26 @@ class ReclamationService:
 
         return await self.get_admin(reclamation_id)
 
+    async def delete_detached(self, reclamation_id: int, actor_id: int, actor_role: str) -> None:
+        """Удаление — только для рекламаций, чью карточку уже удалили в Bitrix.
+        Живую удалять нельзя: у неё осталась бы карточка на портале без пары
+        у нас, и вебхуки по ней молча уходили бы в никуда. Вложения и очередь
+        повторов удаляются каскадом (ondelete=CASCADE в схеме)."""
+        rec = await self.repo.get_by_id(reclamation_id)
+        if rec is None:
+            raise NotFoundError("Рекламация не найдена")
+        if rec.bitrix_deleted_at is None:
+            raise ValidationError(
+                "Удалить можно только рекламацию, чью карточку уже удалили в Bitrix"
+            )
+
+        self.audit.log(
+            "reclamation.delete", "reclamation", rec.id, actor_id, actor_role,
+            {"status": rec.status, "user_id": rec.user_id},
+        )
+        await self.session.delete(rec)
+        await self.session.commit()
+
     @staticmethod
     async def list_bitrix_users() -> list[BitrixUserOut]:
         from app.services import bitrix_service
