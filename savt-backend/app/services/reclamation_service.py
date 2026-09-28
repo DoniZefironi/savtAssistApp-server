@@ -500,12 +500,41 @@ def _sync_status_to_bitrix(
     asyncio.create_task(_task())
 
 
+async def _notify_integration_admins(session, title: str, body: str, data: dict) -> None:
+    """п.8 ТЗ: 'при ошибке передачи ... уведомить администратора интеграции' —
+    раньше этого не было вообще, узнать о сбое можно было только зайдя
+    вручную в GET /admin/reclamations/bitrix-outbox (так реально копились
+    незамеченные сбои — см. историю с рекламацией №16). Получатели — те же,
+    кому вообще доступны ручки /admin/reclamations (require_role(ADMIN) даёт
+    admin+superadmin, см. app/core/dependencies._ROLE_HIERARCHY), operator
+    к обработке рекламаций доступа не имеет и сюда не входит."""
+    from sqlalchemy import select
+    from app.models.role import Role
+    from app.models.user import User
+
+    admins = (await session.execute(
+        select(User.id)
+        .join(Role, Role.id == User.role_id)
+        .where(Role.name.in_(["admin", "superadmin"]), User.is_active == True)
+    )).scalars().all()
+
+    for admin_id in admins:
+        await NotificationService(session).send(
+            user_id=admin_id, type_="bitrix_sync_error",
+            title=title, body=body, data=data,
+        )
+
+
 async def _record_bitrix_failure(
     reclamation_id: int, operation: str, payload: dict, exc: Exception,
 ) -> None:
     """Куда девать сбой отправки. Если карточку удалили — отвязываем
     рекламацию: повторять нечего и некуда. Всё остальное считаем временным и
-    кладём в очередь повторов."""
+    кладём в очередь повторов. Уведомление администраторам — только на этот,
+    первый сбой конкретной операции, а не на каждую последующую попытку
+    повтора: retry_bitrix_outbox сам её не поднимает (у него отдельная ветка
+    обработки ошибок, mark_failed_attempt), поэтому спама на каждые 15 минут
+    не будет, даже если сбой не устраняется долго."""
     from app.database import AsyncSessionLocal
     from app.repositories.reclamation_outbox import ReclamationOutboxRepository
 
@@ -516,6 +545,12 @@ async def _record_bitrix_failure(
         else:
             await ReclamationOutboxRepository(session).create(
                 reclamation_id, operation, payload, str(exc),
+            )
+            await _notify_integration_admins(
+                session,
+                title="Сбой синхронизации с Bitrix",
+                body=f"Рекламация №{reclamation_id}: не удалось отправить «{operation}». {str(exc)[:200]}",
+                data={"reclamation_id": reclamation_id, "operation": operation},
             )
         await session.commit()
 
@@ -609,7 +644,10 @@ async def mark_bitrix_item_deleted(session, rec, reason: str) -> None:
 
     Саму заявку не трогаем и заново в Bitrix не заводим: карточку удалили
     осознанно, а претензия заявителя никуда не делась. Что с ней делать,
-    решает админ, см. GET /admin/reclamations/bitrix-detached."""
+    решает админ, см. GET /admin/reclamations/bitrix-detached — туда же и
+    уведомление ниже: вызывается из трёх мест (сбой отправки, вебхук
+    удаления, повтор из очереди), проще уведомить один раз здесь, чем в
+    каждом месте отдельно."""
     from sqlalchemy import delete
     from app.models.reclamation_bitrix_outbox import ReclamationBitrixOutbox
 
@@ -623,6 +661,12 @@ async def mark_bitrix_item_deleted(session, rec, reason: str) -> None:
         delete(ReclamationBitrixOutbox).where(
             ReclamationBitrixOutbox.reclamation_id == rec.id
         )
+    )
+    await _notify_integration_admins(
+        session,
+        title="Карточка рекламации удалена в Bitrix",
+        body=f"Рекламация №{rec.id} отвязана от Bitrix ({reason}). Решите, заводить заново или закрывать.",
+        data={"reclamation_id": rec.id},
     )
 
 
