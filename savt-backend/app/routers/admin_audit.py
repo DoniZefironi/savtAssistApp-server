@@ -25,6 +25,14 @@ _REQUEST_ENTITY_TYPES = [
     "project_share_request",
     "service_request",
 ]
+# Рекламации — отдельным списком, а не добавлены в общий выше, и видны
+# только ADMIN, не OPERATOR: у оператора и так нет доступа ни к одной ручке
+# /admin/reclamations (require_role(ADMIN) на всех них), так что просто
+# добавить "reclamation" в общий список означало бы впервые открыть ему то,
+# что нигде больше не видно. Сам список выше заведён раньше, чем появились
+# рекламации, и не был обновлён — из-за этого ADMIN, который их реально
+# обрабатывает, не видел их историю через эту ручку вообще (см. §10 ТЗ п.5)
+_RECLAMATION_ENTITY_TYPES = ["reclamation"]
 
 
 @router.get("", response_model=PageOut[AuditLogOut])
@@ -51,8 +59,13 @@ async def list_audit_logs(
     session: AsyncSession = Depends(get_session),
 ) -> PageOut[AuditLogOut]:
     # Только суперадмин видит полный лог (CUD по шкафам/проектам/документам/пользователям
-    # + заявки); admin/operator принудительно ограничены логами по заявкам
-    entity_types = None if caller_role == "superadmin" else _REQUEST_ENTITY_TYPES
+    # + заявки + рекламации); ADMIN — заявки и рекламации; OPERATOR — только заявки
+    if caller_role == "superadmin":
+        entity_types = None
+    elif caller_role == "admin":
+        entity_types = _REQUEST_ENTITY_TYPES + _RECLAMATION_ENTITY_TYPES
+    else:
+        entity_types = _REQUEST_ENTITY_TYPES
     return await AuditService(session).list_logs(
         actor_id=actor_id,
         actor_role=actor_role,

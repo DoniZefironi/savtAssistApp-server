@@ -341,20 +341,30 @@ async def update_reclamation_deadline(item_id: str, deadline: date | None) -> No
         raise RuntimeError(f"Bitrix crm.item.update (deadline) error: {data}")
 
 
-async def update_reclamation_warranty(item_id: str, warranty: bool) -> None:
+async def update_reclamation_warranty(item_id: str, warranty: bool | None) -> None:
     """Отправляет "Гарантию" отдельным вызовом, БЕЗ stageId в fields —
     намеренно, см. подробную историю в докстринге update_reclamation_stage:
     отправка этого поля вместе со сменой стадии запускала на портале
     автозакрытие карточки (диагностировано и подтверждено заказчиком
-    2026-09-25). Раздельные вызовы этого не делают."""
+    2026-09-25). Раздельные вызовы этого не делают.
+
+    warranty=None — очистить поле (снять классификацию, а не поставить
+    "НЕТ"). Раньше эта функция принимала только bool и вызывающий код нарочно
+    пропускал отправку при None (см. историю правки 2026-09-28) — из-за этого
+    "убрать" гарантию у нас можно было, а в Bitrix значение оставалось
+    прежним, и при следующем же вебхуке по карточке обратная синхронизация
+    тихо возвращала его назад к нам, будто очистка не сработала."""
     if not settings.bitrix_webhook_url:
         return
-    value_id = await _get_enum_value_id(_RECLAMATION_WARRANTY_FIELD, "ДА" if warranty else "НЕТ")
+    value = (
+        await _get_enum_value_id(_RECLAMATION_WARRANTY_FIELD, "ДА" if warranty else "НЕТ")
+        if warranty is not None else ""
+    )
     url = f"{settings.bitrix_webhook_url.rstrip('/')}/crm.item.update.json"
     resp = await _get_client().post(url, json={
         "entityTypeId": settings.bitrix_reclamation_entity_type_id,
         "id": item_id,
-        "fields": {_RECLAMATION_WARRANTY_FIELD: value_id},
+        "fields": {_RECLAMATION_WARRANTY_FIELD: value},
     })
     if not resp.is_success:
         raise RuntimeError(f"Bitrix crm.item.update (warranty) {resp.status_code}: {resp.text}")

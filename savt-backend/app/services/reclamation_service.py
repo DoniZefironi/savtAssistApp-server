@@ -209,7 +209,7 @@ class ReclamationService:
         if comment_lines and rec.bitrix_item_id:
             _sync_comment_to_bitrix(rec.id, rec.bitrix_item_id, "\n".join(comment_lines))
 
-        if warranty_changed and rec.bitrix_item_id and rec.warranty_classification is not None:
+        if warranty_changed and rec.bitrix_item_id:
             _sync_warranty_to_bitrix(rec.id, rec.bitrix_item_id, rec.warranty_classification)
 
         if assignee_to_push:
@@ -595,13 +595,19 @@ def _sync_assignee_to_bitrix(reclamation_id: int, bitrix_item_id: str, bitrix_us
     asyncio.create_task(_push_assignee(reclamation_id, bitrix_item_id, bitrix_user_id))
 
 
-def _sync_warranty_to_bitrix(reclamation_id: int, bitrix_item_id: str, warranty: bool) -> None:
+def _sync_warranty_to_bitrix(reclamation_id: int, bitrix_item_id: str, warranty: bool | None) -> None:
     """Гарантия — ВСЕГДА отдельным вызовом, никогда вместе со сменой стадии,
-    даже если оба поля поменялись одним PATCH (а это частый случай — гарантия
-    обязательна именно при переходе в in_progress). Отправка "Гарантии" в
-    одном запросе со stageId запускала на портале автозакрытие карточки
-    (диагностировано и подтверждено заказчиком 2026-09-25, см. докстринг
-    bitrix_service.update_reclamation_stage) — раздельные вызовы это обходят."""
+    даже если оба поля поменялись одним PATCH (частый случай, когда статус и
+    классификация меняются вместе). Отправка "Гарантии" в одном запросе со
+    stageId запускала на портале автозакрытие карточки (диагностировано и
+    подтверждено заказчиком 2026-09-25, см. докстринг
+    bitrix_service.update_reclamation_stage) — раздельные вызовы это обходят.
+
+    warranty=None — реально очищает поле в Bitrix (см.
+    bitrix_service.update_reclamation_warranty), а не просто "не отправляем":
+    раньше вызов при None вообще пропускался, из-за чего снять классификацию
+    в нашей админке было можно, а в Bitrix значение оставалось прежним и
+    возвращалось назад при следующем вебхуке (баг, найден 2026-09-28)."""
     async def _task():
         from app.services import bitrix_service
         try:
