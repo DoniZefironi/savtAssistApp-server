@@ -56,6 +56,28 @@ class ReclamationService:
             if not await UserProjectRepository(self.session).find(user_id, data.project_id):
                 raise PermissionDeniedError("У вас нет доступа к этому проекту")
 
+        # Заводской номер / данные ПКИ — для "cabinet" не нужны в payload
+        # вообще: заводской номер там всегда берётся из cabinet.object_number
+        # (обязательная колонка, см. app/models/cabinets.py), пользователь
+        # ничего не вводит. А вот для "line"/"component" это ровно те поля,
+        # что уходят в нативные UF-поля Bitrix (см. _build_bitrix_native_fields)
+        # — раньше были необязательны, из-за чего карточка реально уезжала в
+        # Bitrix с пустым "Заводской номер ШУ или линии" / "Данные ПКИ"
+        # (обнаружено 2026-09-28 тестовой рекламацией №44)
+        if data.object_type == "line":
+            if not data.object_details or not data.object_details.get("serial_number"):
+                raise ValidationError("Для автоматической линии нужно указать заводской номер")
+        elif data.object_type == "component":
+            d = data.object_details or {}
+            missing = [
+                label for key, label in (
+                    ("name", "наименование"), ("model", "модель"),
+                    ("article", "артикул"), ("serial_number", "серийный номер"),
+                ) if not d.get(key)
+            ]
+            if missing:
+                raise ValidationError(f"Для ПКИ нужно указать: {', '.join(missing)}")
+
         payload = data.model_dump(exclude={"attachments"})
         rec = await self.repo.create(user_id, payload)
         for att in data.attachments:
