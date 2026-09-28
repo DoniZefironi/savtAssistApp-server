@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleName
@@ -15,6 +15,8 @@ from app.schemas.reclamation import (
     ReclamationDetailOut,
     ReclamationListItemOut,
     ReclamationOutboxOut,
+    ReclamationOutboxRetryResult,
+    ReclamationOutboxUpdateIn,
 )
 from app.services.reclamation_service import ReclamationService
 
@@ -92,6 +94,35 @@ async def list_reclamation_bitrix_outbox(
     session: AsyncSession = Depends(get_session),
 ):
     return await ReclamationService(session).list_outbox()
+
+
+# Ручная правка застрявшей операции — переписать payload (например, дописать
+# company_id, которого не было в сделке Bitrix на момент сбоя) и сразу
+# попробовать отправить, не дожидаясь ближайшего 15-минутного цикла
+@router.patch("/admin/reclamations/bitrix-outbox/{outbox_id}", response_model=ReclamationOutboxRetryResult)
+async def update_reclamation_bitrix_outbox(
+    outbox_id: int,
+    payload: ReclamationOutboxUpdateIn,
+    _: User = Depends(require_role(RoleName.ADMIN)),
+    session: AsyncSession = Depends(get_session),
+):
+    result = await ReclamationService(session).retry_outbox_now(outbox_id, payload.payload)
+    if result is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Операция не найдена")
+    return result
+
+
+# Снять операцию с повторов, если чинить не собираемся (например, рекламация
+# уже неактуальна) — без этого застрявшая запись висела в очереди навсегда
+@router.delete("/admin/reclamations/bitrix-outbox/{outbox_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_reclamation_bitrix_outbox(
+    outbox_id: int,
+    _: User = Depends(require_role(RoleName.ADMIN)),
+    session: AsyncSession = Depends(get_session),
+):
+    deleted = await ReclamationService(session).delete_outbox(outbox_id)
+    if not deleted:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Операция не найдена")
 
 
 # Статический путь — по той же причине, что и bitrix-users выше

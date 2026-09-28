@@ -35,6 +35,9 @@ class ReclamationOutboxRepository:
         )
         return result.scalar_one_or_none() is not None
 
+    async def get(self, outbox_id: int) -> ReclamationBitrixOutbox | None:
+        return await self.session.get(ReclamationBitrixOutbox, outbox_id)
+
     async def list_pending(self, limit: int = 100) -> list[ReclamationBitrixOutbox]:
         result = await self.session.execute(
             select(ReclamationBitrixOutbox).order_by(ReclamationBitrixOutbox.created_at).limit(limit)

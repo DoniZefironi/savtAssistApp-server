@@ -199,13 +199,34 @@ class ReclamationDetachedOut(BaseModel):
 
 class ReclamationOutboxOut(BaseModel):
     """Недоставленная попытка синхронизации с Bitrix (п.8 ТЗ) — для
-    администратора интеграции, см. GET /admin/reclamations/bitrix-outbox."""
+    администратора интеграции, см. GET /admin/reclamations/bitrix-outbox.
+    payload виден полностью — по нему понятно, что именно не отправилось
+    (например, пустой company_id при сбое create), без захода в БД руками."""
     id: int
     reclamation_id: int
     operation: str
+    payload: dict[str, Any]
     attempts: int
     last_error: str | None
     created_at: datetime
     last_attempted_at: datetime | None
 
     model_config = {"from_attributes": True}
+
+
+class ReclamationOutboxUpdateIn(BaseModel):
+    """PATCH /admin/reclamations/bitrix-outbox/{id} — ручная правка застрявшего
+    payload (например, дописать company_id, которого не было в сделке Bitrix
+    на момент сбоя). Произвольный словарь, без строгой схемы под каждую из 6
+    операций — это инструмент на крайний случай для администратора, не
+    основной путь ввода данных."""
+    payload: dict[str, Any]
+
+
+class ReclamationOutboxRetryResult(BaseModel):
+    """Результат ручного повтора после PATCH — пробуем отправить сразу, не
+    ждём ближайшего 15-минутного цикла retry_bitrix_outbox, чтобы админ увидел
+    результат правки тут же. success=True — операция прошла и строка удалена
+    (row=None); success=False — снова не удалось, row содержит новую ошибку."""
+    success: bool
+    row: ReclamationOutboxOut | None = None
