@@ -294,6 +294,42 @@ class UserTelemetryService:
         return make_page(items, total, page, size)
 
 
+# Визуал .xlsx — целиком на сервере (шрифты/заливка/ширина колонок), фронт
+# получает готовый бинарник и только предлагает его сохранить. sheet_title
+# режется до 31 символа — жёсткий лимит Excel на длину имени листа.
+def _build_register_xlsx(sheet_title: str, headers: list[str], rows: list[list]) -> bytes:
+    from io import BytesIO
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = sheet_title[:31]
+
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="2F5597")
+    for col, header in enumerate(headers, start=1):
+        cell = ws.cell(row=1, column=col, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.freeze_panes = "A2"
+
+    for r, row in enumerate(rows, start=2):
+        for c, value in enumerate(row, start=1):
+            ws.cell(row=r, column=c, value=value)
+
+    # Адрес, Бит, Название, Описание, [Источник] — порядок совпадает с headers
+    widths = [10, 6, 32, 50, 22][:len(headers)]
+    for i, width in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = width
+
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 class AdminRegisterMapService:
     """CRUD карты регистров — стандартной (для всех ШУ) и добавок на конкретный
     ШУ. Сама расшифровка (см. UserTelemetryService) читает эти данные, здесь —
@@ -307,6 +343,43 @@ class AdminRegisterMapService:
 
     async def list_definitions(self) -> list[RegisterDefinitionOut]:
         return [RegisterDefinitionOut.model_validate(d) for d in await self.def_repo.list_all()]
+
+    # Стандартная карта, как есть — без привязки к конкретному ШУ
+    async def export_definitions_xlsx(self) -> bytes:
+        defs = sorted(await self.def_repo.list_all(), key=lambda d: (d.address, d.bit))
+        rows = [[d.address, d.bit, d.name, d.description or ""] for d in defs]
+        return _build_register_xlsx(
+            "Карта регистров", ["Адрес", "Бит", "Название", "Описание"], rows,
+        )
+
+    # Действующая карта КОНКРЕТНОГО ШУ — стандартная карта с применёнными
+    # CabinetRegisterOverride поверх (override важнее, та же логика, что и в
+    # _build_name_map выше, только тут сохраняем ещё description и источник
+    # строки, а не только имя — для чтения глазами это важнее, чем при
+    # автоматической расшифровке телеметрии)
+    async def export_cabinet_map_xlsx(self, cabinet_id: int) -> bytes:
+        cabinet = await self.cabinet_repo.get_by_id(cabinet_id)
+        if cabinet is None:
+            raise NotFoundError("ШУ не найден")
+
+        merged: dict[tuple[int, int], tuple[str, str | None, str]] = {
+            (d.address, d.bit): (d.name, d.description, "Стандартная карта")
+            for d in await self.def_repo.list_all()
+        }
+        merged.update({
+            (o.address, o.bit): (o.name, o.description, "Переопределено для этого ШУ")
+            for o in await self.override_repo.list_for_cabinet(cabinet_id)
+        })
+        rows = [
+            [address, bit, name, description or "", source]
+            for (address, bit), (name, description, source) in sorted(merged.items())
+        ]
+        title = cabinet.admin_internal_name or cabinet.object_number
+        return _build_register_xlsx(
+            f"Карта регистров {title}",
+            ["Адрес", "Бит", "Название", "Описание", "Источник"],
+            rows,
+        )
 
     async def create_definition(
         self, address: int, bit: int, name: str, description: str | None, actor_id: int, actor_role: str,

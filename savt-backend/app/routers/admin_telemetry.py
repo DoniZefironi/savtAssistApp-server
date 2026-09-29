@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleName
@@ -19,6 +20,8 @@ from app.schemas.telemetry import (
 from app.services.telemetry_service import AdminRegisterMapService, UserTelemetryService
 
 router = APIRouter(prefix="/admin", tags=["admin: telemetry"])
+
+_XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 # Текущее состояние регистров ШУ для админки/операторской панели — в отличие от
@@ -79,6 +82,19 @@ async def list_register_definitions(
     return await AdminRegisterMapService(session).list_definitions()
 
 
+# Статический путь — на случай, если позже появится GET /register-definitions/{id}
+@router.get("/register-definitions/export")
+async def export_register_definitions(
+    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    session: AsyncSession = Depends(get_session),
+):
+    content = await AdminRegisterMapService(session).export_definitions_xlsx()
+    return Response(
+        content=content, media_type=_XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": "attachment; filename=register_definitions.xlsx"},
+    )
+
+
 @router.post("/register-definitions", response_model=RegisterDefinitionOut, status_code=status.HTTP_201_CREATED)
 async def create_register_definition(
     payload: RegisterDefinitionIn,
@@ -122,6 +138,22 @@ async def list_cabinet_register_overrides(
     session: AsyncSession = Depends(get_session),
 ):
     return await AdminRegisterMapService(session).list_overrides(cabinet_id)
+
+
+# Действующая карта ЭТОГО ШУ целиком (стандартная карта + переопределения
+# поверх, с колонкой "Источник") — не то же самое, что список выше (там
+# только сами переопределения, без базовой карты)
+@router.get("/cabinets/{cabinet_id}/register-map/export")
+async def export_cabinet_register_map(
+    cabinet_id: int,
+    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    session: AsyncSession = Depends(get_session),
+):
+    content = await AdminRegisterMapService(session).export_cabinet_map_xlsx(cabinet_id)
+    return Response(
+        content=content, media_type=_XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": f"attachment; filename=register_map_cabinet_{cabinet_id}.xlsx"},
+    )
 
 
 @router.post(

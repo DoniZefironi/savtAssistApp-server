@@ -2104,6 +2104,14 @@ Telegram позволяет менять номер аккаунта. После
 ### DELETE `/admin/register-definitions/{definition_id}`
 Только администратор. `204 No Content`.
 
+### GET `/admin/register-definitions/export`
+Стандартная карта в виде `.xlsx`-файла (`admin`/`operator`) — колонки «Адрес,
+Бит, Название, Описание», отсортировано по адресу и биту. Визуал (шрифты,
+заливка шапки, ширина колонок) собирает сервер целиком через `openpyxl` —
+фронту достаточно скачать файл по ссылке, дополнительно ничего оформлять не
+нужно. `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`,
+`Content-Disposition: attachment; filename=register_definitions.xlsx`.
+
 ---
 
 ### GET `/admin/cabinets/{cabinet_id}/register-overrides`
@@ -2122,6 +2130,15 @@ Telegram позволяет менять номер аккаунта. После
 
 ### DELETE `/admin/cabinets/{cabinet_id}/register-overrides/{override_id}`
 Только администратор. `204 No Content`.
+
+### GET `/admin/cabinets/{cabinet_id}/register-map/export`
+Действующая карта ЭТОГО ШУ целиком в `.xlsx` (`admin`/`operator`) — не то же
+самое, что список выше (там только сами переопределения): здесь стандартная
+карта с уже применёнными override поверх, той же логикой приоритета
+(override важнее). Колонки «Адрес, Бит, Название, Описание, Источник» —
+последняя показывает, откуда строка: «Стандартная карта» или «Переопределено
+для этого ШУ». Название листа — `admin_internal_name` ШУ, если задано, иначе
+`object_number`. `404`, если ШУ не найден.
 
 ---
 
