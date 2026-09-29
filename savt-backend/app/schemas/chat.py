@@ -152,6 +152,8 @@ class ChatListOut(BaseModel):
     service_request_description: str | None = None
     service_request_created_at: datetime | None = None
     archived_at: datetime | None = None
+    # личное — у владельца чата и у каждого оператора/админа своё, см. PinnedChat
+    is_pinned: bool = False
 
 
 class WallpaperIn(BaseModel):

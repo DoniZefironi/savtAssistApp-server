@@ -33,6 +33,7 @@ from app.models.warranty_notif_log import WarrantyNotifLog
 from app.models.embedding import Embedding
 from app.models.chat_user_settings import ChatUserSettings
 from app.models.chat_pinned_message import ChatPinnedMessage
+from app.models.pinned_chat import PinnedChat
 from app.models.project import Project
 from app.models.user_project import UserProject
 from app.models.project_share_request import ProjectShareRequest
@@ -61,7 +62,7 @@ __all__ = [
     "Tag", "KbCategory", "KbArticle", "FaqCategory", "FaqEntry",
     "DeviceToken", "NotificationSettings", "AuditLog", "Notification",
     "DocumentTag", "KbArticleTag", "CabinetTag", "KbArticleAttachment", "UserFavorite",
-    "WarrantyNotifLog", "Embedding", "ChatUserSettings", "ChatPinnedMessage",
+    "WarrantyNotifLog", "Embedding", "ChatUserSettings", "ChatPinnedMessage", "PinnedChat",
     "Project", "UserProject", "ProjectShareRequest", "ProjectContact",
     "MessengerLink", "PhoneChangeRequest", "PendingRegistration", "RegistrationRequest",
     "PasswordResetRequest", "PromoMessage", "PromoScheduleSettings",

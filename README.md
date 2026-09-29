@@ -3735,13 +3735,23 @@ NAS-папки: такие всегда заводятся с `is_internal: true
     "service_request_status": null,
     "service_request_description": null,
     "service_request_created_at": null,
-    "archived_at": null
+    "archived_at": null,
+    "is_pinned": false
   }
 ]
 ```
 `cabinet_id`/`cabinet_name`/`cabinet_object_number` заполнены для чатов ШУ и для чатов заявок по ШУ; `project_id`/`project_name` — для чатов проекта и для чатов заявок по проекту. У чата ровно одна из двух пар не `null` (кроме `support`/`notes`, где обе `null`).
 `service_request_id`/`service_request_type`/`service_request_status`/`service_request_description`/`service_request_created_at` заполнены только для `chat_type: "service_request"` — этого достаточно, чтобы отличить в списке разные заявки одного и того же пользователя (тип, дата, текст обращения), не делая отдельный запрос к `GET /service-requests/{id}`.
 `archived_at` — `null`, пока заявка не закрыта; при `status: "closed"` заполняется автоматически, при повторном открытии заявки — сбрасывается обратно в `null`. Архивный чат — read-only: `POST /chats/{chat_id}/messages` вернёт `403`, но история сообщений (`GET /chats/{chat_id}/messages`) остаётся доступна как обычно. Это только флаг состояния — сообщения физически никуда не переносятся.
+`is_pinned` — **личное**: закреплено ли у ТЕКУЩЕГО вызывающего (см. `PUT /chats/{chat_id}/pin-chat` ниже), не у чата вообще. Тот же чат может быть закреплён у пользователя и не закреплён у оператора, который его же обрабатывает, и наоборот. Список отсортирован закреплёнными чатами наверх (дальше — как обычно, по дате последнего сообщения).
+
+---
+
+### PUT `/chats/{chat_id}/pin-chat`
+Закрепить чат в СВОЁМ списке — `204` без тела. Идемпотентно (повторный вызов ничего не ломает). Личное действие: не видно ни другой стороне переписки, ни (для чатов, доступных операторам) другим операторам — у каждого своё состояние. Не путать с закреплением отдельных сообщений внутри чата (`PUT /chats/{chat_id}/pin/{msg_id}` ниже) — это про сам чат целиком, в общем списке.
+
+### DELETE `/chats/{chat_id}/pin-chat`
+Открепить — `204` без тела.
 
 ---
 
@@ -4015,9 +4025,9 @@ NAS-папки: такие всегда заводятся с `is_internal: true
 - `chat_type` — `cabinet` / `project` / `support` / `service_request`, без параметра — все четыре
 - `archived` — `false` (по умолч.) — активные; `true` — архив (чаты закрытых заявок)
 
-Сортировка: сначала ожидающие оператора (`operator_requested=true`), затем по последнему сообщению.
+Сортировка: сначала ожидающие оператора (`operator_requested=true`) — это очередь, личный пин её не перекрывает; внутри — сначала закреплённые ЭТИМ оператором (`is_pinned`, см. `PUT /operator/chats/{chat_id}/pin-chat` ниже); затем по последнему сообщению.
 
-Каждый чат содержит `user_id`, `user_name`, `cabinet_object_number`/`project_name`, а для чатов заявок — ещё и `service_request_id`/`service_request_type`/`service_request_status`/`service_request_description`/`service_request_created_at` (см. `GET /chats` выше — формат ответа общий).
+Каждый чат содержит `user_id`, `user_name`, `cabinet_object_number`/`project_name`, `is_pinned` (личное для этого оператора, не видно другим), а для чатов заявок — ещё и `service_request_id`/`service_request_type`/`service_request_status`/`service_request_description`/`service_request_created_at` (см. `GET /chats` выше — формат ответа общий).
 
 > **Оптимизация:** запрос выполняется за 3 DB-запроса независимо от числа чатов (JOIN на User+Cabinet + batch unread counts + batch last messages), вместо 4N+1 в предыдущей версии.
 
@@ -4030,6 +4040,12 @@ NAS-папки: такие всегда заводятся с `is_internal: true
 чату без предзагруженного списка: пуш-уведомление, ссылка, обновление
 страницы. `notes`-чаты (личные заметки пользователя) недоступны оператору
 и здесь тоже — `404`, как и в списке.
+
+---
+
+### PUT `/operator/chats/{chat_id}/pin-chat`
+### DELETE `/operator/chats/{chat_id}/pin-chat`
+Закрепить/открепить чат в списке ЭТОГО оператора — `204` без тела, идемпотентно. Зеркало `/chats/{chat_id}/pin-chat` (см. «Рут `chats`» выше) — то же самое действие, доступное с операторского пути. Личное: не видно ни пользователю, ни другим операторам/админам — у каждого своё состояние независимо. Не путать с закреплением сообщений внутри чата (`pin/{msg_id}` ниже).
 
 ---
 

@@ -80,6 +80,26 @@ async def get_operator_chat_detail(
     return await ChatService(session).get_operator_chat_detail(chat_id, operator.id)
 
 
+# Закрепление ЧАТА в списке ЭТОГО оператора — личное, не видно ни пользователю,
+# ни другим операторам (не путать с закреплением сообщений внутри чата ниже)
+@router.put("/chats/{chat_id}/pin-chat", status_code=status.HTTP_204_NO_CONTENT)
+async def pin_chat(
+    chat_id: int,
+    operator: User = Depends(require_role(RoleName.OPERATOR, RoleName.ADMIN)),
+    session: AsyncSession = Depends(get_session),
+):
+    await ChatService(session).pin_chat(chat_id, operator.id)
+
+
+@router.delete("/chats/{chat_id}/pin-chat", status_code=status.HTTP_204_NO_CONTENT)
+async def unpin_chat(
+    chat_id: int,
+    operator: User = Depends(require_role(RoleName.OPERATOR, RoleName.ADMIN)),
+    session: AsyncSession = Depends(get_session),
+):
+    await ChatService(session).unpin_chat(chat_id, operator.id)
+
+
 # Закреплённые сообщения чата (пустой массив — ничего не закреплено)
 @router.get("/chats/{chat_id}/pinned", response_model=list[MessageOut])
 async def get_pinned_messages(

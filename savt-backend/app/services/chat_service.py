@@ -9,7 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import AlreadyExistsError, NotFoundError, PermissionDeniedError
 from app.models.chat import Chat
 from app.models.message import Message
-from app.repositories.chat import ChatPinRepository, ChatRepository, ChatSettingsRepository, MessageRepository
+from app.repositories.chat import (
+    ChatPinRepository, ChatRepository, ChatSettingsRepository, MessageRepository, PinnedChatRepository,
+)
 from app.services.realtime_events import (
     publish_chat_updated,
     publish_message_created,
@@ -61,6 +63,7 @@ class ChatService:
         self.chat_repo = ChatRepository(session)
         self.msg_repo = MessageRepository(session)
         self.pin_repo = ChatPinRepository(session)
+        self.chat_pin_repo = PinnedChatRepository(session)
 
     # Возвращает вновь созданный чат поддержки (или None, если уже существовал) —
     # вызывающий код публикует chat.created после своего коммита
@@ -165,7 +168,7 @@ class ChatService:
         sr_map = await self._get_service_requests(sr_ids)
 
         result = []
-        for chat, cabinet, project in rows:
+        for chat, cabinet, project, is_pinned in rows:
             cabinet_name = None
             cabinet_object_number = None
             if cabinet:
@@ -199,6 +202,7 @@ class ChatService:
                 service_request_description=sr.description if sr else None,
                 service_request_created_at=sr.created_at if sr else None,
                 archived_at=chat.archived_at,
+                is_pinned=is_pinned,
             ))
         return result
 
@@ -206,18 +210,20 @@ class ChatService:
         self, operator_id: int, search: str | None = None,
         chat_type: str | None = None, archived: bool = False,
     ) -> list[ChatListOut]:
-        rows = await self.chat_repo.list_for_operator(search, chat_type=chat_type, archived=archived)
+        rows = await self.chat_repo.list_for_operator(
+            operator_id, search, chat_type=chat_type, archived=archived,
+        )
         if not rows:
             return []
 
-        chat_ids = [chat.id for chat, _, _, _ in rows]
+        chat_ids = [chat.id for chat, _, _, _, _ in rows]
         unread_counts = await self.chat_repo.get_unread_counts_batch(chat_ids, operator_id)
         last_msgs = await self.msg_repo.get_last_messages_batch(chat_ids)
-        sr_ids = [chat.service_request_id for chat, _, _, _ in rows if chat.service_request_id is not None]
+        sr_ids = [chat.service_request_id for chat, _, _, _, _ in rows if chat.service_request_id is not None]
         sr_map = await self._get_service_requests(sr_ids)
 
         result = []
-        for chat, user, cabinet, project in rows:
+        for chat, user, cabinet, project, is_pinned in rows:
             cabinet_name = None
             cabinet_object_number = None
             if cabinet:
@@ -250,6 +256,7 @@ class ChatService:
                 service_request_description=sr.description if sr else None,
                 service_request_created_at=sr.created_at if sr else None,
                 archived_at=chat.archived_at,
+                is_pinned=is_pinned,
             ))
         return result
 
@@ -283,6 +290,7 @@ class ChatService:
         user = await UserRepository(self.session).get_by_id(chat.user_id)
 
         unread = await self.chat_repo.get_unread_count(chat.id, operator_id)
+        is_pinned = await self.chat_pin_repo.is_pinned(operator_id, chat.id)
         last_text = None
         msgs = await self.msg_repo.get_messages(chat.id, limit=1)
         if msgs:
@@ -316,7 +324,23 @@ class ChatService:
             service_request_description=sr.description if sr else None,
             service_request_created_at=sr.created_at if sr else None,
             archived_at=chat.archived_at,
+            is_pinned=is_pinned,
         )
+
+    # Личное закрепление чата в списке — доступно и владельцу, и
+    # оператору/админу (та же проверка доступа, что у остальных действий над
+    # чатом), но результат виден только тому, кто закрепил, см. PinnedChat.__doc__
+    async def pin_chat(self, chat_id: int, user_id: int) -> None:
+        chat = await self._get_chat_or_403(chat_id, user_id)
+        await self.chat_pin_repo.add(user_id, chat_id)
+        await self.session.commit()
+        await publish_chat_updated(chat_id, chat_summary_dict(chat))
+
+    async def unpin_chat(self, chat_id: int, user_id: int) -> None:
+        chat = await self._get_chat_or_403(chat_id, user_id)
+        await self.chat_pin_repo.remove(user_id, chat_id)
+        await self.session.commit()
+        await publish_chat_updated(chat_id, chat_summary_dict(chat))
 
     async def _get_service_requests(self, ids: list[int]) -> dict:
         if not ids:

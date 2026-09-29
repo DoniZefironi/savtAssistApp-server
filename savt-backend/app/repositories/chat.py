@@ -8,6 +8,7 @@ from app.models.chat_user_settings import ChatUserSettings
 from app.models.message import Message
 from app.models.message_attchment import MessageAttachment
 from app.models.message_reaction import MessageReaction
+from app.models.pinned_chat import PinnedChat
 from app.models.user import User
 from app.utils.db import escape_like
 
@@ -108,6 +109,9 @@ class ChatRepository:
     # Cabinet/Project сразу джойном (не по одному в цикле сервиса) — та же
     # причина, что у list_for_operator: раньше на каждый чат в списке уходило
     # по отдельному запросу за ШУ и проектом.
+    # Личное закрепление (PinnedChat) джойнится ПО ВЬЮВЕРУ (user_id/operator_id
+    # аргумента), не по владельцу чата (Chat.user_id) — тот же чат закреплён
+    # или нет независимо у каждого, кто на него смотрит, см. PinnedChat.__doc__
     async def list_for_user(
         self, user_id: int, chat_type: str | None = None, archived: bool = False,
     ) -> list[tuple]:
@@ -117,26 +121,31 @@ class ChatRepository:
         conditions.append(Chat.archived_at.isnot(None) if archived else Chat.archived_at.is_(None))
         if chat_type:
             conditions.append(Chat.chat_type == chat_type)
+        is_pinned = PinnedChat.id.isnot(None)
         result = await self.session.execute(
-            select(Chat, Cabinet, Project)
+            select(Chat, Cabinet, Project, is_pinned)
             .outerjoin(Cabinet, Cabinet.id == Chat.cabinet_id)
             .outerjoin(Project, Project.id == Chat.project_id)
+            .outerjoin(PinnedChat, (PinnedChat.chat_id == Chat.id) & (PinnedChat.user_id == user_id))
             .where(*conditions)
-            .order_by(Chat.last_message_at.desc().nullslast(), Chat.created_at.desc())
+            .order_by(is_pinned.desc(), Chat.last_message_at.desc().nullslast(), Chat.created_at.desc())
         )
         return result.all()
 
     async def list_for_operator(
-        self, search: str | None = None, chat_type: str | None = None, archived: bool = False,
+        self, operator_id: int, search: str | None = None,
+        chat_type: str | None = None, archived: bool = False,
     ) -> list[tuple]:
         from sqlalchemy import or_
         from app.models.cabinets import Cabinet
         from app.models.project import Project
+        is_pinned = PinnedChat.id.isnot(None)
         stmt = (
-            select(Chat, User, Cabinet, Project)
+            select(Chat, User, Cabinet, Project, is_pinned)
             .outerjoin(User, User.id == Chat.user_id)
             .outerjoin(Cabinet, Cabinet.id == Chat.cabinet_id)
             .outerjoin(Project, Project.id == Chat.project_id)
+            .outerjoin(PinnedChat, (PinnedChat.chat_id == Chat.id) & (PinnedChat.user_id == operator_id))
             .where(Chat.chat_type.in_(VISIBLE_CHAT_TYPES))
         )
         stmt = stmt.where(Chat.archived_at.isnot(None) if archived else Chat.archived_at.is_(None))
@@ -152,7 +161,11 @@ class ChatRepository:
                 Cabinet.type.ilike(pattern, escape="\\"),
                 Project.name.ilike(pattern, escape="\\"),
             ))
-        stmt = stmt.order_by(Chat.operator_requested.desc(), Chat.last_message_at.desc().nullslast())
+        # operator_requested остаётся первым критерием намеренно: это очередь
+        # чатов, реально ждущих оператора, личный пин не должен её перекрывать
+        stmt = stmt.order_by(
+            Chat.operator_requested.desc(), is_pinned.desc(), Chat.last_message_at.desc().nullslast(),
+        )
         result = await self.session.execute(stmt)
         return result.all()
 
@@ -489,3 +502,31 @@ class ChatPinRepository:
             .order_by(ChatPinnedMessage.pinned_at.desc())
         )
         return result.all()
+
+
+# Личное закрепление ЧАТА в списке (не сообщения внутри чата — за это
+# отвечает ChatPinRepository выше) — см. PinnedChat.__doc__
+class PinnedChatRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def is_pinned(self, user_id: int, chat_id: int) -> bool:
+        result = await self.session.execute(
+            select(PinnedChat.id).where(
+                PinnedChat.user_id == user_id, PinnedChat.chat_id == chat_id,
+            )
+        )
+        return result.scalar_one_or_none() is not None
+
+    async def add(self, user_id: int, chat_id: int) -> None:
+        stmt = pg_insert(PinnedChat).values(
+            user_id=user_id, chat_id=chat_id,
+        ).on_conflict_do_nothing(index_elements=["user_id", "chat_id"])
+        await self.session.execute(stmt)
+
+    async def remove(self, user_id: int, chat_id: int) -> None:
+        await self.session.execute(
+            delete(PinnedChat).where(
+                PinnedChat.user_id == user_id, PinnedChat.chat_id == chat_id,
+            )
+        )

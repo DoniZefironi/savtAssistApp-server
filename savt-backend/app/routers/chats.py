@@ -172,6 +172,27 @@ async def set_wallpaper(
     return await ChatService(session).set_wallpaper(chat_id, current_user.id, payload.wallpaper_url)
 
 
+# Закрепление ЧАТА в своём списке — личное: видно только тому, кто закрепил
+# (сам пользователь либо любой оператор/админ отдельно у себя), не путать с
+# закреплением сообщений внутри чата ниже
+@router.put("/chats/{chat_id}/pin-chat", status_code=status.HTTP_204_NO_CONTENT)
+async def pin_chat(
+    chat_id: int,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    await ChatService(session).pin_chat(chat_id, current_user.id)
+
+
+@router.delete("/chats/{chat_id}/pin-chat", status_code=status.HTTP_204_NO_CONTENT)
+async def unpin_chat(
+    chat_id: int,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    await ChatService(session).unpin_chat(chat_id, current_user.id)
+
+
 # Закреплённые сообщения чата
 @router.get("/chats/{chat_id}/pinned", response_model=list[MessageOut])
 async def get_pinned_messages(
