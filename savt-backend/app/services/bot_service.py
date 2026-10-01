@@ -445,13 +445,25 @@ def _operator_intent(text: str) -> str | None:
 
 def _explicit_operator_request(text: str) -> bool:
     """Пользователь сам, без вопроса от бота, явно просит оператора — только
-    по явным словам ("оператор" и т.п.), см. _EXPLICIT_OPERATOR_WORDS."""
+    по явным словам ("оператор" и т.п.), см. _EXPLICIT_OPERATOR_WORDS.
+
+    Отрицание рядом со словом-триггером перевешивает в обе стороны:
+    "не вызывай оператора" (отрицание ДО, в пределах двух слов — "не" может
+    относиться к глаголу перед триггером, а не напрямую к нему) и "оператор
+    не нужен" (отрицание СРАЗУ ПОСЛЕ — обычный для русского порядок слов в
+    конструкции "X не нужен/не надо"). Раньше проверялось только одно слово
+    строго перед триггером, из-за чего "оператор не нужен" без
+    предшествующего вопроса бота читался как явная просьба позвать
+    оператора — ровно обратное тому, что сказал человек (найдено тестом)."""
     tokens = _tokens(text)
     for i, token in enumerate(tokens):
-        if token in _EXPLICIT_OPERATOR_WORDS:
-            negated = i > 0 and tokens[i - 1] in _NEGATIONS
-            if not negated:
-                return True
+        if token not in _EXPLICIT_OPERATOR_WORDS:
+            continue
+        preceding = tokens[max(0, i - 2):i]
+        following = tokens[i + 1] if i + 1 < len(tokens) else None
+        negated = any(t in _NEGATIONS for t in preceding) or following in _NEGATIONS
+        if not negated:
+            return True
     return False
 
 
