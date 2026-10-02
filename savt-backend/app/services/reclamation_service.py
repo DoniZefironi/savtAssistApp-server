@@ -494,8 +494,17 @@ def _sync_to_bitrix(
             )
 
             try:
+                # Подписываем прямо перед вызовом, не раньше: attachment_url в
+                # БД/очереди повторов хранится голым (см. ReclamationAttachmentIn
+                # в схемах), а bitrix_service читает файл с диска через
+                # _read_local_file, которой нужна ДЕЙСТВУЮЩАЯ подпись здесь и
+                # сейчас — если подписать заранее и сохранить готовую ссылку в
+                # очередь, к моменту повтора (не раньше чем через 15 минут,
+                # а если застряло — хоть через дни) она истечёт точно так же,
+                # как истекала готовая ссылка, сохранённая когда-то в БД.
+                from app.core.signed_urls import sign_url
                 item_id = await bitrix_service.create_reclamation_item(
-                    description, deal_id, company_id, attachment_url, project_name,
+                    description, deal_id, company_id, sign_url(attachment_url), project_name,
                     object_serial_number, contract_info, component_info,
                 )
                 if not item_id:
@@ -531,10 +540,15 @@ def _sync_status_to_bitrix(
     Гарантию сюда намеренно не добавляем — см. _sync_warranty_to_bitrix и
     докстринг bitrix_service.update_reclamation_stage про автозакрытие."""
     async def _task():
+        from app.core.signed_urls import sign_url
         from app.services import bitrix_service
         try:
+            # Подписываем прямо перед вызовом — тот же довод, что у
+            # attachment_url в _sync_to_bitrix: rec.confirmation_file_url в БД
+            # голый, а bitrix_service резолвит его в файл на диске через
+            # _read_local_file, которой нужна подпись, действующая именно сейчас.
             await bitrix_service.update_reclamation_stage(
-                bitrix_item_id, status, confirmation_file_url, deadline,
+                bitrix_item_id, status, sign_url(confirmation_file_url), deadline,
             )
         except Exception as exc:
             _log.exception("Bitrix status sync failed for reclamation item %s", bitrix_item_id)
@@ -902,6 +916,7 @@ async def _retry_outbox_row(session, outbox_repo, row) -> bool:
     payload через PATCH /admin/reclamations/bitrix-outbox/{id}, чтобы увидеть
     результат правки тут же, а не ждать следующего цикла. Коммит — на
     вызывающей стороне, один раз после вызова этой функции."""
+    from app.core.signed_urls import sign_url
     from app.services import bitrix_service
 
     try:
@@ -916,7 +931,7 @@ async def _retry_outbox_row(session, outbox_repo, row) -> bool:
                 return True
             item_id = await bitrix_service.create_reclamation_item(
                 row.payload["description"], row.payload.get("deal_id"),
-                row.payload.get("company_id"), row.payload.get("attachment_url"),
+                row.payload.get("company_id"), sign_url(row.payload.get("attachment_url")),
                 row.payload.get("project_name"), row.payload.get("object_serial_number"),
                 row.payload.get("contract_info"), row.payload.get("component_info"),
             )
@@ -931,7 +946,7 @@ async def _retry_outbox_row(session, outbox_repo, row) -> bool:
                 raise RuntimeError("У рекламации всё ещё нет bitrix_item_id (create не прошёл)")
             saved_deadline = row.payload.get("deadline")
             pushed_stage = await bitrix_service.update_reclamation_stage(
-                bitrix_item_id, row.payload["status"], row.payload.get("confirmation_file_url"),
+                bitrix_item_id, row.payload["status"], sign_url(row.payload.get("confirmation_file_url")),
                 date.fromisoformat(saved_deadline) if saved_deadline else None,
             )
             if pushed_stage:

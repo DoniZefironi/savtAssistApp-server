@@ -1,20 +1,32 @@
 from datetime import date, datetime
 from typing import Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from app.core.signed_urls import SignedUrl, SignedUrlOpt, strip_signature
 
 
 class ReclamationAttachmentIn(BaseModel):
     """Файл уже загружен через POST /upload/attachment — сюда передаётся
-    полученный подписанный URL и метаданные из ответа на загрузку."""
+    полученный подписанный URL и метаданные из ответа на загрузку.
+
+    Клиент присылает обратно тот URL, который получил от нас, то есть уже
+    подписанный — в БД подпись попасть не должна (протухнет вместе с записью,
+    см. app/core/signed_urls.py), снимаем её здесь же, как и везде, где
+    принимается URL файла (ChatAttachmentIn, WallpaperIn и т.п.)."""
     file_url: str = Field(..., max_length=500)
     file_name: str | None = Field(None, max_length=255)
     file_size_bytes: int | None = Field(None, ge=0)
     mime_type: str | None = Field(None, max_length=100)
 
+    @field_validator("file_url")
+    @classmethod
+    def strip_url_signature(cls, v: str) -> str:
+        return strip_signature(v) or v
+
 
 class ReclamationAttachmentOut(BaseModel):
     id: int
-    file_url: str
+    file_url: SignedUrl
     file_name: str | None
     file_size_bytes: int | None
     mime_type: str | None
@@ -101,7 +113,7 @@ class ReclamationDetailOut(BaseModel):
     rejection_reason: str | None
     responsible_name: str | None
     responsible_phone: str | None
-    confirmation_file_url: str | None
+    confirmation_file_url: SignedUrlOpt
     confirmation_file_name: str | None
 
     created_at: datetime
@@ -158,9 +170,19 @@ class AdminReclamationUpdateIn(BaseModel):
     # подтверждающий документ — загружается заранее через POST /upload/attachment,
     # сюда передаётся уже готовая ссылка; обязателен при переходе в любой из
     # трёх закрывающих статусов: resolved, rejected, invalid — Bitrix требует
-    # его на всех трёх стадиях (см. ReclamationService._check_transition)
+    # его на всех трёх стадиях (см. ReclamationService._check_transition).
+    # Подпись снимаем на входе, как и у ReclamationAttachmentIn.file_url —
+    # иначе протухший при хранении md5/expires навсегда ломает и просмотр
+    # в приложении (410), и отправку документа в Bitrix (bitrix_service
+    # резолвит такие ссылки через _read_local_file, которая сама проверяет
+    # подпись и тоже не прочитает файл с истёкшим сроком).
     confirmation_file_url: str | None = Field(None, max_length=500)
     confirmation_file_name: str | None = Field(None, max_length=255)
+
+    @field_validator("confirmation_file_url")
+    @classmethod
+    def strip_url_signature(cls, v: str | None) -> str | None:
+        return strip_signature(v)
     # ID пользователя Bitrix, выбранного в дропдауне (GET /admin/reclamations/
     # bitrix-users) — сохраняется как реальная колонка и пробрасывается как
     # assignedById в карточку Bitrix (см. ReclamationService.update). Синхронизируется
