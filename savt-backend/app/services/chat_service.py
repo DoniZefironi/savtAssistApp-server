@@ -161,10 +161,10 @@ class ChatService:
         if not rows:
             return []
 
-        chat_ids = [chat.id for chat, _, _ in rows]
+        chat_ids = [chat.id for chat, _, _, _ in rows]
         unread_counts = await self.chat_repo.get_unread_counts_batch(chat_ids, user_id)
         last_msgs = await self.msg_repo.get_last_messages_batch(chat_ids)
-        sr_ids = [chat.service_request_id for chat, _, _ in rows if chat.service_request_id is not None]
+        sr_ids = [chat.service_request_id for chat, _, _, _ in rows if chat.service_request_id is not None]
         sr_map = await self._get_service_requests(sr_ids)
 
         result = []
