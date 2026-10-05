@@ -49,9 +49,7 @@ class ReclamationService:
                 raise ValidationError("Для объекта «ШУ» нужно выбрать конкретный шкаф")
             if not await self.cabinet_repo.user_has_access(user_id, data.cabinet_id):
                 raise PermissionDeniedError("У вас нет доступа к этому ШУ")
-        else:
-            if data.project_id is None:
-                raise ValidationError("Нужно выбрать проект, к которому относится рекламация")
+        elif data.project_id is not None:
             from app.repositories.project import UserProjectRepository
             if not await UserProjectRepository(self.session).find(user_id, data.project_id):
                 raise PermissionDeniedError("У вас нет доступа к этому проекту")

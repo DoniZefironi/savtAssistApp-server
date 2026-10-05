@@ -54,13 +54,7 @@ class Reclamation(Base):
     # здесь), project_id для остальных типов, где нет конкретного ШУ, но
     # рекламация всё равно относится к какому-то проекту/поставке.
     #
-    # project_id обязателен для всех типов не просто для порядка: Bitrix
-    # тянет компанию-заказчика ("Клиент") и контакты из сделки проекта, и с
-    # 2026-09-25 это поле стало обязательным при создании элемента —
-    # без deal_id/company_id (см. bitrix_service.create_reclamation_item)
-    # crm.item.add падает 400 CRM_FIELD_ERROR_REQUIRED. У рекламаций без
-    # project_id (типы line/component/software/documentation до этой правки)
-    # взять компанию было неоткуда.
+    # project_it опционален для типов без ШУ 
     cabinet_id: Mapped[int | None] = mapped_column(ForeignKey("cabinets.id"), nullable=True, index=True)
     project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True, index=True)
     # для остальных типов объекта — набор полей разный (у line просто
@@ -140,7 +134,7 @@ class Reclamation(Base):
         # NOT VALID, чтобы не упасть на старых данных, здесь же описан как
         # обычный CHECK для свежих БД (create_all там данных ещё нет)
         CheckConstraint(
-            "(cabinet_id IS NOT NULL) != (project_id IS NOT NULL)",
+            "NOT (cabinet_id IS NOT NULL AND project_id IS NOT NULL)",
             name="ck_reclamation_cabinet_or_project",
         ),
     )
