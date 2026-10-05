@@ -84,10 +84,3 @@ def test_confirmation_file_url_none_stays_none():
     out = ReclamationDetailOut(**_minimal_detail(confirmation_file_url=None))
     dumped = out.model_dump(mode="json")
     assert dumped["confirmation_file_url"] is None
-
-
-def test_confirmation_file_url_in_strips_signature_on_input():
-    from app.schemas.reclamation import AdminReclamationUpdateIn
-    signed = sign_url("/static/documents/doc.pdf")
-    parsed = AdminReclamationUpdateIn(confirmation_file_url=signed)
-    assert parsed.confirmation_file_url == "/static/documents/doc.pdf"

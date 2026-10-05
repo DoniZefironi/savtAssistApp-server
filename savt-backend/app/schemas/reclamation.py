@@ -153,51 +153,6 @@ class AdminReclamationOut(ReclamationDetailOut):
     bitrix_deleted_at: datetime | None = None
 
 
-class AdminReclamationUpdateIn(BaseModel):
-    """Частичное обновление (exclude_unset). Проверки вроде "нельзя отклонить
-    без причины" — в сервисе при смене статуса, не здесь: правило зависит от
-    итогового состояния объекта (какой статус ставится), а не от одного поля."""
-    # один к одному со стадиями смарт-процесса Bitrix, см. Reclamation.__doc__
-    status: str | None = Field(
-        None, pattern="^(new|review|in_progress|resolved|rejected|invalid)$"
-    )
-    warranty_classification: bool | None = None
-    root_cause: str | None = None
-    resolution_comment: str | None = None
-    rejection_reason: str | None = None
-    responsible_name: str | None = Field(None, max_length=200)
-    responsible_phone: str | None = Field(None, max_length=20)
-    # подтверждающий документ — загружается заранее через POST /upload/attachment,
-    # сюда передаётся уже готовая ссылка; обязателен при переходе в любой из
-    # трёх закрывающих статусов: resolved, rejected, invalid — Bitrix требует
-    # его на всех трёх стадиях (см. ReclamationService._check_transition).
-    # Подпись снимаем на входе, как и у ReclamationAttachmentIn.file_url —
-    # иначе протухший при хранении md5/expires навсегда ломает и просмотр
-    # в приложении (410), и отправку документа в Bitrix (bitrix_service
-    # резолвит такие ссылки через _read_local_file, которая сама проверяет
-    # подпись и тоже не прочитает файл с истёкшим сроком).
-    confirmation_file_url: str | None = Field(None, max_length=500)
-    confirmation_file_name: str | None = Field(None, max_length=255)
-
-    @field_validator("confirmation_file_url")
-    @classmethod
-    def strip_url_signature(cls, v: str | None) -> str | None:
-        return strip_signature(v)
-    # ID пользователя Bitrix, выбранного в дропдауне (GET /admin/reclamations/
-    # bitrix-users) — сохраняется как реальная колонка и пробрасывается как
-    # assignedById в карточку Bitrix (см. ReclamationService.update). Синхронизируется
-    # в обе стороны, как и deadline_at, поэтому и в ответе (AdminReclamationOut) —
-    # можно использовать, чтобы предвыбрать текущего ответственного в дропдауне.
-    # responsible_name/responsible_phone по-прежнему передавайте отдельно —
-    # это поле их не заменяет, только дополнительно синхронизирует с Bitrix
-    responsible_bitrix_user_id: int | None = None
-    # Срок отработки рекламации, "ГГГГ-ММ-ДД". Уходит в поле "Дедлайн" карточки
-    # Bitrix и подтягивается оттуда обратно, если его поменяли на портале.
-    # Bitrix требует это поле заполненным при смене стадии, так что лучше
-    # задать его до перевода статуса — иначе подставится "сегодня + 7 дней"
-    deadline_at: date | None = None
-
-
 class BitrixUserOut(BaseModel):
     id: int
     full_name: str

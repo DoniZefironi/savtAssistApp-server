@@ -8,7 +8,6 @@ from app.schemas.pagination import PageOut
 from app.schemas.reclamation import (
     AdminReclamationListItemOut,
     AdminReclamationOut,
-    AdminReclamationUpdateIn,
     BitrixUserOut,
     ReclamationCreateIn,
     ReclamationDetachedOut,
@@ -141,18 +140,6 @@ async def get_reclamation_admin(
     session: AsyncSession = Depends(get_session),
 ):
     return await ReclamationService(session).get_admin(reclamation_id)
-
-
-@router.patch("/admin/reclamations/{reclamation_id}", response_model=AdminReclamationOut)
-async def update_reclamation(
-    reclamation_id: int,
-    payload: AdminReclamationUpdateIn,
-    actor: User = Depends(require_role(RoleName.ADMIN)),
-    actor_role: str = Depends(get_role_from_token),
-    session: AsyncSession = Depends(get_session),
-):
-    changed = payload.model_dump(exclude_unset=True)
-    return await ReclamationService(session).update(reclamation_id, changed, actor.id, actor_role)
 
 
 # Только для рекламаций из GET /admin/reclamations/bitrix-detached — живую

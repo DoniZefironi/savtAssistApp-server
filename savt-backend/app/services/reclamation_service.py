@@ -144,99 +144,6 @@ class ReclamationService:
             bitrix_item_id=rec.bitrix_item_id, bitrix_deleted_at=rec.bitrix_deleted_at,
         )
 
-    async def update(
-        self, reclamation_id: int, changed: dict, actor_id: int, actor_role: str,
-    ) -> AdminReclamationOut:
-        rec = await self.repo.get_by_id(reclamation_id)
-        if rec is None:
-            raise NotFoundError("Рекламация не найдена")
-
-        # Выносим из общего цикла setattr не потому, что не колонка (теперь
-        # колонка), а чтобы отличить "поле не прислали" от "прислали null" —
-        # первое не должно менять ничего, второе явно снимает ответственного.
-        # _UNSET нужен именно для этого различения: changed.pop с default=None
-        # не отличил бы "не прислали" от "прислали null" (оба дали бы None)
-        _UNSET = object()
-        responsible_bitrix_user_id = changed.pop("responsible_bitrix_user_id", _UNSET)
-        if responsible_bitrix_user_id is not _UNSET:
-            rec.responsible_bitrix_user_id = responsible_bitrix_user_id
-        else:
-            responsible_bitrix_user_id = None
-
-        deadline_changed = "deadline_at" in changed and changed["deadline_at"] != rec.deadline_at
-        # Гарантия шлётся в Bitrix отдельным вызовом, никогда не вместе со
-        # сменой стадии — см. bitrix_service.update_reclamation_stage про то,
-        # почему их совместная отправка запускала автозакрытие карточки
-        warranty_changed = (
-            "warranty_classification" in changed
-            and changed["warranty_classification"] != rec.warranty_classification
-        )
-
-        status_changed = "status" in changed and changed["status"] != rec.status
-        if status_changed:
-            self._check_transition(rec, changed)
-
-        # Под эти три текстовых поля в Bitrix нет отдельного UF-поля —
-        # изменения уходят одним комментарием в таймлайн карточки, см.
-        # _sync_comment_to_bitrix. Сравниваем со старым значением ДО setattr
-        # ниже, тем же порядком, что deadline_changed/warranty_changed выше
-        comment_lines = []
-        for field, label in (
-            ("root_cause", "Коренная причина"),
-            ("resolution_comment", "Итоговый комментарий"),
-            ("rejection_reason", "Причина отклонения"),
-        ):
-            if field in changed and changed[field] and changed[field] != getattr(rec, field):
-                comment_lines.append(f"{label}: {changed[field]}")
-
-        for field, value in changed.items():
-            setattr(rec, field, value)
-        if status_changed and rec.status in ("resolved", "rejected", "invalid"):
-            rec.resolved_at = datetime.now(timezone.utc)
-
-        # попнутые выше поля в changed уже не попадут, а это действия админа
-        # на самом портале — в аудите они нужны не меньше остальных
-        audit_meta = {"fields": list(changed.keys())}
-        if responsible_bitrix_user_id is not None:
-            audit_meta["responsible_bitrix_user_id"] = responsible_bitrix_user_id
-        self.audit.log(
-            "reclamation.update", "reclamation", rec.id, actor_id, actor_role, audit_meta,
-        )
-        await self.session.commit()
-
-        # Ответственного отправляем в той же задаче ПОСЛЕ стадии, а не
-        # параллельно с ней: любое наше обновление карточки возвращается к нам
-        # вебхуком, и если ответственный уедет раньше стадии, вебхук прочитает
-        # ещё старую стадию и откатит статус (ровно так 2026-09-23 у №16
-        # выставленный админом resolved сам вернулся в review)
-        assignee_to_push = responsible_bitrix_user_id if rec.bitrix_item_id else None
-
-        if status_changed:
-            await self._notify_status_change(rec)
-            if rec.bitrix_item_id:
-                # дедлайн уезжает вместе со стадией — Bitrix всё равно требует
-                # его заполненным при переходе, отдельный вызов был бы лишним.
-                # Гарантия — НЕ вместе, намеренно, см. _sync_warranty_to_bitrix
-                _sync_status_to_bitrix(
-                    rec.id, rec.bitrix_item_id, rec.status, rec.confirmation_file_url,
-                    rec.deadline_at, assignee_to_push,
-                )
-                assignee_to_push = None
-                deadline_changed = False
-
-        if deadline_changed and rec.bitrix_item_id:
-            _sync_deadline_to_bitrix(rec.id, rec.bitrix_item_id, rec.deadline_at)
-
-        if comment_lines and rec.bitrix_item_id:
-            _sync_comment_to_bitrix(rec.id, rec.bitrix_item_id, "\n".join(comment_lines))
-
-        if warranty_changed and rec.bitrix_item_id:
-            _sync_warranty_to_bitrix(rec.id, rec.bitrix_item_id, rec.warranty_classification)
-
-        if assignee_to_push:
-            _sync_assignee_to_bitrix(rec.id, rec.bitrix_item_id, assignee_to_push)
-
-        return await self.get_admin(reclamation_id)
 
     async def delete_detached(self, reclamation_id: int, actor_id: int, actor_role: str) -> None:
         """Удаление — только для рекламаций, чью карточку уже удалили в Bitrix.
@@ -315,38 +222,6 @@ class ReclamationService:
             )
             for rec, user in rows
         ]
-
-    # Обязательные проверки из п.8 ТЗ — завязаны на итоговое состояние заявки
-    # (текущее значение + то, что меняется этим PATCH), поэтому в сервисе, не
-    # в схеме, см. AdminReclamationUpdateIn.__doc__
-    @staticmethod
-    def _check_transition(rec, changed: dict) -> None:
-        new_status = changed["status"]
-        rejection_reason = changed.get("rejection_reason", rec.rejection_reason)
-        resolution_comment = changed.get("resolution_comment", rec.resolution_comment)
-        responsible_name = changed.get("responsible_name", rec.responsible_name)
-        confirmation_file_url = changed.get("confirmation_file_url", rec.confirmation_file_url)
-
-        if new_status in ("rejected", "invalid") and not rejection_reason:
-            raise ValidationError("Нельзя отклонить рекламацию без указания причины")
-        if new_status == "resolved" and not resolution_comment:
-            raise ValidationError("Нельзя закрыть рекламацию без итогового комментария")
-        # Bitrix требует подтверждающий документ на всех трёх закрывающих
-        # стадиях, не только при исполнении (проверено вживую 2026-09-23),
-        # поэтому и мы требуем его и при отклонении тоже
-        if new_status in ("resolved", "rejected", "invalid") and not confirmation_file_url:
-            raise ValidationError(
-                "Нельзя закрыть или отклонить рекламацию без подтверждающего документа"
-            )
-        if new_status == "in_progress" and not responsible_name:
-            raise ValidationError("Нельзя перевести рекламацию в работу без ответственного лица")
-        # Классификация (гарантия/платно) НЕ обязательна для перехода в работу —
-        # это наше собственное правило, не Bitrix (там для этой стадии требуются
-        # только служебное поле и дедлайн, гарантия не проверяется вовсе). Раньше
-        # мы требовали её здесь же, но это мешало реальной работе: 2026-09-25
-        # снято по прямому решению — гарантию теперь можно проставить в любой
-        # момент, не обязательно до входа в работу, см. _notify_status_change,
-        # который поэтому больше не предполагает, что она уже известна.
 
     async def _notify_status_change(self, rec) -> None:
         if rec.status == "in_progress":
@@ -529,43 +404,6 @@ def _sync_to_bitrix(
 
     asyncio.create_task(_task())
 
-def _sync_status_to_bitrix(
-    reclamation_id: int, bitrix_item_id: str, status: str, confirmation_file_url: str | None,
-    deadline: date | None = None, assignee_id: int | None = None,
-) -> None:
-    """assignee_id отправляется здесь же, строго после стадии — почему именно
-    так, а не параллельно, см. комментарий в ReclamationService.update.
-    Гарантию сюда намеренно не добавляем — см. _sync_warranty_to_bitrix и
-    докстринг bitrix_service.update_reclamation_stage про автозакрытие."""
-    async def _task():
-        from app.core.signed_urls import sign_url
-        from app.services import bitrix_service
-        try:
-            # Подписываем прямо перед вызовом — тот же довод, что у
-            # attachment_url в _sync_to_bitrix: rec.confirmation_file_url в БД
-            # голый, а bitrix_service резолвит его в файл на диске через
-            # _read_local_file, которой нужна подпись, действующая именно сейчас.
-            await bitrix_service.update_reclamation_stage(
-                bitrix_item_id, status, sign_url(confirmation_file_url), deadline,
-            )
-        except Exception as exc:
-            _log.exception("Bitrix status sync failed for reclamation item %s", bitrix_item_id)
-            await _record_bitrix_failure(
-                reclamation_id, "status",
-                {
-                    "status": status, "confirmation_file_url": confirmation_file_url,
-                    "deadline": deadline.isoformat() if deadline else None,
-                },
-                exc,
-            )
-
-        # Ответственного шлём в любом случае — админ его назначил, и от того,
-        # уехала стадия или нет, это не зависит
-        if assignee_id:
-            await _push_assignee(reclamation_id, bitrix_item_id, assignee_id)
-
-    asyncio.create_task(_task())
-
 
 async def _notify_integration_admins(session, title: str, body: str, data: dict) -> None:
     """п.8 ТЗ: 'при ошибке передачи ... уведомить администратора интеграции' —
@@ -620,88 +458,6 @@ async def _record_bitrix_failure(
                 data={"reclamation_id": reclamation_id, "operation": operation},
             )
         await session.commit()
-
-
-async def _push_assignee(reclamation_id: int, bitrix_item_id: str, bitrix_user_id: int) -> None:
-    from app.services import bitrix_service
-    try:
-        await bitrix_service.update_reclamation_assignee(bitrix_item_id, bitrix_user_id)
-    except Exception as exc:
-        _log.exception(
-            "Bitrix assignee sync failed for reclamation item %s (user %s)",
-            bitrix_item_id, bitrix_user_id,
-        )
-        await _record_bitrix_failure(
-            reclamation_id, "assignee", {"bitrix_user_id": bitrix_user_id}, exc,
-        )
-
-
-def _sync_deadline_to_bitrix(reclamation_id: int, bitrix_item_id: str, deadline: date | None) -> None:
-    """Срок поменяли без смены статуса. Когда статус меняется тем же запросом,
-    дедлайн уезжает не отсюда, а вместе со стадией (Bitrix всё равно требует
-    его при переходе) — см. ReclamationService.update."""
-    async def _task():
-        from app.services import bitrix_service
-        try:
-            await bitrix_service.update_reclamation_deadline(bitrix_item_id, deadline)
-        except Exception as exc:
-            _log.exception("Bitrix deadline sync failed for reclamation item %s", bitrix_item_id)
-            await _record_bitrix_failure(
-                reclamation_id, "deadline",
-                {"deadline": deadline.isoformat() if deadline else None},
-                exc,
-            )
-
-    asyncio.create_task(_task())
-
-
-def _sync_assignee_to_bitrix(reclamation_id: int, bitrix_item_id: str, bitrix_user_id: int) -> None:
-    """Назначение ответственного само по себе, без смены статуса. Когда статус
-    меняется тем же запросом, ответственный уезжает не отсюда, а из
-    _sync_status_to_bitrix — строго после стадии."""
-    asyncio.create_task(_push_assignee(reclamation_id, bitrix_item_id, bitrix_user_id))
-
-
-def _sync_warranty_to_bitrix(reclamation_id: int, bitrix_item_id: str, warranty: bool | None) -> None:
-    """Гарантия — ВСЕГДА отдельным вызовом, никогда вместе со сменой стадии,
-    даже если оба поля поменялись одним PATCH (частый случай, когда статус и
-    классификация меняются вместе). Отправка "Гарантии" в одном запросе со
-    stageId запускала на портале автозакрытие карточки (диагностировано и
-    подтверждено заказчиком 2026-09-25, см. докстринг
-    bitrix_service.update_reclamation_stage) — раздельные вызовы это обходят.
-
-    warranty=None — реально очищает поле в Bitrix (см.
-    bitrix_service.update_reclamation_warranty), а не просто "не отправляем":
-    раньше вызов при None вообще пропускался, из-за чего снять классификацию
-    в нашей админке было можно, а в Bitrix значение оставалось прежним и
-    возвращалось назад при следующем вебхуке (баг, найден 2026-09-28)."""
-    async def _task():
-        from app.services import bitrix_service
-        try:
-            await bitrix_service.update_reclamation_warranty(bitrix_item_id, warranty)
-        except Exception as exc:
-            _log.exception("Bitrix warranty sync failed for reclamation item %s", bitrix_item_id)
-            await _record_bitrix_failure(
-                reclamation_id, "warranty", {"warranty": warranty}, exc,
-            )
-
-    asyncio.create_task(_task())
-
-
-def _sync_comment_to_bitrix(reclamation_id: int, bitrix_item_id: str, text: str) -> None:
-    """root_cause/resolution_comment/rejection_reason — под них в процессе нет
-    UF-поля, поэтому уходят одним комментарием в таймлайн карточки
-    (crm.timeline.comment.add), а не через crm.item.update. Односторонне:
-    специалист увидит текст в Bitrix, но правку там же мы не читаем обратно."""
-    async def _task():
-        from app.services import bitrix_service
-        try:
-            await bitrix_service.add_reclamation_comment(bitrix_item_id, text)
-        except Exception as exc:
-            _log.exception("Bitrix comment sync failed for reclamation item %s", bitrix_item_id)
-            await _record_bitrix_failure(reclamation_id, "comment", {"text": text}, exc)
-
-    asyncio.create_task(_task())
 
 
 def _is_item_gone(error_text: str) -> bool:

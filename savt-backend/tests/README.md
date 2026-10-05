@@ -45,8 +45,6 @@ docker run --rm -v "$(pwd):/code" -w /code \
 
 ## Что уже покрыто
 
-- `test_reclamation_transitions.py` — правила обязательных полей при смене
-  статуса рекламации (`_check_transition`), чистая логика, без БД.
 - `test_reclamation_bitrix_fields.py` — сборка нативных полей Bitrix
   (заводской номер/данные ПКИ) из `object_type`/`object_details`, чистая логика.
 - `test_reclamation_outbox_retry.py` — повтор недоставленной операции
@@ -100,7 +98,7 @@ docker run --rm -v "$(pwd):/code" -w /code \
 
 ## Что ещё не покрыто (осознанно, следующий шаг)
 
-`ReclamationService.create()`/`.update()` целиком — они пушат в Bitrix через
+`ReclamationService.create()` целиком — он пушит в Bitrix через
 `asyncio.create_task(...)` на отдельной сессии (fire-and-forget), это
 сознательный архитектурный выбор (чтобы ответ пользователю не ждал Bitrix), но
 из-за него сам факт ухода в Bitrix тестом снаружи не поймать без доработки
