@@ -735,10 +735,14 @@ def _build_bitrix_description(rec: Reclamation) -> str:
     ПКИ раньше дублировались сюда текстом, теперь у них есть нативные поля
     (см. bitrix_service.create_reclamation_item), и в описании им делать нечего."""
     lines = [rec.description, "", "--- Дополнительно (Savt Assist) ---"]
-    # для line и component object_details целиком уходит в свои поля, а для
-    # software/documentation поля нет — только тут его и покажем
-    if rec.object_details and rec.object_type not in ("line", "component"):
-        lines.append(f"Данные объекта: {rec.object_details}")
+    # для cabinet/line/component object_details целиком уходит в свои поля
+    # (см. _build_bitrix_native_fields), а для software/documentation
+    # своего поля в Bitrix нет — только тут его и покажем, читаемым текстом,
+    # а не питоновским repr словаря
+    if rec.object_details and rec.object_type not in ("cabinet", "line", "component"):
+        details_text = ", ".join(f"{k}: {v}" for k, v in rec.object_details.items() if v)
+        if details_text:
+            lines.append(f"Данные объекта: {details_text}")
     lines.append(f"Контакт: {rec.contact_name}, {rec.contact_phone}, {rec.contact_email}")
     if rec.customer_name:
         lines.append(f"Заказчик: {rec.customer_name}")
