@@ -35,6 +35,17 @@ class ReclamationOutboxRepository:
         )
         return result.scalar_one_or_none() is not None
 
+    async def get_pending_create(self, reclamation_id: int) -> ReclamationBitrixOutbox | None:
+        result = await self.session.execute(
+            select(ReclamationBitrixOutbox)
+            .where(
+                ReclamationBitrixOutbox.reclamation_id == reclamation_id,
+                ReclamationBitrixOutbox.operation == "create",
+            )
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def get(self, outbox_id: int) -> ReclamationBitrixOutbox | None:
         return await self.session.get(ReclamationBitrixOutbox, outbox_id)
 

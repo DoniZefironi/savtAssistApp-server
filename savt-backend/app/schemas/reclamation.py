@@ -37,13 +37,8 @@ class ReclamationAttachmentOut(BaseModel):
 
 class ReclamationCreateIn(BaseModel):
     object_type: str = Field(..., pattern="^(cabinet|line|component|software|documentation)$")
-    # Ровно одно из двух обязательно — проверяется в сервисе, т.к. правило
-    # зависит от object_type, а не от самого поля: cabinet_id при "cabinet",
-    # иначе project_id (нужен для отправки в Bitrix — см. Reclamation.__doc__
-    # в app/models/reclamation.py про поле "Клиент")
-    cabinet_id: int | None = Field(None, gt=0)
-    project_id: int | None = Field(None, gt=0)
-    # состав зависит от object_type: line -> {"serial_number": "..."},
+    # состав зависит от object_type: cabinet/line -> {"serial_number": "..."}
+    # (заводской номер пользователь списывает вручную с самого объекта),
     # component -> {"name", "model", "article", "serial_number"} (п.4 ТЗ),
     # software/documentation -> что понадобится по факту
     object_details: dict[str, Any] | None = None
@@ -127,6 +122,23 @@ class ReclamationDetailOut(BaseModel):
 # --- админка: обработка идёт и отсюда, и на стороне Bitrix — статусы
 # синхронизируются в обе стороны (см. Reclamation.__doc__) ---
 
+class ReclamationOutboxOut(BaseModel):
+    """Недоставленная попытка синхронизации с Bitrix (п.8 ТЗ) — для
+    администратора интеграции, см. GET /admin/reclamations/bitrix-outbox.
+    payload виден полностью — по нему понятно, что именно не отправилось
+    (например, пустой company_id при сбое create), без захода в БД руками."""
+    id: int
+    reclamation_id: int
+    operation: str
+    payload: dict[str, Any]
+    attempts: int
+    last_error: str | None
+    created_at: datetime
+    last_attempted_at: datetime | None
+
+    model_config = {"from_attributes": True}
+
+
 class AdminReclamationListItemOut(ReclamationListItemOut):
     user_id: int
     # ФИО подавшего аккаунта — не путать с contact_name (снимок с формы заявки,
@@ -151,6 +163,7 @@ class AdminReclamationOut(ReclamationDetailOut):
     # заполнено, если карточку в Bitrix удалили: тогда bitrix_item_id пуст, и
     # отличить это от "никогда не уезжала в Bitrix" можно только отсюда
     bitrix_deleted_at: datetime | None = None
+    pending_create_outbox: ReclamationOutboxOut | None = None
 
 
 class BitrixUserOut(BaseModel):
@@ -170,23 +183,6 @@ class ReclamationDetachedOut(BaseModel):
     user_full_name: str | None = None
     created_at: datetime
     bitrix_deleted_at: datetime
-
-    model_config = {"from_attributes": True}
-
-
-class ReclamationOutboxOut(BaseModel):
-    """Недоставленная попытка синхронизации с Bitrix (п.8 ТЗ) — для
-    администратора интеграции, см. GET /admin/reclamations/bitrix-outbox.
-    payload виден полностью — по нему понятно, что именно не отправилось
-    (например, пустой company_id при сбое create), без захода в БД руками."""
-    id: int
-    reclamation_id: int
-    operation: str
-    payload: dict[str, Any]
-    attempts: int
-    last_error: str | None
-    created_at: datetime
-    last_attempted_at: datetime | None
 
     model_config = {"from_attributes": True}
 

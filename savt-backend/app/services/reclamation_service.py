@@ -6,9 +6,8 @@ from datetime import date, datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.core.exceptions import NotFoundError, PermissionDeniedError, ValidationError
+from app.core.exceptions import NotFoundError, ValidationError
 from app.models.reclamation import Reclamation
-from app.repositories.cabinet import CabinetRepository
 from app.repositories.reclamation import ReclamationRepository
 from app.schemas.pagination import PageOut, make_page
 from app.schemas.reclamation import (
@@ -33,27 +32,11 @@ class ReclamationService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.repo = ReclamationRepository(session)
-        self.cabinet_repo = CabinetRepository(session)
         self.audit = AuditLogger(session)
 
     # --- пользователь ---
 
     async def create(self, user_id: int, data: ReclamationCreateIn) -> ReclamationDetailOut:
-        # Ровно одно из cabinet_id/project_id (см. Reclamation.__doc__ про
-        # ck_reclamation_cabinet_or_project и про то, зачем project_id вообще
-        # нужен всем типам, не только "line"/"component"/...): без deal_id/
-        # company_id из проекта Bitrix отказывает в создании элемента
-        # (поле "Клиент" стало обязательным 2026-09-25).
-        if data.object_type == "cabinet":
-            if data.cabinet_id is None:
-                raise ValidationError("Для объекта «ШУ» нужно выбрать конкретный шкаф")
-            if not await self.cabinet_repo.user_has_access(user_id, data.cabinet_id):
-                raise PermissionDeniedError("У вас нет доступа к этому ШУ")
-        elif data.project_id is not None:
-            from app.repositories.project import UserProjectRepository
-            if not await UserProjectRepository(self.session).find(user_id, data.project_id):
-                raise PermissionDeniedError("У вас нет доступа к этому проекту")
-
         # Заводской номер / данные ПКИ — для "cabinet" не нужны в payload
         # вообще: заводской номер там всегда берётся из cabinet.object_number
         # (обязательная колонка, см. app/models/cabinets.py), пользователь
@@ -62,9 +45,9 @@ class ReclamationService:
         # — раньше были необязательны, из-за чего карточка реально уезжала в
         # Bitrix с пустым "Заводской номер ШУ или линии" / "Данные ПКИ"
         # (обнаружено 2026-09-28 тестовой рекламацией №44)
-        if data.object_type == "line":
+        if data.object_type in ("cabinet", "line"):
             if not data.object_details or not data.object_details.get("serial_number"):
-                raise ValidationError("Для автоматической линии нужно указать заводской номер")
+                raise ValidationError("Нужно указать заводской номер")
         elif data.object_type == "component":
             d = data.object_details or {}
             missing = [
@@ -89,7 +72,7 @@ class ReclamationService:
 
         first_attachment_url = data.attachments[0].file_url if data.attachments else None
         _sync_to_bitrix(
-            rec.id, _build_bitrix_description(rec), rec.cabinet_id, rec.project_id, first_attachment_url,
+            rec.id, _build_bitrix_description(rec), first_attachment_url,
             rec.object_type, rec.object_details, rec.contract_number, rec.order_number, rec.ttn_number,
         )
 
@@ -138,10 +121,17 @@ class ReclamationService:
             raise NotFoundError("Рекламация не найдена")
         rec, user, cabinet, project = row
         detail = await self._detail_out(rec, cabinet, project)
+        pending_create = None
+        if rec.bitrix_item_id is None and rec.bitrix_deleted_at is None:
+            from app.repositories.reclamation_outbox import ReclamationOutboxRepository
+            row_outbox = await ReclamationOutboxRepository(self.session).get_pending_create(rec.id)
+            if row_outbox is not None:
+                pending_create = ReclamationOutboxOut.model_validate(row_outbox)
         return AdminReclamationOut(
             **detail.model_dump(), user_id=user.id, user_full_name=user.full_name,
             deadline_at=rec.deadline_at, responsible_bitrix_user_id=rec.responsible_bitrix_user_id,
             bitrix_item_id=rec.bitrix_item_id, bitrix_deleted_at=rec.bitrix_deleted_at,
+            pending_create_outbox=pending_create,
         )
 
 
@@ -298,16 +288,14 @@ class ReclamationService:
 # ServiceRequestService._sync_to_bitrix, см. app/services/service_request_service.py
 
 def _build_bitrix_native_fields(
-    object_type: str, object_details: dict | None, cabinet,
+    object_type: str, object_details: dict | None,
     contract_number: str | None, order_number: str | None, ttn_number: str | None,
 ) -> tuple[str | None, str | None, str | None]:
     """Собирает значения для трёх новых нативных полей процесса (появились
     2026-09-23) — заводской номер, № договора/заказа/ТТН, данные ПКИ.
     Возвращает (object_serial_number, contract_info, component_info)."""
     object_serial_number = component_info = None
-    if object_type == "cabinet" and cabinet is not None:
-        object_serial_number = cabinet.object_number
-    elif object_type == "line" and object_details:
+    if object_type in ("cabinet", "line") and object_details:
         object_serial_number = object_details.get("serial_number")
     elif object_type == "component" and object_details:
         d = object_details
@@ -330,65 +318,34 @@ def _build_bitrix_native_fields(
 
 
 def _sync_to_bitrix(
-    reclamation_id: int, description: str, cabinet_id: int | None, project_id: int | None,
-    attachment_url: str | None, object_type: str, object_details: dict | None,
+    reclamation_id: int, description: str, attachment_url: str | None,
+    object_type: str, object_details: dict | None,
     contract_number: str | None, order_number: str | None, ttn_number: str | None,
 ) -> None:
     async def _task():
         from app.database import AsyncSessionLocal
-        from app.models.cabinets import Cabinet
-        from app.models.project import Project
         from app.repositories.reclamation_outbox import ReclamationOutboxRepository
         from app.services import bitrix_service
 
-        deal_id = company_id = project_name = None
-        cabinet = None
         async with AsyncSessionLocal() as session:
-            # Ровно один из двух задан (см. ck_reclamation_cabinet_or_project)
-            # — для "cabinet" компанию берём через связанный проект шкафа,
-            # иначе проект указан на самой рекламации напрямую
-            if cabinet_id is not None:
-                cabinet = await session.get(Cabinet, cabinet_id)
-                project = (
-                    await session.get(Project, cabinet.project_id)
-                    if cabinet is not None and cabinet.project_id is not None else None
-                )
-            elif project_id is not None:
-                project = await session.get(Project, project_id)
-            else:
-                project = None
-            if project is not None:
-                deal_id = project.bitrix_deal_id
-                company_id = project.bitrix_company_id
-                project_name = project.name
-
             object_serial_number, contract_info, component_info = _build_bitrix_native_fields(
-                object_type, object_details, cabinet, contract_number, order_number, ttn_number,
+                object_type, object_details, contract_number, order_number, ttn_number,
             )
 
             try:
-                # Подписываем прямо перед вызовом, не раньше: attachment_url в
-                # БД/очереди повторов хранится голым (см. ReclamationAttachmentIn
-                # в схемах), а bitrix_service читает файл с диска через
-                # _read_local_file, которой нужна ДЕЙСТВУЮЩАЯ подпись здесь и
-                # сейчас — если подписать заранее и сохранить готовую ссылку в
-                # очередь, к моменту повтора (не раньше чем через 15 минут,
-                # а если застряло — хоть через дни) она истечёт точно так же,
-                # как истекала готовая ссылка, сохранённая когда-то в БД.
                 from app.core.signed_urls import sign_url
                 item_id = await bitrix_service.create_reclamation_item(
-                    description, deal_id, company_id, sign_url(attachment_url), project_name,
+                    description, None, None, sign_url(attachment_url), None,
                     object_serial_number, contract_info, component_info,
                 )
                 if not item_id:
-                    return  # Bitrix не настроен вообще — не сбой, повторять нечего
+                    return
             except Exception as exc:
                 _log.exception("Bitrix item creation failed for reclamation %s", reclamation_id)
                 await ReclamationOutboxRepository(session).create(
                     reclamation_id, "create",
                     {
-                        "description": description, "deal_id": deal_id, "company_id": company_id,
-                        "attachment_url": attachment_url, "project_name": project_name,
+                        "description": description, "attachment_url": attachment_url,
                         "object_serial_number": object_serial_number, "contract_info": contract_info,
                         "component_info": component_info,
                     },
