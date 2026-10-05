@@ -4,6 +4,7 @@ from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
+from app.repositories.favorite import FavoriteRepository
 from app.repositories.kb import KbArticleRepository, KbCategoryRepository
 from app.schemas.kb import (
     KbArticleCreateIn,
@@ -87,6 +88,7 @@ class KbArticleService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.repo = KbArticleRepository(session)
+        self.favorite_repo = FavoriteRepository(session)
 
     async def create(self, data: KbArticleCreateIn) -> KbArticleDetailOut:
         article = await self.repo.create(
@@ -136,6 +138,7 @@ class KbArticleService:
         page: int = 1,
         size: int = 20,
         is_published: bool | None = True,
+        user_id: int | None = None,
     ) -> PageOut[KbArticleListOut]:
         articles, total = await self.repo.list_articles(
             category_id=category_id,
@@ -150,6 +153,10 @@ class KbArticleService:
         ids = [a.id for a in articles]
         tags_map = await self.repo.get_tags(ids)
         atts_counts = await self.repo.get_attachment_counts(ids)
+        favorited_ids = (
+            await self.favorite_repo.list_favorited_ids(user_id, "kb_article", ids)
+            if user_id is not None else set()
+        )
 
         items = [
             KbArticleListOut(
@@ -163,16 +170,17 @@ class KbArticleService:
                 created_at=a.created_at,
                 tags=[TagOut.model_validate(t) for t in tags_map.get(a.id, [])],
                 attachment_count=atts_counts.get(a.id, 0),
+                is_favorited=a.id in favorited_ids,
             )
             for a in articles
         ]
         return make_page(items, total, page, size)
 
-    async def get_detail(self, article_id: int) -> KbArticleDetailOut:
+    async def get_detail(self, article_id: int, user_id: int | None = None) -> KbArticleDetailOut:
         article = await self.repo.get_by_id(article_id)
         if article is None or not article.is_published:
             raise NotFoundError("Запись не найдена")
-        return await self._to_detail(article)
+        return await self._to_detail(article, user_id)
 
     async def add_attachment(self, article_id: int, file: UploadFile) -> KbAttachmentOut:
         article = await self.repo.get_by_id(article_id)
@@ -206,9 +214,13 @@ class KbArticleService:
         file_path = UPLOAD_ROOT / att.file_url.removeprefix("/static/")
         return file_path, att.mime_type, att.title
 
-    async def _to_detail(self, article) -> KbArticleDetailOut:
+    async def _to_detail(self, article, user_id: int | None = None) -> KbArticleDetailOut:
         tags_map = await self.repo.get_tags([article.id])
         atts = await self.repo.get_attachments(article.id)
+        is_favorited = (
+            await self.favorite_repo.find(user_id, "kb_article", article.id) is not None
+            if user_id is not None else False
+        )
         return KbArticleDetailOut(
             id=article.id,
             category_id=article.category_id,
@@ -221,4 +233,5 @@ class KbArticleService:
             updated_at=article.updated_at,
             tags=[TagOut.model_validate(t) for t in tags_map.get(article.id, [])],
             attachments=[KbAttachmentOut.model_validate(a) for a in atts],
+            is_favorited=is_favorited,
         )

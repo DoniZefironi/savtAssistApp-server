@@ -2,6 +2,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
 from app.repositories.faq import FaqCategoryRepository, FaqEntryRepository
+from app.repositories.favorite import FavoriteRepository
 from app.schemas.faq import (
     FaqCategoryCreateIn,
     FaqCategoryOut,
@@ -73,6 +74,7 @@ class FaqEntryService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.repo = FaqEntryRepository(session)
+        self.favorite_repo = FavoriteRepository(session)
 
     async def create(self, data: FaqEntryCreateIn) -> FaqEntryOut:
         entry = await self.repo.create(data.category_id, data.question, data.answer)
@@ -115,9 +117,19 @@ class FaqEntryService:
         page: int = 1,
         size: int = 20,
         is_published: bool | None = None,
+        user_id: int | None = None,
     ) -> PageOut[FaqEntryOut]:
         items, total = await self.repo.list_entries(
             category_id, is_published, search, sort_by, sort_order,
             offset=(page - 1) * size, limit=size,
         )
-        return make_page([FaqEntryOut.model_validate(e) for e in items], total, page, size)
+        favorited_ids = (
+            await self.favorite_repo.list_favorited_ids(user_id, "faq_entry", [e.id for e in items])
+            if user_id is not None else set()
+        )
+        out = []
+        for e in items:
+            entry_out = FaqEntryOut.model_validate(e)
+            entry_out.is_favorited = e.id in favorited_ids
+            out.append(entry_out)
+        return make_page(out, total, page, size)

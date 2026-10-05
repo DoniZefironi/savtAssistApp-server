@@ -45,5 +45,6 @@ class FaqEntryOut(BaseModel):
     is_published: bool
     created_at: datetime
     updated_at: datetime
+    is_favorited: bool = False
 
     model_config = {"from_attributes": True}

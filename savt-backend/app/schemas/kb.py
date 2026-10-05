@@ -67,6 +67,7 @@ class KbArticleListOut(BaseModel):
     created_at: datetime
     tags: list[TagOut] = []
     attachment_count: int = 0
+    is_favorited: bool = False
 
 
 class KbArticleDetailOut(BaseModel):
@@ -81,3 +82,4 @@ class KbArticleDetailOut(BaseModel):
     updated_at: datetime
     tags: list[TagOut] = []
     attachments: list[KbAttachmentOut] = []
+    is_favorited: bool = False

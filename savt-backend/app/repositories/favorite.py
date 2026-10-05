@@ -28,6 +28,20 @@ class FavoriteRepository:
         await self.session.delete(fav)
         await self.session.flush()
 
+    async def list_favorited_ids(
+        self, user_id: int, entity_type: str, entity_ids: list[int],
+    ) -> set[int]:
+        if not entity_ids:
+            return set()
+        result = await self.session.execute(
+            select(UserFavorite.entity_id).where(
+                UserFavorite.user_id == user_id,
+                UserFavorite.entity_type == entity_type,
+                UserFavorite.entity_id.in_(entity_ids),
+            )
+        )
+        return set(result.scalars().all())
+
     async def list_for_user(
         self,
         user_id: int,

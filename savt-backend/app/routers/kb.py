@@ -28,7 +28,7 @@ async def list_articles(
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
-    _: User | None = Depends(get_current_user_or_guest),
+    current_user: User | None = Depends(get_current_user_or_guest),
     session: AsyncSession = Depends(get_session),
 ):
     return await KbArticleService(session).list_articles(
@@ -39,16 +39,19 @@ async def list_articles(
         sort_order=sort_order,
         page=page,
         size=size,
+        user_id=current_user.id if current_user else None,
     )
 
 
 @router.get("/articles/{article_id}", response_model=KbArticleDetailOut)
 async def get_article(
     article_id: int,
-    _: User | None = Depends(get_current_user_or_guest),
+    current_user: User | None = Depends(get_current_user_or_guest),
     session: AsyncSession = Depends(get_session),
 ):
-    return await KbArticleService(session).get_detail(article_id)
+    return await KbArticleService(session).get_detail(
+        article_id, user_id=current_user.id if current_user else None,
+    )
 
 
 @router.get("/articles/{article_id}/attachments/{att_id}/download")

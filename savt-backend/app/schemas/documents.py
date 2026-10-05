@@ -39,6 +39,7 @@ class UserDocumentOut(BaseModel):
     mime_type: str
     has_access: bool
     tags: list[TagOut] = []
+    is_favorited: bool = False
 
 
 class PhotoOut(BaseModel):

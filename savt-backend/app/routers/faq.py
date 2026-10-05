@@ -26,7 +26,10 @@ async def list_entries(
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
-    _: User | None = Depends(get_current_user_or_guest),
+    current_user: User | None = Depends(get_current_user_or_guest),
     session: AsyncSession = Depends(get_session),
 ):
-    return await FaqEntryService(session).list_entries(category_id, search, sort_by, sort_order, page, size)
+    return await FaqEntryService(session).list_entries(
+        category_id, search, sort_by, sort_order, page, size,
+        user_id=current_user.id if current_user else None,
+    )

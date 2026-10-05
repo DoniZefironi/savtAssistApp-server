@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AlreadyExistsError, NotFoundError, PermissionDeniedError
 from app.repositories.document import DocumentRepository, DocumentRequestRepository, PhotoRepository
+from app.repositories.favorite import FavoriteRepository
 from app.repositories.tag import TagRepository
 from app.repositories.user import UserRepository
 from app.services import project_folder_service
@@ -290,6 +291,7 @@ class UserDocumentService:
         self.doc_repo = DocumentRepository(session)
         self.request_repo = DocumentRequestRepository(session)
         self.tag_repo = TagRepository(session)
+        self.favorite_repo = FavoriteRepository(session)
 
     async def list_documents(
         self,
@@ -318,6 +320,7 @@ class UserDocumentService:
         )
         doc_ids = [doc.id for doc, _ in rows]
         tags_map = await self.tag_repo.get_tags_for_documents(doc_ids)
+        favorited_ids = await self.favorite_repo.list_favorited_ids(user_id, "document", doc_ids)
         items = []
         for doc, access_doc_id in rows:
             has_access = not doc.requires_approval or access_doc_id is not None
@@ -336,6 +339,7 @@ class UserDocumentService:
                 mime_type=doc.mime_type,
                 has_access=has_access,
                 tags=tags_map.get(doc.id, []),
+                is_favorited=doc.id in favorited_ids,
             ))
         return make_page(items, total, page, size)
 
@@ -365,6 +369,7 @@ class UserDocumentService:
         )
         doc_ids = [doc.id for doc, _ in rows]
         tags_map = await self.tag_repo.get_tags_for_documents(doc_ids)
+        favorited_ids = await self.favorite_repo.list_favorited_ids(user_id, "document", doc_ids)
         items = []
         for doc, access_doc_id in rows:
             has_access = not doc.requires_approval or access_doc_id is not None
@@ -383,6 +388,7 @@ class UserDocumentService:
                 mime_type=doc.mime_type,
                 has_access=has_access,
                 tags=tags_map.get(doc.id, []),
+                is_favorited=doc.id in favorited_ids,
             ))
         return make_page(items, total, page, size)
 
