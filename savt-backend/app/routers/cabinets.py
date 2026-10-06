@@ -6,6 +6,8 @@ from app.models.user import User
 from app.schemas.cabinet import (
     AddByPhotoIn,
     AddByPhotoOut,
+    AddCabinetByQrIn,
+    AddCabinetByQrOut,
     UserCabinetDetailOut,
     UserCabinetListItemOut,
     UserCabinetPatchIn,
@@ -78,3 +80,14 @@ async def add_by_photo(
         user_comment=payload.user_comment,
     )
     return AddByPhotoOut(request_id=request_id)
+
+# Добавить ШУ по кур-коду (пользователь) — напрямую, в обход проекта
+@router.post("/add-by-qr", response_model=AddCabinetByQrOut)
+async def add_cabinet_by_qr(
+    payload: AddCabinetByQrIn,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    service = UserCabinetService(session)
+    result = await service.add_by_qr(user_id=current_user.id, unique_code=payload.parse_unique_code())
+    return AddCabinetByQrOut(**result)

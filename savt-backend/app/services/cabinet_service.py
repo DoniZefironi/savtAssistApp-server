@@ -1,3 +1,5 @@
+import secrets
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AlreadyExistsError, NotFoundError
@@ -63,6 +65,9 @@ class CabinetService:
 
         cabinet = await self.repo.create(
             project_id=data.project_id,
+            # код для QR самостоятельного добавления (см. Cabinet.unique_code) —
+            # у существующих ШУ проставлен миграцией 7c2e9a4f1d83, у новых — здесь
+            unique_code=secrets.token_urlsafe(18),
             type=await _resolve_type(self.session, data.type),
             object_number=data.object_number,
             description=data.description,

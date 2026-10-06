@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AlreadyExistsError, NotFoundError
-from app.repositories.cabinet import CabinetRepository
+from app.repositories.cabinet import CabinetRepository, UserCabinetRepository
 from app.repositories.chat import ChatRepository
 from app.repositories.project import ProjectRepository, UserProjectRepository
 from app.schemas.project import ProjectCabinetItem, UserProjectDetailOut, UserProjectListItemOut
@@ -14,6 +14,7 @@ class UserProjectService:
         self.project_repo = ProjectRepository(session)
         self.cabinet_repo = CabinetRepository(session)
         self.user_project_repo = UserProjectRepository(session)
+        self.user_cabinet_repo = UserCabinetRepository(session)
         self.chat_repo = ChatRepository(session)
 
     # Список проектов пользователя. Кол-во ШУ — одним батч-запросом на все
@@ -75,6 +76,18 @@ class UserProjectService:
             raise AlreadyExistsError("Этот проект уже привязан к вашему аккаунту")
 
         await self.user_project_repo.create(user_id=user_id, project_id=project.id)
+
+        # Слияние: ШУ этого проекта, которыми пользователь уже владел напрямую
+        # (UserCabinet, добавлены отдельно по своему QR) — прямая привязка
+        # убирается, доступ дальше идёт через только что созданное членство.
+        # Чат и история по ШУ (заявки, рекламации) не переносятся и не
+        # трогаются вовсе: они уже привязаны к cabinet_id, который не меняется.
+        project_cabinet_ids = [c.id for c in await self.cabinet_repo.list_by_project(project.id)]
+        merged = await self.user_cabinet_repo.list_for_user_in_cabinets(user_id, project_cabinet_ids)
+        merged_cabinet_ids = [uc.cabinet_id for uc in merged]
+        for uc in merged:
+            await self.user_cabinet_repo.delete(uc)
+
         # Доступ ко всем шкафам проекта уже есть самим членством выше. Чат
         # ШУ никогда не создаётся автоматически — только сам пользователь,
         # открыв ШУ и нажав на чат (см. ChatService.get_cabinet_chat).
@@ -87,6 +100,17 @@ class UserProjectService:
             from app.services.chat_service import chat_summary_dict
             from app.services.realtime_events import publish_chat_created
             await publish_chat_created(project_chat.id, chat_summary_dict(project_chat))
+
+        if merged_cabinet_ids:
+            from app.services.notification_service import NotificationService
+            notif_service = NotificationService(self.session)
+            for cabinet_id in merged_cabinet_ids:
+                await notif_service.send(
+                    user_id=user_id, type_="request_status",
+                    title="ШУ перенесён в проект",
+                    body=f"Теперь доступен через проект «{project.name}»",
+                    data={"cabinet_id": cabinet_id, "project_id": project.id},
+                )
         return {"status": "linked", "message": "Проект успешно привязан"}
 
     # Закрепить/открепить проект наверх списка GET /projects. Закреп живёт на

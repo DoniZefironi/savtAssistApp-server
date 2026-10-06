@@ -187,3 +187,18 @@ class AddByPhotoIn(BaseModel):
 class AddByPhotoOut(BaseModel):
     request_id: int
     message: str = "Заявка отправлена на рассмотрение"
+
+
+class AddCabinetByQrIn(BaseModel):
+    qr_data: str = Field(..., min_length=1, max_length=200)
+
+    def parse_unique_code(self) -> str:
+        prefix = "savt://cabinet/"
+        if self.qr_data.startswith(prefix):
+            return self.qr_data[len(prefix):]
+        return self.qr_data
+
+
+class AddCabinetByQrOut(BaseModel):
+    status: str
+    message: str

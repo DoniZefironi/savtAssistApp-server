@@ -262,12 +262,7 @@ class CabinetRepository(BaseRepository[Cabinet]):
             self.session.add(CabinetTag(cabinet_id=cabinet_id, tag_id=tag_id))
         await self.session.flush()
 
-    # --- Доступ, выведенный из проекта ---
-    # Доступа "напрямую к ШУ" больше нет: пользователь видит шкаф тогда и только
-    # тогда, когда состоит в user_projects проекта, которому принадлежит этот
-    # шкаф (Cabinet.project_id). У ШУ без project_id доступа нет ни у кого,
-    # кроме админа/оператора.
-
+    # --- Доступ ---
     # Доступ к ШУ даёт любое из двух: членство в проекте ШУ (UserProject) ИЛИ
     # прямое владение (UserCabinet, см. app/models/user_cabinet.py — ШУ
     # добавлен отдельно по своему QR, без проекта). Оба — outer join с
@@ -315,6 +310,16 @@ class CabinetRepository(BaseRepository[Cabinet]):
     async def user_has_access(self, user_id: int, cabinet_id: int) -> bool:
         return await self.get_accessible_for_user(user_id, cabinet_id) is not None
 
+    # Поиск ШУ по коду из QR самостоятельного добавления, см. Cabinet.unique_code
+    async def find_by_code(self, unique_code: str) -> Cabinet | None:
+        result = await self.session.execute(
+            select(Cabinet).where(
+                Cabinet.unique_code == unique_code,
+                Cabinet.deleted_at.is_(None),
+            )
+        )
+        return result.scalar_one_or_none()
+
     # Пользователи с доступом к ШУ — участники проекта, которому принадлежит
     # шкаф (если есть), ОБЪЕДИНЁННЫЕ с теми, у кого прямое владение (UserCabinet,
     # см. app/models/user_cabinet.py). Пользователь, у которого есть оба пути
@@ -341,6 +346,46 @@ class CabinetRepository(BaseRepository[Cabinet]):
         for user, added_at in result.all():
             by_user_id.setdefault(user.id, (user, added_at))
         return sorted(by_user_id.values(), key=lambda row: row[1])
+
+
+class UserCabinetRepository:
+    """Прямое владение ШУ в обход проекта, см. app/models/user_cabinet.py."""
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def find(self, user_id: int, cabinet_id: int) -> UserCabinet | None:
+        result = await self.session.execute(
+            select(UserCabinet).where(
+                UserCabinet.user_id == user_id,
+                UserCabinet.cabinet_id == cabinet_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def create(self, user_id: int, cabinet_id: int) -> UserCabinet:
+        obj = UserCabinet(user_id=user_id, cabinet_id=cabinet_id)
+        self.session.add(obj)
+        await self.session.flush()
+        return obj
+
+    async def delete(self, obj: UserCabinet) -> None:
+        await self.session.delete(obj)
+        await self.session.flush()
+
+    # ШУ этого проекта, которыми пользователь уже владеет напрямую — нужно
+    # при добавлении проекта по QR, чтобы слить прямое владение в членство
+    # (см. UserProjectService.add_by_qr) и не держать два параллельных пути
+    # доступа к одному и тому же ШУ разом
+    async def list_for_user_in_cabinets(self, user_id: int, cabinet_ids: list[int]) -> list[UserCabinet]:
+        if not cabinet_ids:
+            return []
+        result = await self.session.execute(
+            select(UserCabinet).where(
+                UserCabinet.user_id == user_id,
+                UserCabinet.cabinet_id.in_(cabinet_ids),
+            )
+        )
+        return list(result.scalars().all())
 
 
 class CabinetUserSettingsRepository:

@@ -4,7 +4,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import AlreadyExistsError, NotFoundError, PermissionDeniedError
 from app.models.chat import Chat
 from app.models.message import Message
-from app.repositories.cabinet import CabinetRepository, CabinetRequestRepository, CabinetUserSettingsRepository
+from app.repositories.cabinet import (
+    CabinetRepository, CabinetRequestRepository, CabinetUserSettingsRepository, UserCabinetRepository,
+)
 from app.repositories.project import ProjectRepository, UserProjectRepository
 from app.schemas.cabinet import UserCabinetDetailOut, UserCabinetListItemOut, UserCabinetPatchIn
 from app.utils.warranty import warranty_status as _warranty_status
@@ -16,6 +18,7 @@ class UserCabinetService:
         self.cabinet_repo = CabinetRepository(session)
         self.project_repo = ProjectRepository(session)
         self.user_project_repo = UserProjectRepository(session)
+        self.user_cabinet_repo = UserCabinetRepository(session)
         self.settings_repo = CabinetUserSettingsRepository(session)
         self.request_repo = CabinetRequestRepository(session)
 
@@ -104,6 +107,24 @@ class UserCabinetService:
         )
         await self.session.commit()
         return request.id
+
+    # Добавление ШУ по кур-коду — напрямую, в обход проекта (см.
+    # app/models/user_cabinet.py). user_has_access уже проверяет оба пути
+    # доступа разом (UserProject на проект ШУ ИЛИ UserCabinet напрямую, см.
+    # CabinetRepository.get_accessible_for_user) — если ШУ уже доступен через
+    # проект, который пользователь успел добавить раньше, вторая, прямая
+    # привязка здесь не нужна и не создаётся.
+    async def add_by_qr(self, user_id: int, unique_code: str) -> dict:
+        cabinet = await self.cabinet_repo.find_by_code(unique_code)
+        if cabinet is None:
+            raise NotFoundError("ШУ с таким кодом не найден")
+
+        if await self.cabinet_repo.user_has_access(user_id, cabinet.id):
+            raise AlreadyExistsError("Этот ШУ уже есть в вашем списке")
+
+        await self.user_cabinet_repo.create(user_id, cabinet.id)
+        await self.session.commit()
+        return {"status": "linked", "message": "ШУ успешно добавлен"}
 
     # Получение кол-ва непрочитанных сообщений в чате ШУ
     async def _get_unread_counts(self, user_id: int, cabinet_ids: list[int]) -> dict[int, int]:
