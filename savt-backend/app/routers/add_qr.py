@@ -63,13 +63,18 @@ def _render(title: str, subtitle: str, intent_url: str | None) -> str:
 
 
 def _intent_url(path: str) -> str | None:
-    if not settings.android_package_name:
+    # fallback обязан вести НЕ на эту же страницу: если он укажет сюда же, а
+    # intent не сработает (приложения нет или переход не перехватился), Chrome
+    # уйдёт по fallback обратно на эту страницу, та снова попробует открыть
+    # intent, снова не сработает — бесконечный редирект-цикл, который почти
+    # сразу пробивает лимит запросов. Поэтому intent вообще не пытаемся
+    # открыть, если некуда увести при неудаче (нет ссылки на APK).
+    if not settings.android_package_name or not settings.apk_download_url:
         return None
-    fallback = f"{settings.public_base_url.rstrip('/')}{path}"
     return (
         f"intent://{path.lstrip('/')}#Intent;scheme=savt;"
         f"package={settings.android_package_name};"
-        f"S.browser_fallback_url={fallback};end"
+        f"S.browser_fallback_url={settings.apk_download_url};end"
     )
 
 
