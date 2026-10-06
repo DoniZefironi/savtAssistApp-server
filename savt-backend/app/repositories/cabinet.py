@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import delete, exists, func, select
+from sqlalchemy import delete, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.cabinet_addition_request import CabinetAdditionRequest
@@ -13,6 +13,7 @@ from app.models.service_request import ServiceRequest
 from app.models.tag import Tag
 from app.utils.db import escape_like, fuzzy_condition
 from app.models.user import User
+from app.models.user_cabinet import UserCabinet
 from app.models.user_project import UserProject
 from app.repositories.base import BaseRepository
 
@@ -267,11 +268,27 @@ class CabinetRepository(BaseRepository[Cabinet]):
     # шкаф (Cabinet.project_id). У ШУ без project_id доступа нет ни у кого,
     # кроме админа/оператора.
 
+    # Доступ к ШУ даёт любое из двух: членство в проекте ШУ (UserProject) ИЛИ
+    # прямое владение (UserCabinet, см. app/models/user_cabinet.py — ШУ
+    # добавлен отдельно по своему QR, без проекта). Оба — outer join с
+    # условием по user_id прямо в ON, а не в WHERE: иначе при project_id=None
+    # (ничейный/ещё не слитый с проектом ШУ) обычный join потерял бы строку
+    # целиком, даже если доступ есть через UserCabinet
     async def list_accessible_for_user(self, user_id: int) -> list[Cabinet]:
         result = await self.session.execute(
             select(Cabinet)
-            .join(UserProject, UserProject.project_id == Cabinet.project_id)
-            .where(UserProject.user_id == user_id, Cabinet.deleted_at.is_(None))
+            .outerjoin(
+                UserProject,
+                (UserProject.project_id == Cabinet.project_id) & (UserProject.user_id == user_id),
+            )
+            .outerjoin(
+                UserCabinet,
+                (UserCabinet.cabinet_id == Cabinet.id) & (UserCabinet.user_id == user_id),
+            )
+            .where(
+                or_(UserProject.id.isnot(None), UserCabinet.id.isnot(None)),
+                Cabinet.deleted_at.is_(None),
+            )
             .order_by(Cabinet.created_at.desc())
         )
         return list(result.scalars().all())
@@ -279,9 +296,16 @@ class CabinetRepository(BaseRepository[Cabinet]):
     async def get_accessible_for_user(self, user_id: int, cabinet_id: int) -> Cabinet | None:
         result = await self.session.execute(
             select(Cabinet)
-            .join(UserProject, UserProject.project_id == Cabinet.project_id)
+            .outerjoin(
+                UserProject,
+                (UserProject.project_id == Cabinet.project_id) & (UserProject.user_id == user_id),
+            )
+            .outerjoin(
+                UserCabinet,
+                (UserCabinet.cabinet_id == Cabinet.id) & (UserCabinet.user_id == user_id),
+            )
             .where(
-                UserProject.user_id == user_id,
+                or_(UserProject.id.isnot(None), UserCabinet.id.isnot(None)),
                 Cabinet.id == cabinet_id,
                 Cabinet.deleted_at.is_(None),
             )
