@@ -316,18 +316,31 @@ class CabinetRepository(BaseRepository[Cabinet]):
         return await self.get_accessible_for_user(user_id, cabinet_id) is not None
 
     # Пользователи с доступом к ШУ — участники проекта, которому принадлежит
-    # шкаф (пусто, если у ШУ нет проекта). Primary-участник проекта — первым.
-    async def list_users_with_access(self, cabinet_id: int) -> list[tuple[User, UserProject]]:
+    # шкаф (если есть), ОБЪЕДИНЁННЫЕ с теми, у кого прямое владение (UserCabinet,
+    # см. app/models/user_cabinet.py). Пользователь, у которого есть оба пути
+    # разом (не должно происходить после слияния, см. UserProjectService.add_by_qr,
+    # но на всякий случай), встречается в результате один раз
+    async def list_users_with_access(self, cabinet_id: int) -> list[tuple[User, datetime]]:
         cabinet = await self.get_by_id(cabinet_id)
-        if cabinet is None or cabinet.project_id is None:
+        if cabinet is None:
             return []
+        by_user_id: dict[int, tuple[User, datetime]] = {}
+        if cabinet.project_id is not None:
+            result = await self.session.execute(
+                select(User, UserProject.added_at)
+                .join(UserProject, UserProject.user_id == User.id)
+                .where(UserProject.project_id == cabinet.project_id)
+            )
+            for user, added_at in result.all():
+                by_user_id[user.id] = (user, added_at)
         result = await self.session.execute(
-            select(User, UserProject)
-            .join(UserProject, UserProject.user_id == User.id)
-            .where(UserProject.project_id == cabinet.project_id)
-            .order_by(UserProject.is_primary.desc(), UserProject.added_at)
+            select(User, UserCabinet.added_at)
+            .join(UserCabinet, UserCabinet.user_id == User.id)
+            .where(UserCabinet.cabinet_id == cabinet_id)
         )
-        return result.all()
+        for user, added_at in result.all():
+            by_user_id.setdefault(user.id, (user, added_at))
+        return sorted(by_user_id.values(), key=lambda row: row[1])
 
 
 class CabinetUserSettingsRepository:

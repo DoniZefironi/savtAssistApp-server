@@ -354,15 +354,14 @@ class AdminUserService:
                 full_name=user.full_name,
                 phone=user.phone,
                 user_type=user.user_type,
-                is_primary=up.is_primary,
                 custom_name=(
                     settings_map[user.id].custom_name
                     if user.id in settings_map and settings_map[user.id].custom_name
                     else cabinet.admin_internal_name or cabinet.object_number
                 ),
-                added_at=up.added_at,
+                added_at=added_at,
             )
-            for user, up in rows
+            for user, added_at in rows
         ]
 
     # Подтвердить аккаунт

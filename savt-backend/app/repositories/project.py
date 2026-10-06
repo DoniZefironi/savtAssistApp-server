@@ -8,7 +8,6 @@ from app.models.cabinets import Cabinet
 from app.models.document import Document
 from app.models.project import Project
 from app.models.project_contact import ProjectContact
-from app.models.project_share_request import ProjectShareRequest
 from app.models.user import User
 from app.models.user_project import UserProject
 from app.repositories.base import BaseRepository
@@ -374,7 +373,7 @@ class UserProjectRepository(BaseRepository[UserProject]):
             .join(Project, Project.id == UserProject.project_id)
             .where(UserProject.user_id == user_id, Project.deleted_at.is_(None))
             .order_by(
-                UserProject.is_pinned.desc(), UserProject.is_primary.desc(), UserProject.added_at.desc(),
+                UserProject.is_pinned.desc(), UserProject.added_at.desc(),
             )
         )
         return result.all()
@@ -396,15 +395,6 @@ class UserProjectRepository(BaseRepository[UserProject]):
         )
         return result.one_or_none()
 
-    async def has_primary(self, project_id: int) -> bool:
-        result = await self.session.execute(
-            select(UserProject).where(
-                UserProject.project_id == project_id,
-                UserProject.is_primary == True,
-            )
-        )
-        return result.scalar_one_or_none() is not None
-
     # Участники проекта вместе с самим пользователем — для админского списка
     # "участники проекта" (GET /admin/projects/{id}/users)
     async def list_members(self, project_id: int) -> list[tuple[UserProject, User]]:
@@ -412,90 +402,6 @@ class UserProjectRepository(BaseRepository[UserProject]):
             select(UserProject, User)
             .join(User, User.id == UserProject.user_id)
             .where(UserProject.project_id == project_id)
-            .order_by(UserProject.is_primary.desc(), UserProject.added_at)
+            .order_by(UserProject.added_at)
         )
         return result.all()
-
-
-class ProjectRequestRepository:
-    def __init__(self, session: AsyncSession):
-        self.session = session
-
-    async def find_pending_share(self, user_id: int, project_id: int) -> ProjectShareRequest | None:
-        result = await self.session.execute(
-            select(ProjectShareRequest).where(
-                ProjectShareRequest.user_id == user_id,
-                ProjectShareRequest.project_id == project_id,
-                ProjectShareRequest.status == "pending",
-            )
-        )
-        return result.scalar_one_or_none()
-
-    async def create_share(
-        self, user_id: int, project_id: int, user_comment: str | None = None
-    ) -> ProjectShareRequest:
-        obj = ProjectShareRequest(
-            user_id=user_id,
-            project_id=project_id,
-            user_comment=user_comment,
-        )
-        self.session.add(obj)
-        await self.session.flush()
-        return obj
-
-    async def get_share(self, request_id: int) -> ProjectShareRequest | None:
-        result = await self.session.execute(
-            select(ProjectShareRequest).where(ProjectShareRequest.id == request_id)
-        )
-        return result.scalar_one_or_none()
-
-    async def list_shares(
-        self,
-        status: str | None = None,
-        resolved_by_admin_id: int | None = None,
-        search: str | None = None,
-        sort_by: str = "created_at",
-        sort_order: str = "desc",
-        offset: int = 0,
-        limit: int = 20,
-    ) -> tuple[list, int]:
-        conditions = []
-        if status:
-            conditions.append(ProjectShareRequest.status == status)
-        if resolved_by_admin_id is not None:
-            conditions.append(ProjectShareRequest.resolved_by_admin_id == resolved_by_admin_id)
-        if search:
-            conditions.append(fuzzy_condition(
-                search,
-                User.full_name, User.phone, User.organization_name,
-                Project.name,
-                ProjectShareRequest.user_comment, ProjectShareRequest.admin_response,
-            ))
-
-        count_stmt = (
-            select(func.count(ProjectShareRequest.id))
-            .join(User, User.id == ProjectShareRequest.user_id)
-            .join(Project, Project.id == ProjectShareRequest.project_id)
-        )
-        if conditions:
-            count_stmt = count_stmt.where(*conditions)
-        total = (await self.session.execute(count_stmt)).scalar() or 0
-
-        _sort_col = {
-            "created_at": ProjectShareRequest.created_at,
-            "resolved_at": ProjectShareRequest.resolved_at,
-            "status": ProjectShareRequest.status,
-            "user_full_name": User.full_name,
-            "project_name": Project.name,
-        }.get(sort_by, ProjectShareRequest.created_at)
-        order = _sort_col.asc() if sort_order == "asc" else _sort_col.desc()
-
-        stmt = (
-            select(ProjectShareRequest, User, Project)
-            .join(User, User.id == ProjectShareRequest.user_id)
-            .join(Project, Project.id == ProjectShareRequest.project_id)
-        )
-        if conditions:
-            stmt = stmt.where(*conditions)
-        result = await self.session.execute(stmt.order_by(order).offset(offset).limit(limit))
-        return result.all(), total

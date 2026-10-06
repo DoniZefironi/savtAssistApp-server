@@ -327,7 +327,6 @@ class ProjectService:
                 full_name=user.full_name,
                 phone=user.phone,
                 user_type=user.user_type,
-                is_primary=up.is_primary,
                 added_at=up.added_at,
             )
             for up, user in rows

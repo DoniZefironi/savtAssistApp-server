@@ -35,25 +35,9 @@ class RejectRequestIn(BaseModel):
     admin_response: str = Field(..., min_length=1, max_length=1000)
 
 
-class ApproveShareIn(BaseModel):
+# Общая форма одобрения с необязательным комментарием — используется там, где
+# само одобрение не требует больше никаких данных (сменить телефон, сбросить
+# пароль): app/routers/admin_phone_change_requests.py, admin_password_reset_requests.py
+class AdminResponseIn(BaseModel):
     admin_response: str | None = Field(None, min_length=1, max_length=1000)
 
-
-class ProjectShareRequestOut(BaseModel):
-    id: int
-    user_id: int
-    user_full_name: str | None
-    user_phone: str | None
-    user_type: str | None
-    organization_name: str | None
-    user_is_verified: bool
-    user_registered_at: datetime
-    project_id: int
-    project_name: str
-    user_comment: str | None
-    status: str
-    admin_response: str | None
-    resolved_by_admin_id: int | None
-    resolved_by_admin_name: str | None = None
-    created_at: datetime
-    resolved_at: datetime | None

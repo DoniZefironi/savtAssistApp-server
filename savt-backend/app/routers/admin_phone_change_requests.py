@@ -6,7 +6,7 @@ from app.core.dependencies import get_role_from_token, get_session, require_role
 from app.models.user import User
 from app.schemas.auth import AdminPhoneChangeRequestOut
 from app.schemas.pagination import PageOut
-from app.schemas.requests import ApproveShareIn, RejectRequestIn
+from app.schemas.requests import AdminResponseIn, RejectRequestIn
 from app.services.phone_change_service import PhoneChangeService
 
 router = APIRouter(prefix="/admin/phone-change-requests", tags=["admin: phone change requests"])
@@ -38,7 +38,7 @@ async def list_requests(
 @router.post("/{request_id}/approve", status_code=status.HTTP_204_NO_CONTENT)
 async def approve_request(
     request_id: int,
-    payload: ApproveShareIn,
+    payload: AdminResponseIn,
     actor: User = Depends(require_role(RoleName.ADMIN)),
     actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),

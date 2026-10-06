@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import AlreadyExistsError, NotFoundError
 from app.repositories.cabinet import CabinetRepository
 from app.repositories.chat import ChatRepository
-from app.repositories.project import ProjectRepository, ProjectRequestRepository, UserProjectRepository
+from app.repositories.project import ProjectRepository, UserProjectRepository
 from app.schemas.project import ProjectCabinetItem, UserProjectDetailOut, UserProjectListItemOut
 from app.utils.warranty import warranty_status as _warranty_status
 
@@ -14,7 +14,6 @@ class UserProjectService:
         self.project_repo = ProjectRepository(session)
         self.cabinet_repo = CabinetRepository(session)
         self.user_project_repo = UserProjectRepository(session)
-        self.request_repo = ProjectRequestRepository(session)
         self.chat_repo = ChatRepository(session)
 
     # Список проектов пользователя. Кол-во ШУ — одним батч-запросом на все
@@ -25,7 +24,7 @@ class UserProjectService:
         cabinet_counts = await self.cabinet_repo.count_by_projects([project.id for _up, project in rows])
         return [
             UserProjectListItemOut(
-                project_id=project.id, name=project.name, is_primary=up.is_primary,
+                project_id=project.id, name=project.name,
                 is_pinned=up.is_pinned,
                 cabinet_count=cabinet_counts.get(project.id, 0),
                 company_name=project.company_name,
@@ -47,7 +46,6 @@ class UserProjectService:
         return UserProjectDetailOut(
             project_id=project.id,
             name=project.name,
-            is_primary=up.is_primary,
             is_pinned=up.is_pinned,
             cabinets=[
                 ProjectCabinetItem(
@@ -64,7 +62,9 @@ class UserProjectService:
             warranty_status=_warranty_status(project.warranty_ends_at),
         )
 
-    # Добавление проекта по кур-коду
+    # Добавление проекта по кур-коду — сразу, без чьего-либо одобрения:
+    # сколько угодно пользователей может состоять в одном проекте, без
+    # очередности и без "главного" участника
     async def add_by_qr(self, user_id: int, unique_code: str) -> dict:
         project = await self.project_repo.find_by_code(unique_code)
         if project is None:
@@ -74,31 +74,20 @@ class UserProjectService:
         if existing is not None:
             raise AlreadyExistsError("Этот проект уже привязан к вашему аккаунту")
 
-        has_primary = await self.user_project_repo.has_primary(project.id)
-
-        if not has_primary:
-            await self.user_project_repo.create(user_id=user_id, project_id=project.id, is_primary=True)
-            # Доступ ко всем шкафам проекта уже есть самим членством выше. Чат
-            # ШУ никогда не создаётся автоматически — только сам пользователь,
-            # открыв ШУ и нажав на чат (см. ChatService.get_cabinet_chat).
-            # Чат самого проекта заводим сразу, не дожидаясь первого открытия.
-            had_chat = await self.chat_repo.find(user_id, "project", project_id=project.id) is not None
-            from app.services.chat_service import ChatService
-            project_chat = await ChatService(self.session).ensure_project_chat(user_id, project.id)
-            await self.session.commit()
-            if not had_chat:
-                from app.services.chat_service import chat_summary_dict
-                from app.services.realtime_events import publish_chat_created
-                await publish_chat_created(project_chat.id, chat_summary_dict(project_chat))
-            return {"status": "linked", "message": "Проект успешно привязан"}
-
-        pending = await self.request_repo.find_pending_share(user_id, project.id)
-        if pending is not None:
-            raise AlreadyExistsError("Заявка на доступ к этому проекту уже отправлена")
-
-        await self.request_repo.create_share(user_id=user_id, project_id=project.id)
+        await self.user_project_repo.create(user_id=user_id, project_id=project.id)
+        # Доступ ко всем шкафам проекта уже есть самим членством выше. Чат
+        # ШУ никогда не создаётся автоматически — только сам пользователь,
+        # открыв ШУ и нажав на чат (см. ChatService.get_cabinet_chat).
+        # Чат самого проекта заводим сразу, не дожидаясь первого открытия.
+        had_chat = await self.chat_repo.find(user_id, "project", project_id=project.id) is not None
+        from app.services.chat_service import ChatService
+        project_chat = await ChatService(self.session).ensure_project_chat(user_id, project.id)
         await self.session.commit()
-        return {"status": "request_submitted", "message": "Заявка отправлена администратору на рассмотрение"}
+        if not had_chat:
+            from app.services.chat_service import chat_summary_dict
+            from app.services.realtime_events import publish_chat_created
+            await publish_chat_created(project_chat.id, chat_summary_dict(project_chat))
+        return {"status": "linked", "message": "Проект успешно привязан"}
 
     # Закрепить/открепить проект наверх списка GET /projects. Закреп живёт на
     # самой связи UserProject — открепляется сам, если пользователь потом

@@ -107,14 +107,13 @@ class BanUserIn(BaseModel):
 
 
 class CabinetUserOut(BaseModel):
-    """Пользователь с доступом к ШУ — на самом деле участник проекта, которому
-    принадлежит шкаф (доступ выводится из проекта, не хранится по-шкафно).
-    is_primary/added_at — тоже проектные, не привязаны к конкретному ШУ."""
+    """Пользователь с доступом к ШУ — либо участник проекта, которому
+    принадлежит шкаф, либо владеет этим конкретным ШУ напрямую (см.
+    app/models/user_cabinet.py)."""
     user_id: int
     full_name: str | None
     phone: str | None
     user_type: str | None
-    is_primary: bool
     custom_name: str | None
     added_at: datetime
 
@@ -124,7 +123,6 @@ class ProjectUserOut(BaseModel):
     full_name: str | None
     phone: str | None
     user_type: str | None
-    is_primary: bool
     added_at: datetime
 
 

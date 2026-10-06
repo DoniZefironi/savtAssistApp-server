@@ -37,7 +37,6 @@ from app.models.chat_pinned_message import ChatPinnedMessage
 from app.models.pinned_chat import PinnedChat
 from app.models.project import Project
 from app.models.user_project import UserProject
-from app.models.project_share_request import ProjectShareRequest
 from app.models.project_contact import ProjectContact
 from app.models.messenger_link import MessengerLink
 from app.models.phone_change_request import PhoneChangeRequest
@@ -64,7 +63,7 @@ __all__ = [
     "DeviceToken", "NotificationSettings", "AuditLog", "Notification",
     "DocumentTag", "KbArticleTag", "CabinetTag", "KbArticleAttachment", "UserFavorite",
     "WarrantyNotifLog", "Embedding", "ChatUserSettings", "ChatPinnedMessage", "PinnedChat",
-    "Project", "UserProject", "ProjectShareRequest", "ProjectContact",
+    "Project", "UserProject", "ProjectContact",
     "MessengerLink", "PhoneChangeRequest", "PendingRegistration", "RegistrationRequest",
     "PasswordResetRequest", "PromoMessage", "PromoScheduleSettings",
     "RegisterDefinition", "CabinetRegisterOverride", "CabinetTelemetryEvent",

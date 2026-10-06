@@ -57,7 +57,6 @@ from app.routers import operator_events as operator_events_router
 from app.routers import user_events as user_events_router
 from app.routers import projects as projects_router
 from app.routers import admin_projects as admin_projects_router
-from app.routers import admin_project_requests as admin_project_requests_router
 from app.routers import bitrix_webhooks as bitrix_webhooks_router
 from app.routers import messenger_webhooks as messenger_webhooks_router
 from app.routers import admin_phone_change_requests as admin_phone_change_requests_router
@@ -269,7 +268,6 @@ app.include_router(operator_events_router.router)
 app.include_router(user_events_router.router)
 app.include_router(projects_router.router)
 app.include_router(admin_projects_router.router)
-app.include_router(admin_project_requests_router.router)
 app.include_router(bitrix_webhooks_router.router)
 app.include_router(messenger_webhooks_router.router)
 app.include_router(admin_phone_change_requests_router.router)

@@ -8,10 +8,6 @@ class DashboardStats(BaseModel):
     open_service_requests: int
     pending_document_requests: int
     pending_addition_requests: int
-    # Раньше здесь считались заявки на доступ к конкретному ШУ
-    # (CabinetShareRequest) — доступ теперь только через проект, см.
-    # ProjectShareRequest (заявка на вступление в проект целиком)
-    pending_project_share_requests: int
     pending_phone_change_requests: int
     pending_registration_requests: int
     pending_password_reset_requests: int

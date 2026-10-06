@@ -5,7 +5,6 @@ from app.models.cabinet_addition_request import CabinetAdditionRequest
 from app.models.document_request import DocumentRequest
 from app.models.password_reset_request import PasswordResetRequest
 from app.models.phone_change_request import PhoneChangeRequest
-from app.models.project_share_request import ProjectShareRequest
 from app.models.reclamation import Reclamation
 from app.models.registration_request import RegistrationRequest
 from app.models.service_request import ServiceRequest
@@ -27,10 +26,6 @@ class DashboardService:
 
         pending_docs = (await self.session.execute(
             select(func.count(DocumentRequest.id)).where(DocumentRequest.status == "pending")
-        )).scalar() or 0
-
-        pending_share = (await self.session.execute(
-            select(func.count(ProjectShareRequest.id)).where(ProjectShareRequest.status == "pending")
         )).scalar() or 0
 
         pending_addition = (await self.session.execute(
@@ -63,7 +58,6 @@ class DashboardService:
                 open_service_requests=open_service,
                 pending_document_requests=pending_docs,
                 pending_addition_requests=pending_addition,
-                pending_project_share_requests=pending_share,
                 pending_phone_change_requests=pending_phone_change,
                 pending_registration_requests=pending_registration,
                 pending_password_reset_requests=pending_password_reset,
@@ -99,19 +93,6 @@ class DashboardService:
                 id=req.id, type="document", status=req.status,
                 user_id=req.user_id, user_full_name=user.full_name if user else None,
                 cabinet_id=req.cabinet_id, created_at=req.created_at,
-            ))
-
-        rows = (await self.session.execute(
-            select(ProjectShareRequest, User)
-            .outerjoin(User, User.id == ProjectShareRequest.user_id)
-            .order_by(ProjectShareRequest.created_at.desc())
-            .limit(10)
-        )).all()
-        for req, user in rows:
-            items.append(RecentActivityItem(
-                id=req.id, type="share", status=req.status,
-                user_id=req.user_id, user_full_name=user.full_name if user else None,
-                project_id=req.project_id, created_at=req.created_at,
             ))
 
         rows = (await self.session.execute(
