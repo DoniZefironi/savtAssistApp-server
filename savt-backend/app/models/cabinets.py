@@ -13,6 +13,11 @@ class Cabinet(Base):
     project_id: Mapped[int | None] = mapped_column(
         ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # код для QR самостоятельного добавления ШУ (см. POST /cabinets/add-by-qr) —
+    # случайный токен, не связан с object_number: в отличие от Project.unique_code
+    # (Fernet от номера сделки Bitrix), у ШУ нет внешнего источника номера для
+    # обратимого шифрования, поэтому просто непрозрачный случайный код
+    unique_code: Mapped[str | None] = mapped_column(String(32), unique=True, nullable=True, index=True)
     # модель ШУ
     type: Mapped[str] = mapped_column(String(100), index=True)
     # номер объекта

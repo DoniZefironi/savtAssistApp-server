@@ -7,6 +7,7 @@ from app.models.cabinet_user_settings import CabinetUserSettings
 from app.models.cabinet_block import CabinetBlock
 from app.models.cabinet_photo import CabinetPhoto
 from app.models.cabinet_addition_request import CabinetAdditionRequest
+from app.models.user_cabinet import UserCabinet
 from app.models.document import Document
 from app.models.document_request import DocumentRequest
 from app.models.document_access import DocumentAccess
@@ -56,7 +57,7 @@ from app.models.reclamation_bitrix_outbox import ReclamationBitrixOutbox
 __all__ = [
     "Role", "User", "RefreshToken", "PhoneVerificationCode",
     "Cabinet", "CabinetUserSettings", "CabinetBlock", "CabinetPhoto",
-    "CabinetAdditionRequest",
+    "CabinetAdditionRequest", "UserCabinet",
     "Document", "DocumentRequest", "DocumentAccess", "ServiceRequest",
     "Chat", "Message", "MessageAttachment", "MessageReaction",
     "Tag", "KbCategory", "KbArticle", "FaqCategory", "FaqEntry",
