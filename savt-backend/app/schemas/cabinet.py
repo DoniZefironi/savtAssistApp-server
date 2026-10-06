@@ -193,9 +193,11 @@ class AddCabinetByQrIn(BaseModel):
     qr_data: str = Field(..., min_length=1, max_length=200)
 
     def parse_unique_code(self) -> str:
-        prefix = "savt://cabinet/"
-        if self.qr_data.startswith(prefix):
-            return self.qr_data[len(prefix):]
+        # см. AddProjectByQrIn.parse_unique_code — та же логика, два формата
+        for prefix in ("savt://cabinet/", "/add/cabinet/"):
+            idx = self.qr_data.find(prefix)
+            if idx != -1:
+                return self.qr_data[idx + len(prefix):]
         return self.qr_data
 
 

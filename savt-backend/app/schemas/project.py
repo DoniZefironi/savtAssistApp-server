@@ -128,9 +128,15 @@ class AddProjectByQrIn(BaseModel):
     qr_data: str = Field(..., min_length=1, max_length=200)
 
     def parse_unique_code(self) -> str:
-        prefix = "savt://project/"
-        if self.qr_data.startswith(prefix):
-            return self.qr_data[len(prefix):]
+        # Два формата живут параллельно: savt://project/ в кур-коде сканируется
+        # прямо в приложении (POST /projects/add-by-qr), /add/project/ —
+        # публичная страница для сканирования обычной камерой телефона
+        # (см. app/routers/add_qr.py, app/routers/qr.py) — код всегда
+        # последним сегментом, независимо от домена/схемы перед ним
+        for prefix in ("savt://project/", "/add/project/"):
+            idx = self.qr_data.find(prefix)
+            if idx != -1:
+                return self.qr_data[idx + len(prefix):]
         return self.qr_data
 
 

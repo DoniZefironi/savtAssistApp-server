@@ -83,6 +83,18 @@ class Settings(BaseSettings):
     # элемента Bitrix, см. reclamation_service._build_bitrix_description
     reclamation_admin_url: str = "http://10.1.0.208:8080/admin/requests"
 
+    # Публичная страница для QR, отсканированного обычной камерой телефона
+    # (не в приложении) — см. app/routers/add_qr.py. Сам адрес этой страницы
+    # и есть то, что зашито в QR-код (crm.item.add generate_qr), поэтому
+    # нужен абсолютный https-адрес нашего сервера, не относительный путь
+    public_base_url: str = "https://app.savt.by"
+    # Пакет приложения — для intent://-ссылки, которой страница пытается
+    # открыть установленное приложение напрямую, минуя её саму
+    android_package_name: str = ""
+    # Пока нет публикации в Google Play — прямая ссылка на APK (Google Drive
+    # и т.п.). Пусто — страница покажет просто текст без кнопки скачивания
+    apk_download_url: str = ""
+
     # Служебный аккаунт для входа в приложение управления SIM-картами — у него
     # своя JWT-авторизация (POST /api/User/login), не статический токен, см.
     # app/services/sim_service.py

@@ -176,9 +176,11 @@ async def remove_document_from_nas(dest_dir: Path, title: str, file_url: str | N
 
 
 async def write_project_qr(root: Path, project: Project) -> None:
-    """Кладёт QR-код проекта (тот же savt://project/{unique_code}, что и в приложении)
-    картинкой в _Маркировка — печатается и клеится на объект физически."""
-    image_bytes = generate_qr(f"savt://project/{project.unique_code}")
+    """Кладёт QR-код проекта (та же публичная страница, что и в приложении,
+    см. app/routers/qr.py) картинкой в _Маркировка — печатается и клеится на
+    объект физически, поэтому сканируется обычно обычной камерой телефона,
+    не из самого приложения — отсюда https, а не кастомная схема savt://."""
+    image_bytes = generate_qr(f"{settings.public_base_url}/add/project/{project.unique_code}")
     dest = root / "_Маркировка" / _QR_FILENAME
     await asyncio.to_thread(dest.write_bytes, image_bytes)
 

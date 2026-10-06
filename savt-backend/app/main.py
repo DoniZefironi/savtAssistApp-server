@@ -36,6 +36,7 @@ from app.routers import admin_cabinets as admin_cabinets_router
 from app.routers import admin_cabinet_requests as admin_cabinet_requests_router
 from app.routers import admin_users as admin_users_router
 from app.routers import qr as qr_router
+from app.routers import add_qr as add_qr_router
 from app.routers import admin_documents as admin_documents_router
 from app.routers import documents as documents_router
 from app.routers import favorites as favorites_router
@@ -247,6 +248,7 @@ app.include_router(admin_cabinets_router.router)
 app.include_router(admin_cabinet_requests_router.router)
 app.include_router(admin_users_router.router)
 app.include_router(qr_router.router)
+app.include_router(add_qr_router.router)
 app.include_router(admin_documents_router.router)
 app.include_router(documents_router.router)
 app.include_router(favorites_router.router)
