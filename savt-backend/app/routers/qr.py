@@ -38,7 +38,7 @@ async def get_project_qr(
     project = await repo.get_by_id(project_id)
     if project is None:
         raise NotFoundError("Проект не найден")
-    image_bytes = generate_qr(f"{settings.public_base_url}/add/project/{project.unique_code}")
+    image_bytes = generate_qr(f"{settings.public_base_url.rstrip('/')}/add/project/{project.unique_code}")
     return Response(content=image_bytes, media_type="image/png")
 
 # Получение кур кода по существующему ШУ — для самостоятельного добавления
@@ -53,5 +53,5 @@ async def get_cabinet_qr(
     cabinet = await repo.get_by_id(cabinet_id)
     if cabinet is None:
         raise NotFoundError("ШУ не найден")
-    image_bytes = generate_qr(f"{settings.public_base_url}/add/cabinet/{cabinet.unique_code}")
+    image_bytes = generate_qr(f"{settings.public_base_url.rstrip('/')}/add/cabinet/{cabinet.unique_code}")
     return Response(content=image_bytes, media_type="image/png")

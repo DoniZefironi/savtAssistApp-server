@@ -65,7 +65,7 @@ def _render(title: str, subtitle: str, intent_url: str | None) -> str:
 def _intent_url(path: str) -> str | None:
     if not settings.android_package_name:
         return None
-    fallback = f"{settings.public_base_url}{path}"
+    fallback = f"{settings.public_base_url.rstrip('/')}{path}"
     return (
         f"intent://{path.lstrip('/')}#Intent;scheme=savt;"
         f"package={settings.android_package_name};"
