@@ -473,6 +473,14 @@ class AuthService:
         await self.session.commit()
         return user
 
+    # Отдельная ручка, а не email=None через update_profile выше: там None
+    # значит "не менять" (см. if email is not None), поэтому очистить
+    # email через PATCH /auth/me в принципе нельзя — нужен отдельный DELETE
+    async def delete_email(self, user: User) -> User:
+        user.email = None
+        await self.session.commit()
+        return user
+
     # Смена номера телефона живёт в app/services/phone_change_service.py и идёт
     # только через заявку с ручным одобрением админа. Здесь её быть не может:
     # _start_verification доставляет код по user_id — в мессенджер самого

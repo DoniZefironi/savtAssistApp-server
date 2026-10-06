@@ -304,6 +304,29 @@ async def update_profile(
         organization_name=user.organization_name,
     )
 
+# Удаление почты — отдельная ручка, не через PATCH /auth/me (там email=null
+# трактуется как "не менять", см. AuthService.update_profile)
+@router.delete("/me/email", response_model=UserMeOut)
+async def delete_email(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    service = AuthService(session)
+    user = await service.delete_email(current_user)
+    role = await session.get(Role, user.role_id)
+    return UserMeOut(
+        id=user.id,
+        phone=user.phone,
+        contact_phone=user.contact_phone,
+        full_name=user.full_name,
+        role=role.name if role else "user",
+        is_phone_verified=user.is_phone_verified,
+        is_verified=user.is_verified,
+        email=user.email,
+        user_type=user.user_type,
+        organization_name=user.organization_name,
+    )
+
 # Удаление аккаунта
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_account(
