@@ -62,7 +62,11 @@ def _render(title: str, subtitle: str, intent_url: str | None) -> str:
     )
 
 
-def _intent_url(path: str) -> str | None:
+def _intent_url(savt_path: str) -> str | None:
+    """savt_path — путь внутри схемы savt://, тот же формат, что уже разбирает
+    приложение при сканировании QR изнутри себя (см. parse_unique_code в
+    AddProjectByQrIn/AddCabinetByQrIn: "project/{code}"/"cabinet/{code}"), а
+    НЕ путь этой страницы (/add/project/{code}) — это два разных адреса."""
     # fallback обязан вести НЕ на эту же страницу: если он укажет сюда же, а
     # intent не сработает (приложения нет или переход не перехватился), Chrome
     # уйдёт по fallback обратно на эту страницу, та снова попробует открыть
@@ -72,7 +76,7 @@ def _intent_url(path: str) -> str | None:
     if not settings.android_package_name or not settings.apk_download_url:
         return None
     return (
-        f"intent://{path.lstrip('/')}#Intent;scheme=savt;"
+        f"intent://{savt_path}#Intent;scheme=savt;"
         f"package={settings.android_package_name};"
         f"S.browser_fallback_url={settings.apk_download_url};end"
     )
@@ -88,7 +92,7 @@ async def add_project_landing(unique_code: str, session: AsyncSession = Depends(
             "Открываем в приложении SAVT Assist…" if name
             else "Такого проекта нет, или он больше не действует"
         ),
-        intent_url=_intent_url(f"/add/project/{unique_code}") if name else None,
+        intent_url=_intent_url(f"project/{unique_code}") if name else None,
     )
     return HTMLResponse(html)
 
@@ -103,6 +107,6 @@ async def add_cabinet_landing(unique_code: str, session: AsyncSession = Depends(
             "Открываем в приложении SAVT Assist…" if name
             else "Такого ШУ нет, или он больше не действует"
         ),
-        intent_url=_intent_url(f"/add/cabinet/{unique_code}") if name else None,
+        intent_url=_intent_url(f"cabinet/{unique_code}") if name else None,
     )
     return HTMLResponse(html)
