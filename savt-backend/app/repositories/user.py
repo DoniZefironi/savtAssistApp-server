@@ -5,7 +5,8 @@ from app.models.role import Role
 from app.core.constants import SYSTEM_USER_LOGINS
 from app.models.user import User
 from app.repositories.base import BaseRepository
-from app.utils.db import fuzzy_condition
+from app.utils.db import any_of, fuzzy_condition, words_condition
+from app.utils.search_labels import USER_TYPE, label_condition
 
 
 class UserRepository(BaseRepository[User]):
@@ -63,10 +64,12 @@ class UserRepository(BaseRepository[User]):
         )
 
         if query:
-            conditions.append(fuzzy_condition(
-                query,
-                User.full_name, User.phone, User.login, User.email, User.organization_name,
-            ))
+            conditions.append(words_condition(query, lambda word: any_of(
+                fuzzy_condition(
+                    word, User.full_name, User.phone, User.login, User.email, User.organization_name,
+                ),
+                label_condition(word, User.user_type, USER_TYPE),
+            )))
         if is_active is not None:
             conditions.append(User.is_active == is_active)
         if is_verified is not None:

@@ -8,7 +8,6 @@ from app.schemas.pagination import PageOut
 from app.schemas.reclamation import (
     AdminReclamationListItemOut,
     AdminReclamationOut,
-    BitrixUserOut,
     ReclamationCreateIn,
     ReclamationDetachedOut,
     ReclamationDetailOut,
@@ -84,15 +83,7 @@ async def list_all_reclamations(
 
 
 # Статический путь — обязательно до /admin/reclamations/{reclamation_id},
-# иначе FastAPI попытается распарсить "bitrix-users" как reclamation_id
-@router.get("/admin/reclamations/bitrix-users", response_model=list[BitrixUserOut])
-async def list_reclamation_bitrix_users(
-    _: User = Depends(require_role(RoleName.ADMIN)),
-):
-    return await ReclamationService.list_bitrix_users()
-
-
-# Статический путь — по той же причине, что и bitrix-users выше
+# иначе FastAPI попытается распарсить "bitrix-outbox" как reclamation_id
 @router.get("/admin/reclamations/bitrix-outbox", response_model=list[ReclamationOutboxOut])
 async def list_reclamation_bitrix_outbox(
     _: User = Depends(require_role(RoleName.ADMIN)),
@@ -130,7 +121,7 @@ async def delete_reclamation_bitrix_outbox(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Операция не найдена")
 
 
-# Статический путь — по той же причине, что и bitrix-users выше
+# Статический путь — по той же причине, что и bitrix-outbox выше
 @router.get("/admin/reclamations/bitrix-detached", response_model=list[ReclamationDetachedOut])
 async def list_reclamations_detached_from_bitrix(
     _: User = Depends(require_role(RoleName.ADMIN)),

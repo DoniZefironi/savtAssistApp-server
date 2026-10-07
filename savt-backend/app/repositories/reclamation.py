@@ -6,25 +6,10 @@ from app.models.project import Project
 from app.models.reclamation import Reclamation
 from app.models.reclamation_attachment import ReclamationAttachment
 from app.models.user import User
-from app.utils.db import fuzzy_condition
-
-
-# Подписи, которые админка показывает на карточках, — по ним тоже ищут ("ШУ",
-# "Закрыта"), а в БД лежат коды (cabinet, resolved), текстовым полем их не найти
-_OBJECT_TYPE_LABELS = {
-    "cabinet": "ШУ", "line": "Линия", "component": "ПКИ", "software": "ПО", "documentation": "Документация",
-}
-_STATUS_LABELS = {
-    "new": "Новая рекламация", "review": "На рассмотрении", "in_progress": "Принята в работу",
-    "resolved": "Закрыта", "rejected": "Отклонена", "invalid": "Ошибочная",
-}
-
-
-def _codes_by_label(search: str, labels: dict[str, str]) -> list[str]:
-    needle = search.strip().lower()
-    if len(needle) < 2:
-        return []
-    return [code for code, label in labels.items() if needle in label.lower()]
+from app.utils.db import date_condition, fuzzy_condition, words_condition
+from app.utils.search_labels import (
+    RECLAMATION_OBJECT_TYPE, RECLAMATION_STATUS, label_condition, warranty_label_condition,
+)
 
 
 class ReclamationRepository:
@@ -135,7 +120,7 @@ class ReclamationRepository:
             # рекламаций, поданных со связью с ними (у новых обоих нет)
             # Слова запроса ("ШУ 26") разбираются по отдельности: "ШУ" — подпись
             # типа, "26" — часть номера ШУ, вместе в одном поле их нет
-            for word in search.split():
+            def match_word(word: str):
                 by_text = fuzzy_condition(
                     word,
                     User.full_name, User.phone,
@@ -145,12 +130,19 @@ class ReclamationRepository:
                     Reclamation.object_details["serial_number"].astext,
                     Project.name, Cabinet.object_number,
                 )
-                by_label = []
-                if types := _codes_by_label(word, _OBJECT_TYPE_LABELS):
-                    by_label.append(Reclamation.object_type.in_(types))
-                if statuses := _codes_by_label(word, _STATUS_LABELS):
-                    by_label.append(Reclamation.status.in_(statuses))
-                conditions.append(or_(by_text, *by_label))
+                extra = (
+                    label_condition(word, Reclamation.object_type, RECLAMATION_OBJECT_TYPE),
+                    label_condition(word, Reclamation.status, RECLAMATION_STATUS),
+                    warranty_label_condition(word, Reclamation.warranty_classification),
+                    date_condition(
+                        word,
+                        (Reclamation.created_at, True), (Reclamation.resolved_at, True),
+                        (Reclamation.deadline_at, False),
+                    ),
+                )
+                return or_(by_text, *[c for c in extra if c is not None])
+
+            conditions.append(words_condition(search, match_word))
 
         count_stmt = (
             select(func.count(Reclamation.id))

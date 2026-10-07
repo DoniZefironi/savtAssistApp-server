@@ -2,7 +2,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.registration_request import RegistrationRequest
-from app.utils.db import fuzzy_condition
+from app.utils.db import any_of, fuzzy_condition, words_condition
+from app.utils.search_labels import REQUEST_STATUS, USER_TYPE, label_condition
 
 
 class RegistrationRequestRepository:
@@ -42,11 +43,15 @@ class RegistrationRequestRepository:
         if status:
             conditions.append(RegistrationRequest.status == status)
         if search:
-            conditions.append(fuzzy_condition(
-                search,
-                RegistrationRequest.full_name, RegistrationRequest.phone,
-                RegistrationRequest.organization_name,
-            ))
+            conditions.append(words_condition(search, lambda word: any_of(
+                fuzzy_condition(
+                    word,
+                    RegistrationRequest.full_name, RegistrationRequest.phone,
+                    RegistrationRequest.organization_name,
+                ),
+                label_condition(word, RegistrationRequest.status, REQUEST_STATUS),
+                label_condition(word, RegistrationRequest.user_type, USER_TYPE),
+            )))
 
         count_stmt = select(func.count(RegistrationRequest.id))
         if conditions:

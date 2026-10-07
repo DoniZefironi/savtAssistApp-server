@@ -1,9 +1,10 @@
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.password_reset_request import PasswordResetRequest
 from app.models.user import User
-from app.utils.db import escape_like
+from app.utils.db import any_of, fuzzy_condition, words_condition
+from app.utils.search_labels import REQUEST_STATUS, label_condition
 
 _SORT_COLUMNS = {
     "created_at": PasswordResetRequest.created_at,
@@ -53,12 +54,10 @@ class PasswordResetRequestRepository:
         if status:
             stmt = stmt.where(PasswordResetRequest.status == status)
         if search:
-            pattern = f"%{escape_like(search)}%"
-            stmt = stmt.where(or_(
-                User.full_name.ilike(pattern, escape="\\"),
-                User.phone.ilike(pattern, escape="\\"),
-                User.organization_name.ilike(pattern, escape="\\"),
-            ))
+            stmt = stmt.where(words_condition(search, lambda word: any_of(
+                fuzzy_condition(word, User.full_name, User.phone, User.organization_name),
+                label_condition(word, PasswordResetRequest.status, REQUEST_STATUS),
+            )))
 
         total = (await self.session.execute(
             select(func.count()).select_from(stmt.subquery())

@@ -11,7 +11,8 @@ from app.models.cabinet_photo import CabinetPhoto
 from app.models.document import Document
 from app.models.service_request import ServiceRequest
 from app.models.tag import Tag
-from app.utils.db import escape_like, fuzzy_condition
+from app.utils.db import any_of, escape_like, fuzzy_condition, words_condition
+from app.utils.search_labels import REQUEST_STATUS, label_condition
 from app.models.user import User
 from app.models.user_cabinet import UserCabinet
 from app.models.user_project import UserProject
@@ -496,11 +497,14 @@ class CabinetRequestRepository:
         if resolved_by_admin_id is not None:
             conditions.append(CabinetAdditionRequest.resolved_by_admin_id == resolved_by_admin_id)
         if search:
-            conditions.append(fuzzy_condition(
-                search,
-                User.full_name, User.phone, User.organization_name,
-                CabinetAdditionRequest.user_comment, CabinetAdditionRequest.admin_response,
-            ))
+            conditions.append(words_condition(search, lambda word: any_of(
+                fuzzy_condition(
+                    word,
+                    User.full_name, User.phone, User.organization_name,
+                    CabinetAdditionRequest.user_comment, CabinetAdditionRequest.admin_response,
+                ),
+                label_condition(word, CabinetAdditionRequest.status, REQUEST_STATUS),
+            )))
 
         count_stmt = select(func.count(CabinetAdditionRequest.id)).join(User, User.id == CabinetAdditionRequest.user_id)
         if conditions:

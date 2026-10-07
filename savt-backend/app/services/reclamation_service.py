@@ -13,7 +13,6 @@ from app.schemas.pagination import PageOut, make_page
 from app.schemas.reclamation import (
     AdminReclamationListItemOut,
     AdminReclamationOut,
-    BitrixUserOut,
     ReclamationAttachmentOut,
     ReclamationCreateIn,
     ReclamationDetachedOut,
@@ -156,12 +155,6 @@ class ReclamationService:
         )
         await self.session.delete(rec)
         await self.session.commit()
-
-    @staticmethod
-    async def list_bitrix_users() -> list[BitrixUserOut]:
-        from app.services import bitrix_service
-        users = await bitrix_service.list_reclamation_assignees()
-        return [BitrixUserOut(**u) for u in users]
 
     # Для "администратора интеграции" из ТЗ (п.3 — "обрабатывает ошибки
     # интеграции") — что сейчас не долетело до Bitrix и почему

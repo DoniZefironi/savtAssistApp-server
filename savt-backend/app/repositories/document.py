@@ -7,7 +7,8 @@ from app.models.document_access import DocumentAccess
 from app.models.document_request import DocumentRequest
 from app.models.document_tag import DocumentTag
 from app.models.user import User
-from app.utils.db import fuzzy_condition
+from app.utils.db import any_of, fuzzy_condition, words_condition
+from app.utils.search_labels import REQUEST_STATUS, label_condition
 
 _SORT_COLUMNS = {
     "title": Document.title,
@@ -269,11 +270,14 @@ class DocumentRequestRepository:
         if resolved_by_admin_id is not None:
             conditions.append(DocumentRequest.resolved_by_admin_id == resolved_by_admin_id)
         if search:
-            conditions.append(fuzzy_condition(
-                search,
-                User.full_name, User.phone, User.organization_name,
-                DocumentRequest.doc_type, DocumentRequest.user_message, DocumentRequest.admin_response,
-            ))
+            conditions.append(words_condition(search, lambda word: any_of(
+                fuzzy_condition(
+                    word,
+                    User.full_name, User.phone, User.organization_name,
+                    DocumentRequest.doc_type, DocumentRequest.user_message, DocumentRequest.admin_response,
+                ),
+                label_condition(word, DocumentRequest.status, REQUEST_STATUS),
+            )))
 
         count_stmt = select(func.count(DocumentRequest.id)).join(User, User.id == DocumentRequest.user_id)
         if conditions:

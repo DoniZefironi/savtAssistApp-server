@@ -5,7 +5,10 @@ from app.models.cabinets import Cabinet
 from app.models.project import Project
 from app.models.service_request import ServiceRequest
 from app.models.user import User
-from app.utils.db import fuzzy_condition
+from app.utils.db import any_of, fuzzy_condition, words_condition
+from app.utils.search_labels import (
+    SERVICE_REQUEST_STATUS, SERVICE_REQUEST_TYPE, label_condition,
+)
 
 
 class ServiceRequestRepository:
@@ -94,12 +97,16 @@ class ServiceRequestRepository:
         if is_under_warranty is not None:
             conditions.append(ServiceRequest.is_under_warranty == is_under_warranty)
         if search:
-            conditions.append(fuzzy_condition(
-                search,
-                User.full_name, User.phone, User.organization_name,
-                Cabinet.object_number, Cabinet.admin_internal_name, Project.name,
-                ServiceRequest.request_type, ServiceRequest.description,
-            ))
+            conditions.append(words_condition(search, lambda word: any_of(
+                fuzzy_condition(
+                    word,
+                    User.full_name, User.phone, User.organization_name,
+                    Cabinet.object_number, Cabinet.admin_internal_name, Project.name,
+                    ServiceRequest.description,
+                ),
+                label_condition(word, ServiceRequest.status, SERVICE_REQUEST_STATUS),
+                label_condition(word, ServiceRequest.request_type, SERVICE_REQUEST_TYPE),
+            )))
 
         count_stmt = (
             select(func.count(ServiceRequest.id))

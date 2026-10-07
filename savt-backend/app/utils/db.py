@@ -1,4 +1,7 @@
-from sqlalchemy import ColumnElement, String, and_, case, func, literal, or_
+import re
+from datetime import date
+
+from sqlalchemy import ColumnElement, String, and_, case, func, literal, or_, true
 
 LIKE_ESCAPE_CHAR = "\\"
 
@@ -94,3 +97,53 @@ def match_score(query: str, column: ColumnElement, weight: float = 1.0):
     if len(clean_query.strip()) >= _MIN_LENGTH_FOR_SIMILARITY:
         whens.append((func.similarity(norm_col, norm_query) >= FUZZY_SIMILARITY_THRESHOLD, weight * 0.2))
     return case(*whens, else_=0.0)
+
+
+def any_of(*conditions) -> ColumnElement:
+    """or_ без пустых (None) условий — подписи/даты подходят не каждому слову."""
+    return or_(*[c for c in conditions if c is not None])
+
+
+def words_condition(query: str, build) -> ColumnElement:
+    """Каждое слово запроса должно подойти хоть чем-то: build(слово) возвращает
+    условие для одного слова (обычно fuzzy_condition по колонкам + совпадение
+    с подписью типа/статуса через or_). Нужен спискам, где слово может быть
+    подписью, а не текстом поля — "ШУ 26": "ШУ" — тип, "26" — номер."""
+    words = query.replace("%", "").split()
+    return and_(true(), *[build(word) for word in words])
+
+
+_DATE_RE = re.compile(r"^(\d{1,2})\.(\d{1,2})(?:\.(\d{2}|\d{4}))?$|^(\d{4})-(\d{2})-(\d{2})$")
+
+# Даты в админке показываются по местному времени, а в БД лежат в UTC
+_LOCAL_TZ = "Europe/Minsk"
+
+
+def date_condition(word: str, *columns: tuple[ColumnElement, bool]) -> ColumnElement | None:
+    """Совпадение слова-даты ("29.09.2026", "29.09.26", "29.09", "2026-09-29")
+    с любой из колонок. columns — пары (колонка, это_datetime_с_часовым_поясом).
+    Не дата — None. Без года ищется любой год: "29.09" — день и месяц."""
+    m = _DATE_RE.match(word.strip())
+    if not m:
+        return None
+    if m.group(4):
+        day, month, year = int(m.group(6)), int(m.group(5)), int(m.group(4))
+    else:
+        day, month = int(m.group(1)), int(m.group(2))
+        raw_year = m.group(3)
+        year = None if raw_year is None else (2000 + int(raw_year) if len(raw_year) == 2 else int(raw_year))
+    if not (1 <= month <= 12 and 1 <= day <= 31):
+        return None
+    if year is not None:
+        try:
+            target = date(year, month, day)
+        except ValueError:
+            return None
+    parts = []
+    for col, is_datetime in columns:
+        local = func.timezone(_LOCAL_TZ, col) if is_datetime else col
+        if year is not None:
+            parts.append(func.date(local) == target)
+        else:
+            parts.append(and_(func.extract("day", local) == day, func.extract("month", local) == month))
+    return or_(*parts)

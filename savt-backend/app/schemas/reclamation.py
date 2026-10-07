@@ -152,10 +152,9 @@ class AdminReclamationOut(ReclamationDetailOut):
     user_id: int
     user_full_name: str | None = None
     deadline_at: date | None = None
-    # ID ответственного в Bitrix — чтобы дропдаун выбора ответственного
-    # (GET /admin/reclamations/bitrix-users) мог предвыбрать текущее значение
-    # по ID, а не гадать по совпадению ФИО. Синхронизируется в обе стороны,
-    # как и deadline_at — см. Reclamation.responsible_bitrix_user_id
+    # ID ответственного в Bitrix, по нему, а не по ФИО, сопоставляется
+    # сотрудник. Синхронизируется из Bitrix, как и deadline_at — см.
+    # Reclamation.responsible_bitrix_user_id
     responsible_bitrix_user_id: int | None = None
     # id карточки на портале — чтобы администратор интеграции мог сопоставить
     # с самим Bitrix, когда что-то разъезжается
@@ -164,13 +163,6 @@ class AdminReclamationOut(ReclamationDetailOut):
     # отличить это от "никогда не уезжала в Bitrix" можно только отсюда
     bitrix_deleted_at: datetime | None = None
     pending_create_outbox: ReclamationOutboxOut | None = None
-
-
-class BitrixUserOut(BaseModel):
-    id: int
-    full_name: str
-    phone: str | None
-    position: str | None
 
 
 class ReclamationDetachedOut(BaseModel):

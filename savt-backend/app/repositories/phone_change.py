@@ -3,7 +3,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.phone_change_request import PhoneChangeRequest
 from app.models.user import User
-from app.utils.db import escape_like
+from app.utils.db import any_of, fuzzy_condition, words_condition
+from app.utils.search_labels import REQUEST_STATUS, label_condition
 
 _SORT_COLUMNS = {
     "created_at": PhoneChangeRequest.created_at,
@@ -75,14 +76,12 @@ class PhoneChangeRequestRepository:
         if resolved_by_admin_id is not None:
             stmt = stmt.where(PhoneChangeRequest.resolved_by_admin_id == resolved_by_admin_id)
         if search:
-            pattern = f"%{escape_like(search)}%"
-            from sqlalchemy import or_
-            stmt = stmt.where(or_(
-                User.full_name.ilike(pattern, escape="\\"),
-                User.phone.ilike(pattern, escape="\\"),
-                PhoneChangeRequest.new_phone.ilike(pattern, escape="\\"),
-                User.organization_name.ilike(pattern, escape="\\"),
-            ))
+            stmt = stmt.where(words_condition(search, lambda word: any_of(
+                fuzzy_condition(
+                    word, User.full_name, User.phone, PhoneChangeRequest.new_phone, User.organization_name,
+                ),
+                label_condition(word, PhoneChangeRequest.status, REQUEST_STATUS),
+            )))
 
         total = (await self.session.execute(
             select(func.count()).select_from(stmt.subquery())
