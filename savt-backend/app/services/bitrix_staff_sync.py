@@ -9,8 +9,10 @@ app/core/staff_departments.py), уволенный/неактивный/ушед
 BITRIX_STAFF_INITIAL_PASSWORD, сменить его обязательно при первом входе.
 
 Меняются только учётки, которые синхронизация сама завела или привязала по
-номеру (User.bitrix_user_id). Сотрудник, чей номер занят обычным пользователем
-мобильного приложения, не заводится — в отчёте конфликт."""
+номеру (User.bitrix_user_id). Если номер сотрудника есть и в обычном аккаунте
+мобильного приложения (User.phone), это не конфликт: вход сотрудника лежит в
+User.login, у человека просто две учётки. Конфликт — номер уже привязан к
+другому сотруднику или логин с этим номером занят не сотрудником."""
 import logging
 from dataclasses import dataclass, field, fields
 
@@ -130,7 +132,7 @@ async def sync_staff(
             if (
                 isinstance(phone, str) and phone_counts[phone] == 1
                 and user.phone is None and user.login != phone
-                and await _find_by_phone_or_login(session, phone) is None
+                and not await _login_taken(session, phone)
             ):
                 user.login = phone
             continue
@@ -145,12 +147,16 @@ async def sync_staff(
             report.skipped_duplicate_phone.append({**row, "phone": phone})
             continue
 
-        existing = await _find_by_phone_or_login(session, phone)
+        candidates = await _find_by_phone_or_login(session, phone)
+        # Обычный пользователь мобильного приложения с тем же номером не мешает:
+        # его номер лежит в User.phone, а вход сотрудника — в User.login, это
+        # две разные учётки одного человека
+        existing = next((c for c in candidates if role_names.get(c.role_id) in STAFF_ROLES), None)
+        if existing is None and any(c.login == phone for c in candidates):
+            report.skipped_conflict.append({**row, "phone": phone, "reason": "логин с этим номером занят не сотрудником"})
+            continue
         if existing is not None:
             existing_role = role_names.get(existing.role_id)
-            if existing_role not in STAFF_ROLES:
-                report.skipped_conflict.append({**row, "phone": phone, "reason": "номер занят пользователем мобильного приложения"})
-                continue
             if existing.bitrix_user_id is not None:
                 report.skipped_conflict.append({**row, "phone": phone, "reason": "номер уже привязан к другому сотруднику"})
                 continue
@@ -184,10 +190,14 @@ async def sync_staff(
     return report
 
 
-async def _find_by_phone_or_login(session: AsyncSession, phone: str) -> User | None:
-    return (await session.execute(
-        select(User).where((User.phone == phone) | (User.login == phone))
-    )).scalars().first()
+async def _find_by_phone_or_login(session: AsyncSession, phone: str) -> list[User]:
+    return list((await session.execute(
+        select(User).where((User.phone == phone) | (User.login == phone)).order_by(User.id)
+    )).scalars().all())
+
+
+async def _login_taken(session: AsyncSession, phone: str) -> bool:
+    return (await session.execute(select(User.id).where(User.login == phone))).first() is not None
 
 
 async def _free_email(session: AsyncSession, email: str | None) -> str | None:

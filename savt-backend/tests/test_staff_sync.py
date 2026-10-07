@@ -182,16 +182,38 @@ async def test_email_already_taken_is_left_empty(db_session, make_user):
 
 # --- уже существующие учётки ---
 
-async def test_phone_of_mobile_app_user_is_a_conflict_and_account_is_untouched(db_session, make_user):
+async def test_mobile_app_user_with_same_phone_does_not_block_staff_account(db_session, make_user):
     customer = await make_user(phone="+375291112233", full_name="Клиент Клиентов")
 
     report = await sync_staff(db_session, [bx(1, [73])], PASSWORD)
 
-    assert [r["bitrix_user_id"] for r in report.skipped_conflict] == [1]
-    assert await _by_bitrix_id(db_session, 1) is None
+    assert report.skipped_conflict == []
+    staff = await _by_bitrix_id(db_session, 1)
+    assert staff is not None and staff.id != customer.id
+    assert staff.login == "+375291112233" and staff.phone is None
     await db_session.refresh(customer)
     assert customer.bitrix_user_id is None
+    assert customer.phone == "+375291112233"
     assert await _role_name(db_session, customer) == "user"
+
+
+async def test_login_taken_by_non_staff_is_a_conflict_with_reason(db_session, make_user):
+    await make_user(phone=None, login="+375291112233")
+
+    report = await sync_staff(db_session, [bx(1, [45])], PASSWORD)
+
+    assert [r["bitrix_user_id"] for r in report.skipped_conflict] == [1]
+    assert report.skipped_conflict[0]["reason"]
+    assert await _by_bitrix_id(db_session, 1) is None
+
+
+async def test_phone_of_staff_already_linked_to_another_employee_is_a_conflict(db_session, make_user):
+    await make_user("operator", phone=None, login="+375291112233", bitrix_user_id=500)
+
+    report = await sync_staff(db_session, [bx(1, [45])], PASSWORD)
+
+    assert [r["bitrix_user_id"] for r in report.skipped_conflict] == [1]
+    assert "другому сотруднику" in report.skipped_conflict[0]["reason"]
 
 
 async def test_existing_staff_is_linked_by_phone_and_role_is_only_raised(db_session, make_user):

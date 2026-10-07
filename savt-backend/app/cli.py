@@ -93,7 +93,7 @@ async def _sync_bitrix_staff() -> None:
             continue
         print(f"\n{_REPORT_TITLES[key]}:")
         for row in rows:
-            extra = row.get("role") or row.get("reason") or ""
+            extra = " ".join(str(row[k]) for k in ("role", "reason") if row.get(k))
             print(f"  [{row['bitrix_user_id']}] {row['full_name']} {extra}".rstrip())
 
 
