@@ -6,6 +6,7 @@ from app.models.project import Project
 from app.models.reclamation import Reclamation
 from app.models.reclamation_attachment import ReclamationAttachment
 from app.models.user import User
+from app.utils.db import fuzzy_condition
 
 
 class ReclamationRepository:
@@ -99,6 +100,8 @@ class ReclamationRepository:
         status: str | None = None,
         object_type: str | None = None,
         warranty_classification: bool | None = None,
+        search: str | None = None,
+        sort_by: str = "created_at", sort_order: str = "desc",
         offset: int = 0, limit: int = 20,
     ) -> tuple[list[tuple], int]:
         conditions = []
@@ -108,11 +111,39 @@ class ReclamationRepository:
             conditions.append(Reclamation.object_type == object_type)
         if warranty_classification is not None:
             conditions.append(Reclamation.warranty_classification == warranty_classification)
+        if search:
+            # Заводской номер лежит в object_details (JSONB), у cabinet/line/
+            # component под одним ключом serial_number. Проект и ШУ — только у
+            # рекламаций, поданных со связью с ними (у новых обоих нет)
+            conditions.append(fuzzy_condition(
+                search,
+                User.full_name, User.phone,
+                Reclamation.contact_name, Reclamation.contact_phone,
+                Reclamation.description, Reclamation.error_codes,
+                Reclamation.contract_number, Reclamation.order_number, Reclamation.ttn_number,
+                Reclamation.object_details["serial_number"].astext,
+                Project.name, Cabinet.object_number,
+            ))
 
-        count_stmt = select(func.count(Reclamation.id)).join(User, User.id == Reclamation.user_id)
+        count_stmt = (
+            select(func.count(Reclamation.id))
+            .join(User, User.id == Reclamation.user_id)
+            .outerjoin(Cabinet, Cabinet.id == Reclamation.cabinet_id)
+            .outerjoin(Project, Project.id == Reclamation.project_id)
+        )
         if conditions:
             count_stmt = count_stmt.where(*conditions)
         total = (await self.session.execute(count_stmt)).scalar() or 0
+
+        _sort_col = {
+            "created_at": Reclamation.created_at,
+            "resolved_at": Reclamation.resolved_at,
+            "status": Reclamation.status,
+            "deadline_at": Reclamation.deadline_at,
+            "object_type": Reclamation.object_type,
+            "user_full_name": User.full_name,
+        }.get(sort_by, Reclamation.created_at)
+        order = (_sort_col.asc() if sort_order == "asc" else _sort_col.desc()).nulls_last()
 
         stmt = (
             select(Reclamation, User, Cabinet, Project)
@@ -122,7 +153,9 @@ class ReclamationRepository:
         )
         if conditions:
             stmt = stmt.where(*conditions)
-        stmt = stmt.order_by(Reclamation.created_at.desc()).offset(offset).limit(limit)
+        # id вторым ключом — иначе при равных значениях (статус, тип) порядок
+        # между страницами не гарантирован, и записи могут повторяться/теряться
+        stmt = stmt.order_by(order, Reclamation.id.desc()).offset(offset).limit(limit)
         result = await self.session.execute(stmt)
         return result.all(), total
 

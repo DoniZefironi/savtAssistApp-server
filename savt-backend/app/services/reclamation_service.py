@@ -102,9 +102,11 @@ class ReclamationService:
         self,
         status: str | None, object_type: str | None, warranty_classification: bool | None,
         page: int, size: int,
+        search: str | None = None, sort_by: str = "created_at", sort_order: str = "desc",
     ) -> PageOut[AdminReclamationListItemOut]:
         rows, total = await self.repo.list_admin(
-            status, object_type, warranty_classification, (page - 1) * size, size,
+            status, object_type, warranty_classification, search, sort_by, sort_order,
+            (page - 1) * size, size,
         )
         items = [
             AdminReclamationListItemOut(
@@ -324,7 +326,6 @@ def _sync_to_bitrix(
 ) -> None:
     async def _task():
         from app.database import AsyncSessionLocal
-        from app.repositories.reclamation_outbox import ReclamationOutboxRepository
         from app.services import bitrix_service
 
         async with AsyncSessionLocal() as session:
@@ -342,16 +343,17 @@ def _sync_to_bitrix(
                     return
             except Exception as exc:
                 _log.exception("Bitrix item creation failed for reclamation %s", reclamation_id)
-                await ReclamationOutboxRepository(session).create(
+                # в очередь повторов + уведомление админам — рекламация не
+                # доехала до Bitrix, и повторно отправить её может только админ
+                await _record_bitrix_failure(
                     reclamation_id, "create",
                     {
                         "description": description, "attachment_url": attachment_url,
                         "object_serial_number": object_serial_number, "contract_info": contract_info,
                         "component_info": component_info,
                     },
-                    str(exc),
+                    exc,
                 )
-                await session.commit()
                 return
 
             rec = await session.get(Reclamation, reclamation_id)

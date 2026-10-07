@@ -67,6 +67,11 @@ async def list_all_reclamations(
     status: str | None = Query(None, pattern=_STATUS_PATTERN),
     object_type: str | None = Query(None, pattern=_OBJECT_TYPE_PATTERN),
     warranty_classification: bool | None = Query(None),
+    search: str | None = Query(None, min_length=1, max_length=200),
+    sort_by: str = Query(
+        "created_at", pattern="^(created_at|resolved_at|status|deadline_at|object_type|user_full_name)$",
+    ),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     _: User = Depends(require_role(RoleName.ADMIN)),
@@ -74,6 +79,7 @@ async def list_all_reclamations(
 ):
     return await ReclamationService(session).list_admin(
         status, object_type, warranty_classification, page, size,
+        search=search, sort_by=sort_by, sort_order=sort_order,
     )
 
 
