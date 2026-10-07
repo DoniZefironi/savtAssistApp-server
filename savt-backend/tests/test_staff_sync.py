@@ -53,6 +53,38 @@ def test_phone_missing_and_garbage():
     assert normalize_loose_phone("12") is False
 
 
+# --- индивидуальные роли ---
+
+async def test_personal_role_overrides_department_and_none_means_not_created(db_session):
+    users = [
+        bx(207, [1], phone="+375291110207"),
+        bx(215, [95], phone="+375291110215"),
+        bx(303, [1], phone="+375291110303"),
+        bx(307, [1], phone="+375291110307"),
+        bx(235, [95], phone="+375291110235"),
+    ]
+
+    await sync_staff(db_session, users, PASSWORD)
+
+    assert await _role_name(db_session, await _by_bitrix_id(db_session, 207)) == "admin"
+    assert await _role_name(db_session, await _by_bitrix_id(db_session, 215)) == "admin"
+    assert await _by_bitrix_id(db_session, 303) is None
+    assert await _role_name(db_session, await _by_bitrix_id(db_session, 307)) == "operator"
+    # без личной роли — по отделу
+    assert await _role_name(db_session, await _by_bitrix_id(db_session, 235)) == "superadmin"
+
+
+async def test_person_who_gets_a_none_override_later_is_deactivated(db_session, monkeypatch):
+    from app.core import staff_departments
+    await sync_staff(db_session, [bx(900, [45], phone="+375291110900")], PASSWORD)
+    assert (await _by_bitrix_id(db_session, 900)).is_active is True
+
+    monkeypatch.setitem(staff_departments.USER_ROLE_OVERRIDES, 900, None)
+    report = await sync_staff(db_session, [bx(900, [45], phone="+375291110900")], PASSWORD)
+
+    assert [r["bitrix_user_id"] for r in report.deactivated] == [900]
+
+
 # --- создание ---
 
 async def test_creates_staff_with_phone_login_and_forced_password_change(db_session):

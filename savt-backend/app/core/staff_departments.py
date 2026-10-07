@@ -22,11 +22,22 @@ DEPARTMENT_ROLES: dict[int, RoleName] = {
     65: RoleName.ADMIN,        # Помощник директора
 }
 
-# Сотрудники Bitrix, которым синхронизация роль не даёт, даже если отдел её
-# даёт (ID пользователя в Bitrix)
-EXCLUDED_BITRIX_USER_IDS: set[int] = set()
+# Роль конкретного сотрудника (ID пользователя в Bitrix) вместо роли по отделу;
+# None — в систему не заводить совсем
+USER_ROLE_OVERRIDES: dict[int, RoleName | None] = {
+    207: RoleName.ADMIN,      # Гурский Николай
+    215: RoleName.ADMIN,      # Мусик Геннадий
+    303: None,                # ИИ Агент
+    307: RoleName.OPERATOR,   # Гурская Юлия
+}
 
 _RANK = {RoleName.OPERATOR: 1, RoleName.ADMIN: 2, RoleName.SUPERADMIN: 3}
+
+
+def role_for_user(bitrix_user_id: int, department_ids: list[int]) -> RoleName | None:
+    if bitrix_user_id in USER_ROLE_OVERRIDES:
+        return USER_ROLE_OVERRIDES[bitrix_user_id]
+    return role_for_departments(department_ids)
 
 
 def role_for_departments(department_ids: list[int]) -> RoleName | None:

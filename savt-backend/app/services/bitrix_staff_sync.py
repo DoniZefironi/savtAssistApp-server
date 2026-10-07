@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleName
 from app.core.security import hash_password
-from app.core.staff_departments import EXCLUDED_BITRIX_USER_IDS, role_for_departments, role_rank
+from app.core.staff_departments import role_for_user, role_rank
 from app.models.role import Role
 from app.models.user import User
 from app.repositories.auth import RefreshTokenRepository
@@ -87,8 +87,8 @@ async def sync_staff(
         bitrix_id = int(u["ID"])
         seen_ids.add(bitrix_id)
         role = None
-        if _is_active(u) and u.get("USER_TYPE") == "employee" and bitrix_id not in EXCLUDED_BITRIX_USER_IDS:
-            role = role_for_departments(_departments(u))
+        if _is_active(u) and u.get("USER_TYPE") == "employee":
+            role = role_for_user(bitrix_id, _departments(u))
         if role is None:
             continue
         wanted.append((u, role, normalize_loose_phone(u.get("WORK_PHONE") or u.get("PERSONAL_MOBILE"))))
