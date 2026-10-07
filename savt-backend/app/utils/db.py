@@ -22,12 +22,19 @@ def escape_like(value: str) -> str:
     )
 
 
-def fuzzy_condition(query: str, *columns: ColumnElement, threshold: float = FUZZY_SIMILARITY_THRESHOLD):
+def fuzzy_condition(
+    query: str, *columns: ColumnElement,
+    threshold: float = FUZZY_SIMILARITY_THRESHOLD, allow_typos: bool | None = None,
+):
     """OR-условие по колонкам, устойчивое к регистру/разделителям и опечаткам:
     - normalize_search_text() приводит обе стороны к нижнему регистру и заменяет
       "_"/"-"/повторные пробелы на один пробел — "ШУ_52К" и "шу 52к" совпадают;
     - similarity() (pg_trgm) находит опечатки вроде "вентелятор" -> "вентилятор"
       или "шк 52к" -> "шу 52к".
+    Запрос с цифрами — это номер (ШУ, договор, телефон): "26_204_1" не должно
+    находить соседний "26_205_1", хоть они и почти совпадают по триграммам, —
+    поэтому для него похожесть отключается, остаётся только вхождение подстроки.
+    allow_typos=True/False переопределяет это правило явно.
     Требует миграцию a4b7c6d5e473 (расширение pg_trgm + normalize_search_text).
     """
     # "%" не несёт смысла в реальных данных (номер ШУ, ФИО и т.п.) — проще убрать,
@@ -39,7 +46,9 @@ def fuzzy_condition(query: str, *columns: ColumnElement, threshold: float = FUZZ
     percent = literal("%", type_=String)
     pattern = percent.concat(norm_query).concat(percent)
 
-    use_similarity = len(clean_query.strip()) >= _MIN_LENGTH_FOR_SIMILARITY
+    if allow_typos is None:
+        allow_typos = not any(ch.isdigit() for ch in clean_query)
+    use_similarity = allow_typos and len(clean_query.strip()) >= _MIN_LENGTH_FOR_SIMILARITY
 
     parts = []
     for col in columns:

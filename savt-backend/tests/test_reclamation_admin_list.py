@@ -70,6 +70,59 @@ async def test_search_by_project_name(db_session, make_project, make_reclamation
     assert ids == [hit.id]
 
 
+async def test_number_query_does_not_match_neighbouring_number(db_session, make_cabinet, make_reclamation):
+    # "26_204_1" и "26_205_1" почти совпадают по триграммам — но это разные ШУ
+    near = await make_cabinet(object_number="26_205_1")
+    target = await make_cabinet(object_number="26_204_1")
+    await make_reclamation(cabinet_id=near.id)
+    hit = await make_reclamation(cabinet_id=target.id)
+
+    ids, _ = await _ids(db_session, search="26_204_1")
+
+    assert ids == [hit.id]
+
+
+async def test_number_query_still_matches_by_substring(db_session, make_cabinet, make_reclamation):
+    cabinet = await make_cabinet(object_number="26_205_1")
+    hit = await make_reclamation(cabinet_id=cabinet.id)
+
+    assert (await _ids(db_session, search="26_205"))[0] == [hit.id]
+    assert (await _ids(db_session, search="205_1"))[0] == [hit.id]
+
+
+async def test_contract_number_query_is_exact_not_fuzzy(db_session, make_reclamation):
+    await make_reclamation(contract_number="Д-2026/88")
+
+    assert (await _ids(db_session, search="Д-2026/89"))[0] == []
+
+
+async def test_search_by_object_type_label(db_session, make_user, make_reclamation):
+    # имя без "по"/"шу"/"линия" — у стандартных тестовых пользователей оно
+    # "Тестовый Пользователь", а "по" входит в "Пользователь"
+    applicant = await make_user(full_name="Иванов Иван", phone="+375290001111")
+    cabinet = await make_reclamation(user=applicant, object_type="cabinet", object_details={"serial_number": "SN-1"})
+    line = await make_reclamation(user=applicant, object_type="line", object_details={"serial_number": "SN-2"})
+    software = await make_reclamation(user=applicant, object_type="software")
+
+    assert (await _ids(db_session, search="ШУ"))[0] == [cabinet.id]
+    assert (await _ids(db_session, search="линия"))[0] == [line.id]
+    assert (await _ids(db_session, search="ПО"))[0] == [software.id]
+
+
+async def test_search_by_status_label(db_session, make_reclamation):
+    resolved = await make_reclamation(status="resolved")
+    await make_reclamation(status="new")
+
+    assert (await _ids(db_session, search="закрыта"))[0] == [resolved.id]
+
+
+async def test_one_letter_query_does_not_expand_to_labels(db_session, make_reclamation):
+    await make_reclamation(object_type="cabinet", object_details={"serial_number": "SN-1"})
+
+    # одна буква слишком шумная, чтобы по ней подмешивать все подписи типов и статусов
+    assert (await _ids(db_session, search="ш"))[0] == []
+
+
 async def test_search_with_no_matches_returns_empty(db_session, make_reclamation):
     await make_reclamation()
 

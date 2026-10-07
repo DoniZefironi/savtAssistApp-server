@@ -1,4 +1,4 @@
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.cabinets import Cabinet
@@ -7,6 +7,24 @@ from app.models.reclamation import Reclamation
 from app.models.reclamation_attachment import ReclamationAttachment
 from app.models.user import User
 from app.utils.db import fuzzy_condition
+
+
+# Подписи, которые админка показывает на карточках, — по ним тоже ищут ("ШУ",
+# "Закрыта"), а в БД лежат коды (cabinet, resolved), текстовым полем их не найти
+_OBJECT_TYPE_LABELS = {
+    "cabinet": "ШУ", "line": "Линия", "component": "ПКИ", "software": "ПО", "documentation": "Документация",
+}
+_STATUS_LABELS = {
+    "new": "Новая рекламация", "review": "На рассмотрении", "in_progress": "Принята в работу",
+    "resolved": "Закрыта", "rejected": "Отклонена", "invalid": "Ошибочная",
+}
+
+
+def _codes_by_label(search: str, labels: dict[str, str]) -> list[str]:
+    needle = search.strip().lower()
+    if len(needle) < 2:
+        return []
+    return [code for code, label in labels.items() if needle in label.lower()]
 
 
 class ReclamationRepository:
@@ -115,7 +133,7 @@ class ReclamationRepository:
             # Заводской номер лежит в object_details (JSONB), у cabinet/line/
             # component под одним ключом serial_number. Проект и ШУ — только у
             # рекламаций, поданных со связью с ними (у новых обоих нет)
-            conditions.append(fuzzy_condition(
+            by_text = fuzzy_condition(
                 search,
                 User.full_name, User.phone,
                 Reclamation.contact_name, Reclamation.contact_phone,
@@ -123,7 +141,13 @@ class ReclamationRepository:
                 Reclamation.contract_number, Reclamation.order_number, Reclamation.ttn_number,
                 Reclamation.object_details["serial_number"].astext,
                 Project.name, Cabinet.object_number,
-            ))
+            )
+            by_label = []
+            if types := _codes_by_label(search, _OBJECT_TYPE_LABELS):
+                by_label.append(Reclamation.object_type.in_(types))
+            if statuses := _codes_by_label(search, _STATUS_LABELS):
+                by_label.append(Reclamation.status.in_(statuses))
+            conditions.append(or_(by_text, *by_label))
 
         count_stmt = (
             select(func.count(Reclamation.id))
