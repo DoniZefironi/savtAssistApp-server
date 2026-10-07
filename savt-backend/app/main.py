@@ -57,7 +57,6 @@ from app.routers import admin_dashboard as admin_dashboard_router
 from app.routers import operator_events as operator_events_router
 from app.routers import user_events as user_events_router
 from app.routers import projects as projects_router
-from app.routers import admin_staff as admin_staff_router
 from app.routers import admin_projects as admin_projects_router
 from app.routers import bitrix_webhooks as bitrix_webhooks_router
 from app.routers import messenger_webhooks as messenger_webhooks_router
@@ -74,7 +73,6 @@ from app.services.warranty_scheduler import check_warranty_expiry
 from app.services.project_folder_service import sync_all_project_folders
 from app.services.service_request_service import sync_statuses_from_bitrix
 from app.services.reclamation_service import retry_bitrix_outbox
-from app.services.bitrix_staff_sync import sync_staff_from_bitrix_job
 from app.services import promo_service
 from app.core.limiter import limiter
 from app.database import AsyncSessionLocal
@@ -137,8 +135,6 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(sync_statuses_from_bitrix, "interval", minutes=15)
     # повтор недоставленных синхронизаций рекламаций с Bitrix (п.8 ТЗ)
     scheduler.add_job(retry_bitrix_outbox, "interval", minutes=15)
-    # сотрудники Bitrix -> операторы/админы (роли по отделам, деактивация уволенных)
-    scheduler.add_job(sync_staff_from_bitrix_job, "cron", minute=30)
     # синрхонизация бота с чатами
     scheduler.add_job(_bot_follow_up_job, "interval", minutes=10)
     # чистка старой телеметрии
@@ -283,7 +279,6 @@ app.include_router(admin_sim_router.router)
 app.include_router(admin_registration_requests_router.router)
 app.include_router(admin_password_reset_requests_router.router)
 app.include_router(reclamations_router.router)
-app.include_router(admin_staff_router.router)
 app.mount("/static", StaticFiles(directory="/code/uploads"), name="static")
 
 # Бэзик эндпоинты

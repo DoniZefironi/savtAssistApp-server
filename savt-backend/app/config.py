@@ -79,11 +79,6 @@ class Settings(BaseSettings):
 
     bitrix_reclamation_entity_type_id: int = 1176
 
-    # Общий начальный пароль сотрудников, заведённых из Bitrix. Пустой —
-    # синхронизация сотрудников никого не создаёт (только обновляет и
-    # деактивирует уже заведённых). Человек обязан сменить его при первом входе
-    bitrix_staff_initial_password: str = ""
-
     # Ссылка на карточку рекламации в админке — вставляется в sourceDescription
     # элемента Bitrix, см. reclamation_service._build_bitrix_description
     reclamation_admin_url: str = "http://10.1.0.208:8080/admin/requests"

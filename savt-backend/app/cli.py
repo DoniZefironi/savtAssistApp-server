@@ -64,47 +64,13 @@ async def _import_bitrix_deals() -> None:
         )
 
 
-_REPORT_TITLES = {
-    "created": "Заведены",
-    "linked": "Привязаны к существующим учёткам",
-    "role_changed": "Сменилась роль",
-    "reactivated": "Снова активны",
-    "deactivated": "Деактивированы",
-    "skipped_no_phone": "Пропущены: нет телефона",
-    "skipped_invalid_phone": "Пропущены: телефон не распознан",
-    "skipped_duplicate_phone": "Пропущены: один телефон у нескольких сотрудников",
-    "skipped_conflict": "Пропущены: конфликт",
-    "skipped_no_password": "Пропущены: не задан BITRIX_STAFF_INITIAL_PASSWORD",
-}
-
-
-async def _sync_bitrix_staff() -> None:
-    from app.services import bitrix_staff_sync
-
-    async with AsyncSessionLocal() as session:
-        report = await bitrix_staff_sync.run_sync(session)
-    if report is None:
-        print("Bitrix недоступен или не настроен — ничего не изменено")
-        sys.exit(1)
-    data = report.as_dict()
-    print("Итог:", ", ".join(f"{_REPORT_TITLES[k]} — {len(v)}" for k, v in data.items() if v) or "изменений нет")
-    for key, rows in data.items():
-        if not rows:
-            continue
-        print(f"\n{_REPORT_TITLES[key]}:")
-        for row in rows:
-            extra = " ".join(str(row[k]) for k in ("role", "reason") if row.get(k))
-            print(f"  [{row['bitrix_user_id']}] {row['full_name']} {extra}".rstrip())
-
-
 def main():
     usage = (
         "Использование:\n"
         "  python -m app.cli create-superadmin <login> <password> [full_name]\n"
         "  python -m app.cli create-admin <login> <password> [full_name]\n"
         "  python -m app.cli create-operator <login> <password> [full_name]\n"
-        "  python -m app.cli import-bitrix-deals\n"
-        "  python -m app.cli sync-bitrix-staff"
+        "  python -m app.cli import-bitrix-deals"
     )
 
     if len(sys.argv) < 2:
@@ -115,10 +81,6 @@ def main():
 
     if command == "import-bitrix-deals":
         asyncio.run(_import_bitrix_deals())
-        return
-
-    if command == "sync-bitrix-staff":
-        asyncio.run(_sync_bitrix_staff())
         return
 
     role_map = {

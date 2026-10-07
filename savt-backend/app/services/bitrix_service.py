@@ -401,34 +401,6 @@ async def add_reclamation_comment(item_id: str, text: str) -> None:
         raise RuntimeError(f"Bitrix crm.timeline.comment.add error: {data}")
 
 
-async def list_users_for_sync() -> list[dict] | None:
-    """Все пользователи портала (user.get), и активные, и нет, как отдаёт
-    Bitrix — для синхронизации сотрудников (bitrix_staff_sync). user.get
-    отдаёт результат постранично (обычно по 50), поэтому идём по data["next"].
-    None — Bitrix не настроен или ответил ошибкой: синхронизация в этом случае
-    ничего не меняет, иначе пустой ответ деактивировал бы всех сотрудников."""
-    if not settings.bitrix_webhook_url:
-        return None
-    url = f"{settings.bitrix_webhook_url.rstrip('/')}/user.get.json"
-
-    users: list[dict] = []
-    start = 0
-    while True:
-        resp = await _get_client().post(url, json={"start": start})
-        if not resp.is_success:
-            _log.warning("Bitrix user.get %s: %s", resp.status_code, resp.text)
-            return None
-        data = resp.json()
-        if "error" in data:
-            _log.warning("Bitrix user.get error: %s", data)
-            return None
-        users.extend(data.get("result") or [])
-        next_start = data.get("next")
-        if next_start is None:
-            return users
-        start = next_start
-
-
 async def update_reclamation_assignee(item_id: str, bitrix_user_id: int) -> None:
     """Назначает ответственного (assignedById) в самой карточке Bitrix —
     отдельно от смены стадии, вызывается при выборе ответственного в

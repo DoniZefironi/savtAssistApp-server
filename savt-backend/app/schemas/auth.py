@@ -143,10 +143,6 @@ class TokenPairOut(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
-    # true — пароль задан не самим человеком (сотрудник из Bitrix, первый вход):
-    # до смены пароля API пускает только на POST /auth/password-change,
-    # POST /auth/logout и GET /auth/me
-    must_change_password: bool = False
 
 
 # Гостевой токен: без refresh_token — выдача дешёвая (без обращения к БД),

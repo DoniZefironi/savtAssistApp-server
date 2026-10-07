@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import String, Boolean, DateTime, ForeignKey, Integer, func, CheckConstraint
+from sqlalchemy import String, Boolean, DateTime, ForeignKey, func, CheckConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -43,15 +43,6 @@ class User(Base):
     # бан или актив?
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="true"
-    )
-    # ID сотрудника в Bitrix — заполнен у операторов/админов, заведённых или
-    # привязанных синхронизацией сотрудников (см. bitrix_staff_sync). Только
-    # такие учётки синхронизация вправе менять и деактивировать
-    bitrix_user_id: Mapped[int | None] = mapped_column(Integer, unique=True, index=True)
-    # Пароль задан не самим человеком (общий начальный пароль сотрудников):
-    # пока флаг стоит, API пускает только на смену пароля, выход и /auth/me
-    must_change_password: Mapped[bool] = mapped_column(
-        Boolean, default=False, server_default="false"
     )
     
     # время создания
