@@ -363,6 +363,22 @@ class UserProjectRepository(BaseRepository[UserProject]):
         )
         return result.scalar_one_or_none()
 
+    # Членство в НЕ удалённом проекте — для проверок доступа к чему-либо
+    # внутри проекта (документы, чат, заявки). find() выше намеренно не смотрит
+    # на Project.deleted_at: выйти из удалённого проекта или закрепить его
+    # должно оставаться возможным, а вот пользоваться им — уже нет
+    async def find_active(self, user_id: int, project_id: int) -> UserProject | None:
+        result = await self.session.execute(
+            select(UserProject)
+            .join(Project, Project.id == UserProject.project_id)
+            .where(
+                UserProject.user_id == user_id,
+                UserProject.project_id == project_id,
+                Project.deleted_at.is_(None),
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def list_for_user(self, user_id: int) -> list:
         # deleted_at: soft-delete проекта (ProjectService.delete) не трогает
         # строки UserProject — без этого фильтра удалённый проект оставался бы

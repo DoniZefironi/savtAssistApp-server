@@ -106,6 +106,18 @@ class ChatRepository:
         )
         return list(result.scalars().all())
 
+    # Живые чаты одного пользователя по одному ШУ (чат самого ШУ и чаты заявок
+    # по нему) — для архивации при отвязке ШУ, добавленного отдельно от проекта
+    async def list_user_chats_for_cabinet(self, user_id: int, cabinet_id: int) -> list[Chat]:
+        result = await self.session.execute(
+            select(Chat).where(
+                Chat.user_id == user_id,
+                Chat.cabinet_id == cabinet_id,
+                Chat.archived_at.is_(None),
+            )
+        )
+        return list(result.scalars().all())
+
     # Cabinet/Project сразу джойном (не по одному в цикле сервиса) — та же
     # причина, что у list_for_operator: раньше на каждый чат в списке уходило
     # по отдельному запросу за ШУ и проектом.

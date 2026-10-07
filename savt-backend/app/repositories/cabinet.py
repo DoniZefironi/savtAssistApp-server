@@ -372,6 +372,17 @@ class UserCabinetRepository:
         await self.session.delete(obj)
         await self.session.flush()
 
+    # ШУ, добавленные пользователем отдельно (для карточки пользователя в
+    # админке) — вместе с самим ШУ, удалённые (soft-delete) не показываем
+    async def list_with_cabinets(self, user_id: int) -> list[tuple[UserCabinet, Cabinet]]:
+        result = await self.session.execute(
+            select(UserCabinet, Cabinet)
+            .join(Cabinet, Cabinet.id == UserCabinet.cabinet_id)
+            .where(UserCabinet.user_id == user_id, Cabinet.deleted_at.is_(None))
+            .order_by(UserCabinet.added_at.desc())
+        )
+        return result.all()
+
     # ШУ этого проекта, которыми пользователь уже владеет напрямую — нужно
     # при добавлении проекта по QR, чтобы слить прямое владение в членство
     # (см. UserProjectService.add_by_qr) и не держать два параллельных пути

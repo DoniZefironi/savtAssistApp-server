@@ -1,9 +1,9 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NotFoundError, PermissionDeniedError
+from app.core.exceptions import AlreadyExistsError, NotFoundError, PermissionDeniedError
 from app.models.audit_log import AuditLog
 from app.models.role import Role
-from app.repositories.cabinet import CabinetRepository, CabinetUserSettingsRepository
+from app.repositories.cabinet import CabinetRepository, CabinetUserSettingsRepository, UserCabinetRepository
 from app.repositories.user import UserRepository
 from app.schemas.admin_users import (
     AdminUserDetailOut,
@@ -12,6 +12,7 @@ from app.schemas.admin_users import (
     CreateAdminIn,
     CreateOperatorIn,
     CreateUserIn,
+    UserDirectCabinetOut,
 )
 from app.schemas.pagination import PageOut, make_page
 
@@ -21,6 +22,7 @@ class AdminUserService:
         self.session = session
         self.user_repo = UserRepository(session)
         self.cabinet_repo = CabinetRepository(session)
+        self.user_cabinet_repo = UserCabinetRepository(session)
         self.settings_repo = CabinetUserSettingsRepository(session)
 
     # Список пользователей
@@ -75,6 +77,13 @@ class AdminUserService:
 
         from app.services.user_project_service import UserProjectService
         projects = await UserProjectService(self.session).list_projects(user_id)
+        direct_cabinets = [
+            UserDirectCabinetOut(
+                cabinet_id=cab.id, type=cab.type, object_number=cab.object_number,
+                admin_internal_name=cab.admin_internal_name, added_at=uc.added_at,
+            )
+            for uc, cab in await self.user_cabinet_repo.list_with_cabinets(user_id)
+        ]
 
         return AdminUserDetailOut(
             id=user.id,
@@ -91,6 +100,7 @@ class AdminUserService:
             is_verified=user.is_verified,
             created_at=user.created_at,
             projects=projects,
+            cabinets=direct_cabinets,
         )
 
     # Создание администратора (только суперадмин)
@@ -363,6 +373,50 @@ class AdminUserService:
             )
             for user, added_at in rows
         ]
+
+    # Отвязать ШУ, добавленный пользователем отдельно от проекта (UserCabinet).
+    # Если доступ к ШУ у него идёт через проект — здесь снимать нечего: убрать
+    # его можно только из проекта целиком (ProjectService.remove_user_from_project).
+    # Заодно архивирует его чаты по этому ШУ — та же причина, что и при
+    # исключении из проекта: иначе в уже открытых чатах он мог бы писать дальше.
+    async def remove_user_from_cabinet(
+        self, cabinet_id: int, user_id: int, reason: str, actor_id: int, actor_role: str,
+    ) -> None:
+        cabinet = await self.cabinet_repo.get_by_id(cabinet_id)
+        if cabinet is None:
+            raise NotFoundError("ШУ не найден")
+        uc = await self.user_cabinet_repo.find(user_id, cabinet_id)
+        if uc is None:
+            if await self.cabinet_repo.user_has_access(user_id, cabinet_id):
+                raise AlreadyExistsError(
+                    "Доступ к этому ШУ идёт через проект — уберите пользователя из проекта"
+                )
+            raise NotFoundError("У пользователя нет прямой привязки к этому ШУ")
+
+        await self.user_cabinet_repo.delete(uc)
+        await self._log(
+            actor_id, actor_role, "user_cabinet.remove", "user_cabinet", uc.id,
+            {"user_id": user_id, "cabinet_id": cabinet_id, "reason": reason},
+        )
+
+        from app.services.chat_service import ChatService
+        archived_chats = await ChatService(self.session).archive_user_cabinet_chats(user_id, cabinet_id)
+        await self.session.commit()
+
+        if archived_chats:
+            from app.services.chat_service import chat_summary_dict
+            from app.services.realtime_events import publish_chat_updated
+            for chat in archived_chats:
+                await publish_chat_updated(chat.id, chat_summary_dict(chat))
+
+        from app.services.notification_service import NotificationService
+        cabinet_name = cabinet.admin_internal_name or cabinet.object_number
+        await NotificationService(self.session).send(
+            user_id=user_id, type_="request_status",
+            title="Доступ к ШУ отозван",
+            body=f"Администратор убрал ШУ «{cabinet_name}» из вашего списка",
+            data={"cabinet_id": cabinet_id},
+        )
 
     # Подтвердить аккаунт
     async def verify_user(self, user_id: int, actor_id: int, actor_role: str) -> None:

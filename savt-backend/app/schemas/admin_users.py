@@ -20,6 +20,16 @@ class AdminUserListOut(BaseModel):
     created_at: datetime
 
 
+class UserDirectCabinetOut(BaseModel):
+    """ШУ, добавленный пользователем отдельно по собственному QR, в обход
+    проекта (см. app/models/user_cabinet.py)."""
+    cabinet_id: int
+    type: str
+    object_number: str
+    admin_internal_name: str | None
+    added_at: datetime
+
+
 class AdminUserDetailOut(BaseModel):
     id: int
     phone: str | None
@@ -34,10 +44,11 @@ class AdminUserDetailOut(BaseModel):
     is_phone_verified: bool
     is_verified: bool
     created_at: datetime
-    # Проекты, в которых состоит пользователь — не отдельные ШУ: доступ к
-    # шкафам выводится из проекта целиком, показывать его по-шкафно больше не
-    # имеет смысла (щёлкнули по строке — переход на карточку проекта, не ШУ)
+    # Проекты, в которых состоит пользователь: щёлкнули по строке — переход на
+    # карточку проекта. Шкафы проекта отдельно не перечисляются
     projects: list[UserProjectListItemOut]
+    # Только ШУ, добавленные отдельно от проекта (прямое владение)
+    cabinets: list[UserDirectCabinetOut] = []
 
 
 class CreateOperatorIn(BaseModel):
@@ -127,4 +138,8 @@ class ProjectUserOut(BaseModel):
 
 
 class RemoveUserFromProjectIn(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=1000)
+
+
+class RemoveUserFromCabinetIn(BaseModel):
     reason: str = Field(..., min_length=1, max_length=1000)

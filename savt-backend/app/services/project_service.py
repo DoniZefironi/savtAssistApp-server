@@ -360,3 +360,15 @@ class ProjectService:
             from app.services.realtime_events import publish_chat_updated
             for chat in archived_chats:
                 await publish_chat_updated(chat.id, chat_summary_dict(chat))
+
+        project = await self.repo.get_by_id(project_id)
+        from app.services.notification_service import NotificationService
+        await NotificationService(self.session).send(
+            user_id=user_id, type_="request_status",
+            title="Доступ к проекту отозван",
+            body=(
+                f"Администратор убрал проект «{project.name}» из вашего списка"
+                if project is not None else "Администратор убрал проект из вашего списка"
+            ),
+            data={"project_id": project_id},
+        )

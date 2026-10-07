@@ -359,7 +359,7 @@ class UserDocumentService:
         # Та же причина, что и в list_documents выше — без проверки членства
         # в проекте список документов чужого проекта был бы виден по ID в пути.
         from app.repositories.project import UserProjectRepository
-        if not await UserProjectRepository(self.session).find(user_id, project_id):
+        if not await UserProjectRepository(self.session).find_active(user_id, project_id):
             raise PermissionDeniedError("У вас нет доступа к этому проекту")
         rows, total = await self.doc_repo.list_for_project(
             user_id=user_id, project_id=project_id,

@@ -24,11 +24,13 @@ from sqlalchemy.pool import NullPool
 from app.config import settings
 from app.core.security import hash_password
 from app.models.cabinets import Cabinet
+from app.models.chat import Chat
 from app.models.document import Document
 from app.models.project import Project
 from app.models.reclamation import Reclamation
 from app.models.role import Role
 from app.models.user import User
+from app.models.user_cabinet import UserCabinet
 from app.models.user_project import UserProject
 
 
@@ -183,6 +185,32 @@ async def link_user_project(db_session: AsyncSession):
         return up
 
     return _link
+
+
+@pytest_asyncio.fixture
+async def link_user_cabinet(db_session: AsyncSession):
+    """Прямое владение ШУ в обход проекта (UserCabinet) — второй путь доступа,
+    см. CabinetRepository.get_accessible_for_user."""
+    async def _link(user: User, cabinet: Cabinet, **overrides) -> UserCabinet:
+        defaults = dict(user_id=user.id, cabinet_id=cabinet.id)
+        defaults.update(overrides)
+        uc = UserCabinet(**defaults)
+        db_session.add(uc)
+        await db_session.flush()
+        return uc
+
+    return _link
+
+
+@pytest_asyncio.fixture
+async def make_chat(db_session: AsyncSession):
+    async def _make(user: User, chat_type: str = "cabinet", **overrides) -> Chat:
+        chat = Chat(user_id=user.id, chat_type=chat_type, **overrides)
+        db_session.add(chat)
+        await db_session.flush()
+        return chat
+
+    return _make
 
 
 @pytest_asyncio.fixture

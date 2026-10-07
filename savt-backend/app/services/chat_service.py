@@ -86,7 +86,7 @@ class ChatService:
 
     async def get_project_chat(self, user_id: int, project_id: int) -> ChatOut:
         from app.repositories.project import UserProjectRepository
-        if not await UserProjectRepository(self.session).find(user_id, project_id):
+        if not await UserProjectRepository(self.session).find_active(user_id, project_id):
             raise PermissionDeniedError("У вас нет доступа к этому проекту")
         chat = await self.chat_repo.find(user_id, "project", project_id=project_id)
         if chat is None:
@@ -149,6 +149,16 @@ class ChatService:
         self, user_id: int, project_id: int, cabinet_ids: list[int],
     ) -> list[Chat]:
         chats = await self.chat_repo.list_user_chats_for_project(user_id, project_id, cabinet_ids)
+        now = datetime.now(timezone.utc)
+        for chat in chats:
+            chat.archived_at = now
+        return chats
+
+    # Архивирует чаты ОДНОГО пользователя по одному ШУ — вызывается при отвязке
+    # ШУ, добавленного отдельно от проекта (UserCabinet). Та же неcommit-
+    # семантика, что у archive_user_project_chats.
+    async def archive_user_cabinet_chats(self, user_id: int, cabinet_id: int) -> list[Chat]:
+        chats = await self.chat_repo.list_user_chats_for_cabinet(user_id, cabinet_id)
         now = datetime.now(timezone.utc)
         for chat in chats:
             chat.archived_at = now

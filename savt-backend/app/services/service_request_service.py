@@ -333,7 +333,7 @@ class ServiceRequestService:
             cabinet = await self.cabinet_repo.get_by_id(data.cabinet_id)
         else:
             from app.repositories.project import ProjectRepository, UserProjectRepository
-            if not await UserProjectRepository(self.session).find(user_id, data.project_id):
+            if not await UserProjectRepository(self.session).find_active(user_id, data.project_id):
                 raise PermissionDeniedError("У вас нет доступа к этому проекту")
             project = await ProjectRepository(self.session).get_by_id(data.project_id)
 

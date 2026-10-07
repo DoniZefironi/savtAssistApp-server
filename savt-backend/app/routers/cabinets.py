@@ -81,6 +81,16 @@ async def add_by_photo(
     )
     return AddByPhotoOut(request_id=request_id)
 
+# Убрать ШУ, добавленный отдельно от проекта (пользователь). Если ШУ доступен
+# через проект — 409, выйти можно только из проекта целиком
+@router.delete("/{cabinet_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_cabinet(
+    cabinet_id: int,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    await UserCabinetService(session).remove_cabinet(current_user.id, cabinet_id)
+
 # Добавить ШУ по кур-коду (пользователь) — напрямую, в обход проекта
 @router.post("/add-by-qr", response_model=AddCabinetByQrOut)
 async def add_cabinet_by_qr(

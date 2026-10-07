@@ -92,7 +92,7 @@ class UserCabinetService:
     async def add_by_photo(
         self, user_id: int, project_id: int, photo_url: str, user_comment: str | None
     ) -> int:
-        if await self.user_project_repo.find(user_id, project_id) is None:
+        if await self.user_project_repo.find_active(user_id, project_id) is None:
             raise PermissionDeniedError("Вы не состоите в этом проекте")
 
         pending = await self.request_repo.find_pending_addition(user_id)
@@ -125,6 +125,30 @@ class UserCabinetService:
         await self.user_cabinet_repo.create(user_id, cabinet.id)
         await self.session.commit()
         return {"status": "linked", "message": "ШУ успешно добавлен"}
+
+    # Пользователь сам убирает ШУ, добавленный отдельно от проекта (как выход из
+    # проекта, но для одного ШУ). Если ШУ доступен ему через проект — убрать его
+    # отсюда нельзя, только выйдя из проекта целиком. Заодно архивирует его чаты
+    # по этому ШУ — иначе он мог бы писать в уже открытые чаты без доступа.
+    async def remove_cabinet(self, user_id: int, cabinet_id: int) -> None:
+        uc = await self.user_cabinet_repo.find(user_id, cabinet_id)
+        if uc is None:
+            if await self.cabinet_repo.user_has_access(user_id, cabinet_id):
+                raise AlreadyExistsError(
+                    "ШУ доступен вам через проект — чтобы убрать его, выйдите из проекта"
+                )
+            raise NotFoundError("ШУ не найден")
+        await self.user_cabinet_repo.delete(uc)
+
+        from app.services.chat_service import ChatService
+        archived_chats = await ChatService(self.session).archive_user_cabinet_chats(user_id, cabinet_id)
+        await self.session.commit()
+
+        if archived_chats:
+            from app.services.chat_service import chat_summary_dict
+            from app.services.realtime_events import publish_chat_updated
+            for chat in archived_chats:
+                await publish_chat_updated(chat.id, chat_summary_dict(chat))
 
     # Получение кол-ва непрочитанных сообщений в чате ШУ
     async def _get_unread_counts(self, user_id: int, cabinet_ids: list[int]) -> dict[int, int]:
