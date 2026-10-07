@@ -1,3 +1,4 @@
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -26,6 +27,7 @@ from app.repositories.messenger import MessengerLinkRepository
 from app.repositories.pending_registration import PendingRegistrationRepository
 from app.repositories.user import UserRepository
 from app.services import messenger_service
+from app.utils.phone import normalize_loose_phone
 from app.models.role import Role
 
 
@@ -170,8 +172,8 @@ class AuthService:
         password: str,
         user_agent: str | None,
         ip_address: str | None,
-    ) -> tuple[str, str]:
-        user = await self.user_repo.find_by_login(login)
+    ) -> tuple[str, str, bool]:
+        user = await self._find_staff_by_login(login)
 
         if user is None or not verify_password(password, user.hashed_password):
             raise AuthenticationError("Неверный логин или пароль")
@@ -187,7 +189,17 @@ class AuthService:
 
         access, refresh = await self._issue_tokens(user, user_agent, ip_address)
         await self.session.commit()
-        return access, refresh
+        return access, refresh, user.must_change_password
+
+    # Логином сотрудника из Bitrix служит номер телефона в формате E.164, а
+    # вводят его как угодно ("+375 29 111-22-33", "375291112233"), поэтому
+    # введённое приводится к E.164, если похоже на номер
+    async def _find_staff_by_login(self, login: str) -> User | None:
+        user = await self.user_repo.find_by_login(login)
+        if user is not None or not re.fullmatch(r"[+\d\s()\-]+", login.strip()):
+            return user
+        phone = normalize_loose_phone(login)
+        return await self.user_repo.find_by_login(phone) if isinstance(phone, str) else None
 
     # Вход(как неочевидно по названию)
     async def login(
@@ -450,6 +462,7 @@ class AuthService:
             raise InvalidCodeError("Новый пароль и подтверждение не совпадают")
 
         user.hashed_password = hash_password(new_password)
+        user.must_change_password = False
         await self.token_repo.revoke_all_for_user(user.id)
         await self.session.commit()
 

@@ -401,50 +401,32 @@ async def add_reclamation_comment(item_id: str, text: str) -> None:
         raise RuntimeError(f"Bitrix crm.timeline.comment.add error: {data}")
 
 
-async def list_reclamation_assignees() -> list[dict]:
-    """Активные сотрудники портала (user.get) — для дропдауна выбора
-    ответственного в админке, вместо свободного текстового поля.
-    Возвращает [{id, full_name, phone, position}]. Рабочий телефон
-    (WORK_PHONE) может быть не заполнен у сотрудника — тогда откатываемся на
-    личный мобильный (PERSONAL_MOBILE), чтобы в дропдауне телефон не был пустым.
-
-    Фильтр только ACTIVE=true — без USER_TYPE=employee (первая версия его
-    добавляла лишним предположением, из-за чего часть реальных пользователей
-    отфильтровывалась). user.get отдаёт результат постранично (обычно по 50),
-    поэтому дальше в цикле идём по data["next"], пока не выберем всех."""
+async def list_users_for_sync() -> list[dict] | None:
+    """Все пользователи портала (user.get), и активные, и нет, как отдаёт
+    Bitrix — для синхронизации сотрудников (bitrix_staff_sync). user.get
+    отдаёт результат постранично (обычно по 50), поэтому идём по data["next"].
+    None — Bitrix не настроен или ответил ошибкой: синхронизация в этом случае
+    ничего не меняет, иначе пустой ответ деактивировал бы всех сотрудников."""
     if not settings.bitrix_webhook_url:
-        return []
+        return None
     url = f"{settings.bitrix_webhook_url.rstrip('/')}/user.get.json"
 
     users: list[dict] = []
     start = 0
     while True:
-        resp = await _get_client().post(url, json={"ACTIVE": True, "start": start})
+        resp = await _get_client().post(url, json={"start": start})
         if not resp.is_success:
             _log.warning("Bitrix user.get %s: %s", resp.status_code, resp.text)
-            break
+            return None
         data = resp.json()
         if "error" in data:
             _log.warning("Bitrix user.get error: %s", data)
-            break
-
-        for u in data.get("result") or []:
-            full_name = " ".join(
-                part for part in (u.get("LAST_NAME"), u.get("NAME"), u.get("SECOND_NAME")) if part
-            )
-            users.append({
-                "id": int(u["ID"]),
-                "full_name": full_name or f"Пользователь {u['ID']}",
-                "phone": u.get("WORK_PHONE") or u.get("PERSONAL_MOBILE") or None,
-                "position": u.get("WORK_POSITION") or None,
-            })
-
+            return None
+        users.extend(data.get("result") or [])
         next_start = data.get("next")
         if next_start is None:
-            break
+            return users
         start = next_start
-
-    return users
 
 
 async def update_reclamation_assignee(item_id: str, bitrix_user_id: int) -> None:
@@ -821,8 +803,7 @@ async def get_bitrix_user(bitrix_user_id: int | str) -> dict | None:
     ответственного (см. reclamation_service.sync_reclamation_from_bitrix):
     когда назначение сменили прямо в Bitrix, нужно подтянуть не только сам ID,
     но и ФИО/телефон в responsible_name/responsible_phone, которые показываются
-    заявителю. Формат {id, full_name, phone} — тот же, что у
-    list_reclamation_assignees, но без пагинации: ID уже известен."""
+    заявителю. Формат {id, full_name, phone}."""
     if not settings.bitrix_webhook_url or not bitrix_user_id:
         return None
     url = f"{settings.bitrix_webhook_url.rstrip('/')}/user.get.json"

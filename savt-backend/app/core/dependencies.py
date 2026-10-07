@@ -1,5 +1,5 @@
 from typing import AsyncGenerator
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 import jwt
@@ -47,7 +47,14 @@ def _decode_or_401(credentials: HTTPAuthorizationCredentials | None) -> dict:
         )
 
 
+# Что можно делать, пока пароль не сменён (User.must_change_password)
+_ALLOWED_BEFORE_PASSWORD_CHANGE = {
+    ("POST", "/auth/password-change"), ("POST", "/auth/logout"), ("GET", "/auth/me"),
+}
+
+
 async def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_security),
     session: AsyncSession = Depends(get_session),
 ) -> User:
@@ -62,6 +69,9 @@ async def get_current_user(
 
     if user is None or not user.is_active:
         raise HTTPException(status_code=401, detail="Пользователь недоступен")
+
+    if user.must_change_password and (request.method, request.url.path) not in _ALLOWED_BEFORE_PASSWORD_CHANGE:
+        raise HTTPException(status_code=403, detail="Необходимо сменить пароль")
 
     return user
 

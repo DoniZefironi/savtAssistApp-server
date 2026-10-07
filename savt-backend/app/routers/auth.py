@@ -145,13 +145,15 @@ async def admin_login(
 ):
     user_agent, ip = _client_info(request)
     service = AuthService(session)
-    access, refresh = await service.admin_login(
+    access, refresh, must_change_password = await service.admin_login(
         login=payload.login,
         password=payload.password,
         user_agent=user_agent,
         ip_address=ip,
     )
-    return TokenPairOut(access_token=access, refresh_token=refresh)
+    return TokenPairOut(
+        access_token=access, refresh_token=refresh, must_change_password=must_change_password,
+    )
 
 # Вход пользователя
 @router.post("/login", response_model=TokenPairOut)
