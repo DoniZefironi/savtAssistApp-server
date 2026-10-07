@@ -290,3 +290,19 @@ async def test_user_removing_unrelated_cabinet_is_not_found(db_session, make_use
 
     with pytest.raises(NotFoundError):
         await UserCabinetService(db_session).remove_cabinet(user.id, cabinet.id)
+
+
+def test_parse_code_handles_percent_encoding_slash_and_query():
+    from app.schemas.cabinet import AddCabinetByQrIn
+    from app.schemas.project import AddProjectByQrIn
+
+    code = "gAAAAABq_x-Y=="
+    for raw in (
+        f"savt://project/{code}",
+        f"savt://project/{code}/",
+        "savt://project/gAAAAABq_x-Y%3D%3D",
+        f"https://helper.savt.by/add/project/gAAAAABq_x-Y%3D%3D?x=1",
+        code,
+    ):
+        assert AddProjectByQrIn(qr_data=raw).parse_unique_code() == code, raw
+    assert AddCabinetByQrIn(qr_data="savt://cabinet/abc%2D1/").parse_unique_code() == "abc-1"

@@ -411,3 +411,21 @@ async def test_global_message_search_skips_deleted(db_session, make_user, make_c
 
     assert [m.id for m, _, _ in items] == [live.id]
     assert total == 1
+
+
+async def test_cabinet_search_words_match_in_different_columns(db_session, make_cabinet):
+    hit = await make_cabinet(type="ШУ-18К", object_number="26_204_1")
+    await make_cabinet(type="ШУ-18К", object_number="29_001")
+
+    items, _ = await CabinetRepository(db_session).search(query="ШУ 26")
+
+    assert [c.id for c in items] == [hit.id]
+
+
+async def test_user_search_full_name_words_in_any_order(db_session, make_user):
+    hit = await make_user(full_name="Сидоров Семён Петрович")
+    await make_user(full_name="Сидоров Иван")
+
+    items, _ = await UserRepository(db_session).admin_search(query="Семён Сидоров")
+
+    assert [u.id for u, _ in items] == [hit.id]

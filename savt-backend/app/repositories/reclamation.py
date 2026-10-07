@@ -133,21 +133,24 @@ class ReclamationRepository:
             # Заводской номер лежит в object_details (JSONB), у cabinet/line/
             # component под одним ключом serial_number. Проект и ШУ — только у
             # рекламаций, поданных со связью с ними (у новых обоих нет)
-            by_text = fuzzy_condition(
-                search,
-                User.full_name, User.phone,
-                Reclamation.contact_name, Reclamation.contact_phone,
-                Reclamation.description, Reclamation.error_codes,
-                Reclamation.contract_number, Reclamation.order_number, Reclamation.ttn_number,
-                Reclamation.object_details["serial_number"].astext,
-                Project.name, Cabinet.object_number,
-            )
-            by_label = []
-            if types := _codes_by_label(search, _OBJECT_TYPE_LABELS):
-                by_label.append(Reclamation.object_type.in_(types))
-            if statuses := _codes_by_label(search, _STATUS_LABELS):
-                by_label.append(Reclamation.status.in_(statuses))
-            conditions.append(or_(by_text, *by_label))
+            # Слова запроса ("ШУ 26") разбираются по отдельности: "ШУ" — подпись
+            # типа, "26" — часть номера ШУ, вместе в одном поле их нет
+            for word in search.split():
+                by_text = fuzzy_condition(
+                    word,
+                    User.full_name, User.phone,
+                    Reclamation.contact_name, Reclamation.contact_phone,
+                    Reclamation.description, Reclamation.error_codes,
+                    Reclamation.contract_number, Reclamation.order_number, Reclamation.ttn_number,
+                    Reclamation.object_details["serial_number"].astext,
+                    Project.name, Cabinet.object_number,
+                )
+                by_label = []
+                if types := _codes_by_label(word, _OBJECT_TYPE_LABELS):
+                    by_label.append(Reclamation.object_type.in_(types))
+                if statuses := _codes_by_label(word, _STATUS_LABELS):
+                    by_label.append(Reclamation.status.in_(statuses))
+                conditions.append(or_(by_text, *by_label))
 
         count_stmt = (
             select(func.count(Reclamation.id))

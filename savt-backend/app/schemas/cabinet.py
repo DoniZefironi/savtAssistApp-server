@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.core.signed_urls import strip_signature
 from app.schemas.tags import TagOut
+from app.utils.qr_code import clean_code
 
 
 class CabinetGeoItem(BaseModel):
@@ -197,8 +198,8 @@ class AddCabinetByQrIn(BaseModel):
         for prefix in ("savt://cabinet/", "/add/cabinet/"):
             idx = self.qr_data.find(prefix)
             if idx != -1:
-                return self.qr_data[idx + len(prefix):]
-        return self.qr_data
+                return clean_code(self.qr_data[idx + len(prefix):])
+        return clean_code(self.qr_data)
 
 
 class AddCabinetByQrOut(BaseModel):

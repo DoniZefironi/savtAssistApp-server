@@ -203,3 +203,42 @@ async def test_unknown_sort_key_falls_back_to_created_at(db_session, make_reclam
     ids, total = await _ids(db_session, sort_by="что-угодно")
 
     assert total == len(ids) >= 1
+
+
+# --- несколько слов в запросе ---
+
+async def test_multi_word_query_combines_label_and_number(db_session, make_cabinet, make_user, make_reclamation):
+    applicant = await make_user(full_name="Иванов Иван", phone="+375290001111")
+    c26 = await make_cabinet(object_number="26_204_1")
+    c29 = await make_cabinet(object_number="29_001")
+    hit = await make_reclamation(user=applicant, cabinet_id=c26.id, object_type="cabinet",
+                                 object_details={"serial_number": "SN-1"})
+    await make_reclamation(user=applicant, cabinet_id=c29.id, object_type="cabinet",
+                           object_details={"serial_number": "SN-2"})
+    await make_reclamation(user=applicant, object_type="line", object_details={"serial_number": "SN-26"})
+
+    assert (await _ids(db_session, search="ШУ 26"))[0] == [hit.id]
+
+
+async def test_multi_word_query_needs_every_word(db_session, make_reclamation):
+    await make_reclamation(description="Течёт насос")
+
+    assert (await _ids(db_session, search="насос вентилятор"))[0] == []
+
+
+async def test_search_by_card_title_as_shown_in_admin(db_session, make_cabinet, make_user, make_reclamation):
+    # заголовок карточки в админке — подпись типа + номер ШУ: "ШУ 26_205_1"
+    applicant = await make_user(full_name="BOBA BOBI BOBOV", phone="+375290001111")
+    c205 = await make_cabinet(object_number="26_205_1")
+    c204 = await make_cabinet(object_number="26_204_1")
+    hit_a = await make_reclamation(user=applicant, cabinet_id=c205.id, object_type="cabinet",
+                                   object_details={"serial_number": "SN-1"})
+    hit_b = await make_reclamation(user=applicant, cabinet_id=c205.id, object_type="cabinet",
+                                   object_details={"serial_number": "SN-2"})
+    await make_reclamation(user=applicant, cabinet_id=c204.id, object_type="cabinet",
+                           object_details={"serial_number": "SN-3"})
+
+    assert set((await _ids(db_session, search="ШУ 26_205_1"))[0]) == {hit_a.id, hit_b.id}
+    assert set((await _ids(db_session, search="шу 26_205"))[0]) == {hit_a.id, hit_b.id}
+    assert len((await _ids(db_session, search="ШУ 26"))[0]) == 3
+    assert (await _ids(db_session, search="BOBA BOBOV"))[0] != []

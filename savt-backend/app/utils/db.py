@@ -1,4 +1,4 @@
-from sqlalchemy import ColumnElement, String, case, func, literal, or_
+from sqlalchemy import ColumnElement, String, and_, case, func, literal, or_
 
 LIKE_ESCAPE_CHAR = "\\"
 
@@ -40,6 +40,16 @@ def fuzzy_condition(
     # "%" не несёт смысла в реальных данных (номер ШУ, ФИО и т.п.) — проще убрать,
     # чем городить экранирование внутри normalize_search_text
     clean_query = query.replace("%", "")
+
+    # Несколько слов ("ШУ 26", "Сидоров Семён") — каждое слово должно найтись
+    # хоть в какой-то из колонок, не обязательно в одной и не подряд: слова
+    # запроса часто относятся к разным полям (тип и номер ШУ, имя и телефон)
+    words = clean_query.split()
+    if len(words) > 1:
+        return and_(*[
+            fuzzy_condition(word, *columns, threshold=threshold, allow_typos=allow_typos)
+            for word in words
+        ])
     norm_query = func.normalize_search_text(clean_query, type_=String)
     # Явная конкатенация ("%" || normalize_search_text(:query) || "%"), а не .contains(),
     # т.к. .contains() расcчитан на литерал, а не на результат другого SQL-выражения

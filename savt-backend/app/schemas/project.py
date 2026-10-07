@@ -1,5 +1,6 @@
 from datetime import datetime
 from pydantic import BaseModel, Field
+from app.utils.qr_code import clean_code
 
 
 class ProjectUpdateIn(BaseModel):
@@ -136,8 +137,8 @@ class AddProjectByQrIn(BaseModel):
         for prefix in ("savt://project/", "/add/project/"):
             idx = self.qr_data.find(prefix)
             if idx != -1:
-                return self.qr_data[idx + len(prefix):]
-        return self.qr_data
+                return clean_code(self.qr_data[idx + len(prefix):])
+        return clean_code(self.qr_data)
 
 
 class AddProjectByQrOut(BaseModel):
