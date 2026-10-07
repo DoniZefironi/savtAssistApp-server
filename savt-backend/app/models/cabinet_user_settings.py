@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -17,6 +17,10 @@ class CabinetUserSettings(Base):
     cabinet_id: Mapped[int] = mapped_column(ForeignKey("cabinets.id", ondelete="CASCADE"), index=True)
     custom_name: Mapped[str | None] = mapped_column(String(200))
     custom_comment: Mapped[str | None] = mapped_column(Text)
+    # закреплён ли ШУ наверху списка у этого пользователя; pinned_at — порядок
+    # среди закреплённых (свежезакреплённый выше)
+    is_pinned: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     def __repr__(self) -> str:

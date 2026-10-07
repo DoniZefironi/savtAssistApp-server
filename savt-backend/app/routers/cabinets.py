@@ -81,6 +81,23 @@ async def add_by_photo(
     )
     return AddByPhotoOut(request_id=request_id)
 
+# Закрепить ШУ наверху своего списка / открепить
+@router.post("/{cabinet_id}/pin", status_code=status.HTTP_204_NO_CONTENT)
+async def pin_cabinet(
+    cabinet_id: int,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    await UserCabinetService(session).set_pinned(current_user.id, cabinet_id, True)
+
+@router.delete("/{cabinet_id}/pin", status_code=status.HTTP_204_NO_CONTENT)
+async def unpin_cabinet(
+    cabinet_id: int,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    await UserCabinetService(session).set_pinned(current_user.id, cabinet_id, False)
+
 # Убрать ШУ, добавленный отдельно от проекта (пользователь). Если ШУ доступен
 # через проект — 409, выйти можно только из проекта целиком
 @router.delete("/{cabinet_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,7 +37,7 @@ class UserCabinetService:
         project_ids = list({c.project_id for c in cabinets if c.project_id is not None})
         project_names = await self.project_repo.get_names_by_ids(project_ids)
 
-        return [
+        items = [
             UserCabinetListItemOut(
                 cabinet_id=cab.id,
                 type=cab.type,
@@ -46,9 +48,20 @@ class UserCabinetService:
                 unread_count=unread.get(cab.id, 0),
                 project_id=cab.project_id,
                 project_name=project_names.get(cab.project_id) if cab.project_id is not None else None,
+                is_pinned=_is_pinned(settings_map.get(cab.id)),
             )
             for cab in cabinets
         ]
+        # Закреплённые наверху (свежезакреплённый выше), остальные — в прежнем
+        # порядке: sort устойчивый
+        pinned_at = {
+            cab_id: s.pinned_at for cab_id, s in settings_map.items() if _is_pinned(s) and s.pinned_at is not None
+        }
+        items.sort(key=lambda i: (
+            not i.is_pinned,
+            -(pinned_at[i.cabinet_id].timestamp()) if i.cabinet_id in pinned_at else 0,
+        ))
+        return items
 
     # Получение ШУ (одного)
     async def get_cabinet(self, user_id: int, cabinet_id: int) -> UserCabinetDetailOut:
@@ -74,7 +87,18 @@ class UserCabinetService:
             custom_comment=settings.custom_comment if settings else None,
             project_id=cab.project_id,
             project_name=project_names.get(cab.project_id) if cab.project_id is not None else None,
+            is_pinned=_is_pinned(settings),
         )
+
+    # Закрепить/открепить ШУ наверху своего списка — доступ к ШУ, не владение
+    async def set_pinned(self, user_id: int, cabinet_id: int, pinned: bool) -> None:
+        if not await self.cabinet_repo.user_has_access(user_id, cabinet_id):
+            raise NotFoundError("ШУ не найден")
+        await self.settings_repo.upsert(user_id, cabinet_id, {
+            "is_pinned": pinned,
+            "pinned_at": datetime.now(timezone.utc) if pinned else None,
+        })
+        await self.session.commit()
 
     # Обновление личной персонализации ШУ (имя/заметка) — доступ к ШУ, а не
     # владение им: раз шкаф виден пользователю, он может его переименовать у себя
@@ -171,3 +195,7 @@ def _display_name(settings, cabinet) -> str | None:
     if settings is not None and settings.custom_name:
         return settings.custom_name
     return cabinet.admin_internal_name or cabinet.object_number
+
+
+def _is_pinned(settings) -> bool:
+    return bool(settings is not None and settings.is_pinned)

@@ -145,6 +145,7 @@ class UserCabinetListItemOut(BaseModel):
     unread_count: int
     project_id: int | None
     project_name: str | None
+    is_pinned: bool = False
 
 
 class UserCabinetDetailOut(BaseModel):
@@ -162,6 +163,7 @@ class UserCabinetDetailOut(BaseModel):
     custom_comment: str | None
     project_id: int | None
     project_name: str | None
+    is_pinned: bool = False
 
 
 class UserCabinetPatchIn(BaseModel):
