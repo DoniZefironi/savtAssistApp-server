@@ -1,5 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.constants import SYSTEM_USER_LOGINS
 from app.core.exceptions import AlreadyExistsError, NotFoundError, PermissionDeniedError
 from app.models.audit_log import AuditLog
 from app.models.role import Role
@@ -271,6 +272,8 @@ class AdminUserService:
         role = await self.session.get(Role, user.role_id)
         if role is None or role.name != "operator":
             raise PermissionDeniedError("Можно удалять только операторов")
+        if user.login in SYSTEM_USER_LOGINS:
+            raise PermissionDeniedError("Служебную учётную запись удалять нельзя")
 
         # Отзываем все сессии
         await self.session.execute(
@@ -445,7 +448,7 @@ class AdminUserService:
     # Запрещаем действия над администраторами/суперадминами/системными аккаунтами
     async def _ensure_target_is_manageable(self, user) -> None:
         role = await self.session.get(Role, user.role_id)
-        if role is None or role.name not in ("user", "operator"):
+        if role is None or role.name not in ("user", "operator") or user.login in SYSTEM_USER_LOGINS:
             raise PermissionDeniedError("Действие недоступно для этой роли пользователя")
 
     # Лог

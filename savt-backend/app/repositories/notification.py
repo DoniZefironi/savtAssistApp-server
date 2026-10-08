@@ -57,8 +57,9 @@ class NotificationRepository:
 
     async def mark_read(self, notif_id: int, user_id: int) -> Notification | None:
         n = await self.get_by_id(notif_id)
-        if n and n.user_id == user_id:
-            n.is_read = True
+        if n is None or n.user_id != user_id:
+            return None
+        n.is_read = True
         return n
 
     async def mark_all_read(self, user_id: int) -> None:

@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import AlreadyExistsError, NotFoundError
 from app.repositories.faq import FaqCategoryRepository, FaqEntryRepository
 from app.repositories.favorite import FavoriteRepository
 from app.schemas.faq import (
@@ -51,6 +51,12 @@ class FaqCategoryService:
         cat = await self.repo.get_by_id(cat_id)
         if cat is None:
             raise NotFoundError("Категория не найдена")
+        from app.models.faq_category import FaqCategory
+        has_children = (await self.session.execute(
+            select(FaqCategory.id).where(FaqCategory.parent_id == cat_id).limit(1)
+        )).first() is not None
+        if has_children:
+            raise AlreadyExistsError("Сначала удалите или перенесите вложенные категории")
 
         # Вопросы категории удалятся каскадом на уровне БД (ondelete=CASCADE) —
         # это в обход FaqEntryService.delete(), который обычно чистит embeddings

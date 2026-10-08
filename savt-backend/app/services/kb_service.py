@@ -3,7 +3,7 @@ from pathlib import Path
 from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import AlreadyExistsError, NotFoundError
 from app.repositories.favorite import FavoriteRepository
 from app.repositories.kb import KbArticleRepository, KbCategoryRepository
 from app.schemas.kb import (
@@ -65,6 +65,12 @@ class KbCategoryService:
         cat = await self.repo.get_by_id(cat_id)
         if cat is None:
             raise NotFoundError("Категория не найдена")
+        from app.models.kbcategory import KbCategory
+        has_children = (await self.session.execute(
+            select(KbCategory.id).where(KbCategory.parent_id == cat_id).limit(1)
+        )).first() is not None
+        if has_children:
+            raise AlreadyExistsError("Сначала удалите или перенесите вложенные категории")
 
         # Статьи категории удалятся каскадом на уровне БД (ondelete=CASCADE) —
         # это в обход KbArticleService.delete(), который обычно чистит embeddings
