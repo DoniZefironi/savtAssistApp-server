@@ -22,7 +22,7 @@ async def list_tags(
 @router.post("/admin/tags", response_model=TagOut, status_code=status.HTTP_201_CREATED)
 async def create_tag(
     payload: TagCreateIn,
-    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    _: User = Depends(require_role(RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
     return await TagService(session).create(payload)
@@ -41,7 +41,7 @@ async def delete_tag(
 async def set_document_tags(
     doc_id: int,
     payload: DocumentTagsIn,
-    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    _: User = Depends(require_role(RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
     await TagService(session).set_document_tags(doc_id, payload.tag_ids)
@@ -51,7 +51,7 @@ async def set_document_tags(
 async def set_article_tags(
     article_id: int,
     payload: DocumentTagsIn,
-    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    _: User = Depends(require_role(RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
     await TagService(session).set_article_tags(article_id, payload.tag_ids)

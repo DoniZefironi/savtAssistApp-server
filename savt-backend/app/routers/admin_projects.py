@@ -41,7 +41,7 @@ async def sync_project_folder_now(
 # гарантии здесь, в отличие от ручки одного проекта, сохраняется.
 @router.post("/sync-folders", response_model=SyncAllFoldersResultOut)
 async def sync_all_project_folders_now(
-    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
+    _: User = Depends(require_role(RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
     return await ProjectService(session).sync_all_folders_now()
