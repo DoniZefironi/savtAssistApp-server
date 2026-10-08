@@ -96,6 +96,9 @@ services:
       - ./uploads:/uploads:ro
       - /etc/letsencrypt:/etc/letsencrypt:ro
       - ./certbot-www:/var/www/certbot:ro
+      # Статическая сборка веб-версии мобильного приложения (раздаётся по /app/,
+      # см. location /app/ в nginx.conf). Папку кладут вручную, в гите её нет
+      - ./mobile-web:/mobile-web:ro
     depends_on:
       - api
     logging:
