@@ -116,7 +116,7 @@ def words_condition(query: str, build) -> ColumnElement:
 _DATE_RE = re.compile(r"^(\d{1,2})\.(\d{1,2})(?:\.(\d{2}|\d{4}))?$|^(\d{4})-(\d{2})-(\d{2})$")
 
 # Даты в админке показываются по местному времени, а в БД лежат в UTC
-_LOCAL_TZ = "Europe/Minsk"
+LOCAL_TZ = "Europe/Minsk"
 
 
 def date_condition(word: str, *columns: tuple[ColumnElement, bool]) -> ColumnElement | None:
@@ -141,7 +141,7 @@ def date_condition(word: str, *columns: tuple[ColumnElement, bool]) -> ColumnEle
             return None
     parts = []
     for col, is_datetime in columns:
-        local = func.timezone(_LOCAL_TZ, col) if is_datetime else col
+        local = func.timezone(LOCAL_TZ, col) if is_datetime else col
         if year is not None:
             parts.append(func.date(local) == target)
         else:

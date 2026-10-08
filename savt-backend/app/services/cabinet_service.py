@@ -1,10 +1,12 @@
 import secrets
 
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AlreadyExistsError, NotFoundError
 from app.models.cabinets import Cabinet
 from app.models.chat import Chat
+from app.models.warranty_notif_log import WarrantyNotifLog
 from app.repositories.cabinet import CabinetRepository
 from app.repositories.project import ProjectRepository
 from app.repositories.tag import TagRepository
@@ -143,6 +145,12 @@ class CabinetService:
                 raise AlreadyExistsError(
                     f"Топик '{changed['mqtt_topic']}' уже привязан к другому ШУ (id={existing.id})"
                 )
+        # Журнал «уведомление уже отправлено» относится к прежней дате окончания
+        # гарантии; при продлении (или смене срока) о новой дате предупреждаем заново
+        if "warranty_ends_at" in changed and changed["warranty_ends_at"] != cabinet.warranty_ends_at:
+            await self.session.execute(
+                delete(WarrantyNotifLog).where(WarrantyNotifLog.cabinet_id == cabinet_id)
+            )
         for field, value in changed.items():
             setattr(cabinet, field, value)
         self.audit.log("cabinet.update", "cabinet", cabinet_id, actor_id, actor_role, {"fields": list(changed.keys())})

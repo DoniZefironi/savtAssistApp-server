@@ -227,12 +227,16 @@ class ReclamationService:
                     body += f", тел. {rec.responsible_phone}"
         elif rec.status == "review":
             body = "Рекламация принята на рассмотрение"
+        # Причину и итог заполняют только в Bitrix, у большинства рекламаций они
+        # пусты — пустое в текст не подставляем
         elif rec.status == "rejected":
-            body = f"Рекламация отклонена. Причина: {rec.rejection_reason}"
+            body = "Рекламация отклонена" + (f". Причина: {rec.rejection_reason}" if rec.rejection_reason else "")
         elif rec.status == "invalid":
-            body = f"Рекламация оформлена некорректно. Причина: {rec.rejection_reason}"
+            body = "Рекламация оформлена некорректно" + (
+                f". Причина: {rec.rejection_reason}" if rec.rejection_reason else ""
+            )
         elif rec.status == "resolved":
-            body = f"Рекламация исполнена. {rec.resolution_comment}"
+            body = "Рекламация исполнена" + (f". {rec.resolution_comment}" if rec.resolution_comment else "")
         else:
             # new — начальный статус, заявитель только что подал её сам
             return
@@ -583,8 +587,12 @@ async def sync_reclamation_from_bitrix(item_id: str) -> None:
 
         old_status = rec.status
         rec.status = new_status
-        if new_status in ("resolved", "rejected", "invalid") and rec.resolved_at is None:
-            rec.resolved_at = datetime.now(timezone.utc)
+        if new_status in ("resolved", "rejected", "invalid"):
+            if rec.resolved_at is None:
+                rec.resolved_at = datetime.now(timezone.utc)
+        else:
+            # вернули в работу — даты закрытия у рекламации больше нет
+            rec.resolved_at = None
 
         await session.commit()
         _log.info(

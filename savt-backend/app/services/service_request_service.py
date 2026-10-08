@@ -444,12 +444,15 @@ class ServiceRequestService:
         old_status = req.status
         req.status = data.status
         if data.status == "closed":
-            req.closed_at = datetime.now(timezone.utc)
+            # повторное «закрыть» не сдвигает дату, когда заявку реально закрыли
+            if req.closed_at is None:
+                req.closed_at = datetime.now(timezone.utc)
         else:
             req.closed_at = None
 
-        self.audit.log("service_request.status_change", "service_request", req_id, actor_id, actor_role,
-                       {"old_status": old_status, "new_status": data.status})
+        if old_status != data.status:
+            self.audit.log("service_request.status_change", "service_request", req_id, actor_id, actor_role,
+                           {"old_status": old_status, "new_status": data.status})
         await self.session.commit()
         await self.session.refresh(req)
 
