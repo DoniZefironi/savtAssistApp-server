@@ -7,6 +7,7 @@ from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.background import spawn
 from app.config import settings
 from app.database import AsyncSessionLocal
 from app.models.cabinets import Cabinet
@@ -795,7 +796,7 @@ def schedule_folder_creation(project_id: int) -> None:
                 await create_project_folder_structure(project, project_repo)
             except Exception:
                 logger.exception("Не удалось создать папку для проекта %s", project_id)
-    asyncio.create_task(_task())
+    spawn(_task())
 
 
 def schedule_folder_sync(project_id: int) -> None:
@@ -809,7 +810,7 @@ def schedule_folder_sync(project_id: int) -> None:
                 await sync_project_folder(session, project)
             except Exception:
                 logger.exception("Не удалось синхронизировать папку проекта %s", project_id)
-    asyncio.create_task(_task())
+    spawn(_task())
 
 
 def schedule_cabinet_folder(cabinet_id: int) -> None:
@@ -840,7 +841,7 @@ def schedule_cabinet_folder(cabinet_id: int) -> None:
                 await _ensure_cabinet_structure(root, cabinet)
             except Exception:
                 logger.exception("Не удалось создать папку ШУ %s на NAS", cabinet_id)
-    asyncio.create_task(_task())
+    spawn(_task())
 
 
 def schedule_request_chat_export(chat_id: int) -> None:
@@ -884,7 +885,7 @@ def schedule_request_chat_export(chat_id: int) -> None:
                 )
             except Exception:
                 logger.exception("Не удалось выгрузить стенограмму чата %s при закрытии заявки", chat_id)
-    asyncio.create_task(_task())
+    spawn(_task())
 
 
 def schedule_document_mirror(document_id: int) -> None:
@@ -918,7 +919,7 @@ def schedule_document_mirror(document_id: int) -> None:
                 await mirror_document_to_nas(guide_dir, doc)
             except Exception:
                 logger.exception("Не удалось зеркалить документ %s в «_Руководство» на NAS", document_id)
-    asyncio.create_task(_task())
+    spawn(_task())
 
 
 def schedule_document_removal(
@@ -950,7 +951,7 @@ def schedule_document_removal(
                     "Не удалось убрать зеркало документа из «_Руководство» на NAS (cabinet_id=%s, project_id=%s)",
                     cabinet_id, project_id,
                 )
-    asyncio.create_task(_task())
+    spawn(_task())
 
 
 # Удаление фото через приложение убирает и его зеркало на NAS — иначе
@@ -990,4 +991,4 @@ def schedule_photo_removal(
                     "Не удалось убрать зеркало фото из папки на NAS (cabinet_id=%s, project_id=%s)",
                     cabinet_id, project_id,
                 )
-    asyncio.create_task(_task())
+    spawn(_task())

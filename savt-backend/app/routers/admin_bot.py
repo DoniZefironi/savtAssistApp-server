@@ -1,9 +1,9 @@
-import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.background import spawn
 from app.core.constants import RoleName
 from app.core.dependencies import get_session, require_role
 from app.database import AsyncSessionLocal
@@ -41,7 +41,7 @@ async def reindex(
                 )
         except Exception:
             _log.exception("Переиндексация (force=%s, scope=%s, project_id=%s) не удалась", force, scope, project_id)
-    asyncio.create_task(_task())
+    spawn(_task())
     return {"status": "started", "message": "Индексация запущена в фоне, результат смотрите в логах"}
 
 

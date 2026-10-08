@@ -7,6 +7,7 @@ from pathlib import Path
 from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.background import spawn
 from app.models.document import Document
 from app.models.embedding import Embedding
 from app.models.faq_entry import FaqEntry
@@ -459,7 +460,7 @@ def schedule_reindex_document(doc_id: int) -> None:
                     await s.commit()
         except Exception:
             logger.exception("Фоновая переиндексация документа %s не удалась", doc_id)
-    asyncio.create_task(_task())
+    spawn(_task())
 
 
 async def _resolve_project_document_scope(session: AsyncSession, project_id: int) -> tuple[set[int], set[int]]:

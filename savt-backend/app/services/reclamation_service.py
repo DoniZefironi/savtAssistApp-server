@@ -1,10 +1,10 @@
-import asyncio
 import logging
 
 from datetime import date, datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.background import spawn
 from app.config import settings
 from app.core.exceptions import NotFoundError, ValidationError
 from app.models.reclamation import Reclamation
@@ -278,7 +278,7 @@ class ReclamationService:
 
 
 # Модульные функции, не методы: _sync_to_bitrix запускается через
-# asyncio.create_task в своей собственной сессии, к моменту её реального
+# spawn (app/core/background.py) в своей собственной сессии, к моменту её реального
 # выполнения request-сессия (self.session) может быть уже закрыта — как и у
 # ServiceRequestService._sync_to_bitrix, см. app/services/service_request_service.py
 
@@ -354,7 +354,7 @@ def _sync_to_bitrix(
                 rec.bitrix_item_id = item_id
                 await session.commit()
 
-    asyncio.create_task(_task())
+    spawn(_task())
 
 
 async def _notify_integration_admins(session, title: str, body: str, data: dict) -> None:

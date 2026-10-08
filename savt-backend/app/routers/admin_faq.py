@@ -1,9 +1,9 @@
-import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.background import spawn
 from app.core.constants import RoleName
 from app.core.dependencies import get_session, require_role
 from app.database import AsyncSessionLocal
@@ -35,7 +35,7 @@ def _reindex_faq(entry_id: int) -> None:
                     await s.commit()
         except Exception:
             _log.exception("Фоновая переиндексация FAQ %s не удалась", entry_id)
-    asyncio.create_task(_task())
+    spawn(_task())
 
 router = APIRouter(prefix="/admin/faq", tags=["admin: faq"])
 

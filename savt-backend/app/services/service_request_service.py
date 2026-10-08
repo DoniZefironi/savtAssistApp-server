@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -6,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.background import spawn
 from app.core.exceptions import NotFoundError, PermissionDeniedError
 from app.repositories.service_request import ServiceRequestRepository
 from app.repositories.cabinet import CabinetRepository
@@ -164,7 +164,7 @@ def _sync_to_bitrix(
         except Exception:
             _log.exception("Failed to save bitrix_task_id for service request %s", request_id)
 
-    asyncio.create_task(_task())
+    spawn(_task())
 
 
 def _sync_status_to_bitrix(bitrix_task_id: str, status: str) -> None:
@@ -175,7 +175,7 @@ def _sync_status_to_bitrix(bitrix_task_id: str, status: str) -> None:
         except Exception:
             _log.exception("Bitrix status sync failed for task %s", bitrix_task_id)
 
-    asyncio.create_task(_task())
+    spawn(_task())
 
 
 # Синхронизация сообщения заявителя из чата заявки в комментарий Bitrix-задачи.
@@ -204,7 +204,7 @@ def sync_message_to_bitrix(
         except Exception:
             _log.exception("Bitrix comment sync failed for service request %s", service_request_id)
 
-    asyncio.create_task(_task())
+    spawn(_task())
 
 
 async def _apply_bitrix_status(service: "ServiceRequestService", req, bitrix_status: str | None) -> str | None:

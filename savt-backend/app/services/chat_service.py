@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.background import spawn
 from app.core.exceptions import AlreadyExistsError, NotFoundError, PermissionDeniedError
 from app.models.chat import Chat
 from app.models.message import Message
@@ -54,7 +55,7 @@ def _schedule_attachment_cleanup(file_urls: list[str]) -> None:
             except Exception:
                 logger.exception("Не удалось удалить файл вложения %s при удалении чата", url)
 
-    asyncio.create_task(_task())
+    spawn(_task())
 
 
 class ChatService:
@@ -471,7 +472,6 @@ class ChatService:
         # Бот отвечает только на сообщения владельца чата — не в личных заметках
         # и не в чатах заявок (там ведёт человек, при необходимости эскалируется в Bitrix)
         if chat.user_id == sender_id and chat.bot_active and chat.chat_type not in ("notes", "service_request"):
-            import asyncio
             import logging
             from app.database import AsyncSessionLocal
             from app.services.bot_service import handle_message
@@ -519,7 +519,7 @@ class ChatService:
                 except Exception:
                     _log.exception("Bot reply failed for chat %s", chat.id)
 
-            asyncio.create_task(_bot_reply())
+            spawn(_bot_reply())
 
         return result
 
