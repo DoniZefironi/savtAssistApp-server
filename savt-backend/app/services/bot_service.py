@@ -2,7 +2,7 @@ import re
 from datetime import datetime, timezone
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import cast, select, text
+from sqlalchemy import cast, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings

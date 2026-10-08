@@ -58,7 +58,7 @@ def test_intent_url_skipped_without_apk_link(monkeypatch):
 # --- страница проекта ---
 
 async def test_project_page_shows_name_and_tries_to_open_app(db_session, make_project, intent_enabled):
-    project = await make_project(name="Бизнес-центр Космос", unique_code="page-proj-1")
+    await make_project(name="Бизнес-центр Космос", unique_code="page-proj-1")
 
     body = _body(await add_qr.add_project_landing("page-proj-1", session=db_session))
 

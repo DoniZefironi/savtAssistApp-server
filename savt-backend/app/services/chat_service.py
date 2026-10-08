@@ -964,7 +964,6 @@ async def _transcribe_voice_attachment(file_url: str) -> str | None:
     + STT/LRR по размеру), что и ручной POST /upload/transcribe, только
     вызывается автоматически, когда боту прислали голосовое без текста (см.
     send_message._bot_reply). None — файла на диске нет или он пуст."""
-    from pathlib import Path
     from app.services import yandex_service
     from app.services.upload_service import UPLOAD_ROOT, transcode_to_ogg_opus
 

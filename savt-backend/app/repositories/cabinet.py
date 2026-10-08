@@ -11,7 +11,7 @@ from app.models.cabinet_photo import CabinetPhoto
 from app.models.document import Document
 from app.models.service_request import ServiceRequest
 from app.models.tag import Tag
-from app.utils.db import any_of, escape_like, fuzzy_condition, words_condition
+from app.utils.db import any_of, fuzzy_condition, words_condition
 from app.utils.search_labels import REQUEST_STATUS, label_condition
 from app.models.user import User
 from app.models.user_cabinet import UserCabinet
@@ -114,7 +114,7 @@ class CabinetRepository(BaseRepository[Cabinet]):
             )
         )
         return list(result.scalars().all())
-        await self.session.flush()
+
     # поиск ШУ
     async def search(
         self,

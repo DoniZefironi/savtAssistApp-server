@@ -17,7 +17,6 @@ from app.schemas.project import (
     ProjectOut,
     ProjectUpdateIn,
 )
-from app.services import project_folder_service
 from app.services.audit_service import AuditLogger
 
 logger = logging.getLogger(__name__)

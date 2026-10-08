@@ -217,7 +217,7 @@ async def test_merge_notifies_user_once_per_merged_cabinet(db_session, make_user
 
 async def test_merge_does_not_touch_cabinets_outside_the_project(db_session, make_user, make_project, make_cabinet, link_user_cabinet):
     user = await make_user()
-    project = await make_project(unique_code="merge-4")
+    await make_project(unique_code="merge-4")
     outside = await make_cabinet(project_id=None)
     await link_user_cabinet(user, outside)
 
@@ -301,7 +301,7 @@ def test_parse_code_handles_percent_encoding_slash_and_query():
         f"savt://project/{code}",
         f"savt://project/{code}/",
         "savt://project/gAAAAABq_x-Y%3D%3D",
-        f"https://helper.savt.by/add/project/gAAAAABq_x-Y%3D%3D?x=1",
+        "https://helper.savt.by/add/project/gAAAAABq_x-Y%3D%3D?x=1",
         code,
     ):
         assert AddProjectByQrIn(qr_data=raw).parse_unique_code() == code, raw

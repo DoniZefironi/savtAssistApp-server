@@ -46,7 +46,7 @@ class NotificationService:
             if not allowed.get(type_, True):
                 return
 
-        notif = await self.repo.create(
+        await self.repo.create(
             user_id=user_id,
             type_=type_,
             title=title,

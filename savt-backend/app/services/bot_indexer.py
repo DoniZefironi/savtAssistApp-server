@@ -8,7 +8,7 @@ from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.document import Document
-from app.models.embedding import EMBEDDING_DIM, Embedding
+from app.models.embedding import Embedding
 from app.models.faq_entry import FaqEntry
 from app.models.kbarticle import KbArticle
 from app.models.kb_article_attachment import KbArticleAttachment

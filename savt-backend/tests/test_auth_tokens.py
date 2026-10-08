@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.core.exceptions import AuthenticationError
-from app.core.security import generate_refresh_token, hash_token
+from app.core.security import hash_token
 from app.services.auth_service import AuthService, _REFRESH_REUSE_GRACE_SECONDS
 
 

@@ -6,12 +6,9 @@ conftest) — ничего из этих тестов никогда не ухо
 удаляется и нужный bitrix_service-вызов происходит с правильными аргументами,
 при сбое — попытка засчитывается, а не теряется молча.
 """
-from datetime import date
 
-import pytest
 from sqlalchemy import select
 
-from app.models.reclamation import Reclamation
 from app.models.reclamation_bitrix_outbox import ReclamationBitrixOutbox
 from app.repositories.reclamation_outbox import ReclamationOutboxRepository
 from app.services.reclamation_service import _retry_outbox_row

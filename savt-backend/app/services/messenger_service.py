@@ -90,7 +90,6 @@ async def _send_telegram(
     # Токен бота не задан — dev-режим, просто логируем (аналог MockSmsProvider)
     if not settings.telegram_bot_token:
         logger.info(f"[MOCK TELEGRAM] chat_id={chat_id}: {text}")
-        print(f"\n>>> Telegram {chat_id}: {text} <<<\n", flush=True)
         return
 
     payload: dict = {"chat_id": chat_id, "text": text}
