@@ -37,7 +37,7 @@ async def list_additions(
 async def approve_addition(
     request_id: int,
     payload: ApproveAdditionIn,
-    actor: User = Depends(require_role(RoleName.ADMIN)),
+    actor: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):
@@ -48,7 +48,7 @@ async def approve_addition(
 async def reject_addition(
     request_id: int,
     payload: RejectRequestIn,
-    actor: User = Depends(require_role(RoleName.ADMIN)),
+    actor: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):

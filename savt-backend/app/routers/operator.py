@@ -160,7 +160,7 @@ async def return_to_bot(
 @router.delete("/chats/{chat_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_chat(
     chat_id: int,
-    _: User = Depends(require_role(RoleName.OPERATOR, RoleName.ADMIN)),
+    _: User = Depends(require_role(RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
     await ChatService(session).operator_delete_chat(chat_id)
@@ -170,7 +170,7 @@ async def delete_chat(
 @router.delete("/chats/{chat_id}/messages", status_code=status.HTTP_204_NO_CONTENT)
 async def clear_chat_messages(
     chat_id: int,
-    _: User = Depends(require_role(RoleName.OPERATOR, RoleName.ADMIN)),
+    _: User = Depends(require_role(RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):
     await ChatService(session).clear_chat_messages(chat_id)

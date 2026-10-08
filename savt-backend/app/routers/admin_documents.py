@@ -184,7 +184,7 @@ async def list_document_requests(
 async def approve_document_request(
     request_id: int,
     payload: ApproveDocumentRequestIn,
-    actor: User = Depends(require_role(RoleName.ADMIN)),
+    actor: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):
@@ -195,7 +195,7 @@ async def approve_document_request(
 async def reject_document_request(
     request_id: int,
     payload: RejectDocumentRequestIn,
-    actor: User = Depends(require_role(RoleName.ADMIN)),
+    actor: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):
