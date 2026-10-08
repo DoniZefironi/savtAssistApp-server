@@ -384,6 +384,8 @@ class AdminPasswordResetRequestOut(BaseModel):
     user_phone: str | None
     user_type: str | None
     organization_name: str | None
+    user_is_verified: bool
+    user_registered_at: datetime
     user_comment: str | None
     status: str
     admin_response: str | None

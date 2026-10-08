@@ -72,6 +72,8 @@ class PasswordResetRequestService:
                 user_phone=user.phone,
                 user_type=user.user_type,
                 organization_name=user.organization_name,
+                user_is_verified=user.is_verified,
+                user_registered_at=user.created_at,
                 user_comment=req.user_comment,
                 status=req.status,
                 admin_response=req.admin_response,

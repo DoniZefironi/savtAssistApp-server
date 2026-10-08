@@ -76,8 +76,6 @@ FastAPI-бэкенда (PostgreSQL, Docker). Ядро — шкафы управ�
 | `PROJECT_FOLDERS_ROOT` | Путь внутри контейнера к смонтированной шаре NAS с папками проектов (по умолч. `/mnt/projects`). Пусто — папки проектов не создаются вовсе |
 | `NAS_SHARE_DEVICE` | UNC-путь шары NAS (`//host/share/...`) — нужен только `docker-compose.yml` для CIFS-монтирования, самому приложению не передаётся |
 | `NAS_SHARE_USER` / `NAS_SHARE_PASSWORD` | Учётные данные для монтирования шары NAS — тоже только для `docker-compose.yml` |
-| `PROMO_MESSAGES_FILE` | Путь к своему файлу рекламных заготовок. Пусто — встроенный `app/data/promo_messages.json` (внутри образа, только для чтения). Файл читается заново на каждой отправке, перезапуск после правок не нужен |
-| `PROMO_AUTO_SEND_HOUR` | Час (0–23) ежедневной автоматической рассылки случайной рекламы. **Пусто — автоматической рассылки нет**, только по кнопке админа. Мусор или значение вне диапазона — тоже нет, с `WARNING` в логе |
 | `APP_ENV` | Окружение (`dev`/`prod`), в `dev` включает SQL-логирование |
 | `TELEGRAM_BOT_TOKEN` | Токен бота от @BotFather — доставка кода подтверждения телефона (SMS отключено полностью) |
 | `TELEGRAM_BOT_USERNAME` | Юзернейм бота без `@` — для сборки deep-link `t.me/<username>?start=...` |
@@ -899,6 +897,24 @@ Telegram позволяет менять номер аккаунта. После
 
 ---
 
+### POST `/auth/register/request`
+Заявка на регистрацию — для тех, кому не подходит подтверждение через Telegram. Аккаунт не создаётся сразу, только после ручного одобрения администратором (см. «Рут `admin: registration requests`»). Лимит — 5 запросов в минуту.
+```json
+{
+  "phone": "+375291234567",
+  "password": "password8",
+  "password_confirm": "password8",
+  "full_name": "Иванов Иван",
+  "user_type": "individual",
+  "organization_name": null,
+  "contact_phone": null,
+  "user_comment": "Работаю в ООО Ромашка"
+}
+```
+`user_type` — `individual` или `organization` (для `organization` нужно `organization_name`). Ответ `201`: `{ "id": 5, "status": "pending", "created_at": "…" }`. `409`, если номер уже зарегистрирован или по нему уже есть заявка на рассмотрении.
+
+---
+
 ### POST `/auth/password-reset/start`
 Запрос кода для сброса пароля (доставка в Telegram, см. `/register/start`).
 ```json
@@ -935,6 +951,20 @@ Telegram позволяет менять номер аккаунта. После
 }
 ```
 Ответ: `204 No Content`. Все сессии инвалидируются.
+
+---
+
+### POST `/auth/password-reset/request`
+Заявка на сброс пароля — для тех, кому не подходит сброс через Telegram-код. Пароль не меняется сразу, только после одобрения администратором (см. «Рут `admin: password reset requests`»). Лимит — 5 запросов в минуту.
+```json
+{
+  "phone": "+375291234567",
+  "new_password": "newPassword8",
+  "new_password_confirm": "newPassword8",
+  "user_comment": "Сменил телефон, нет доступа к Telegram"
+}
+```
+Ответ `201`: `{ "id": 7, "status": "pending", "created_at": "…" }`. `404` — активного пользователя с таким номером нет, `409` — по нему уже есть необработанная заявка.
 
 ---
 
@@ -1607,6 +1637,22 @@ QR, в обход проекта (`added_at` — дата именно этой 
 > ```bash
 > docker exec savt-backend-api-1 python -m app.cli create-admin <login> <password> [full_name]
 > ```
+
+---
+
+### POST `/admin/users`
+Создать обычного пользователя (`role=user`) напрямую, минуя подтверждение через Telegram — когда администратор регистрирует человека сам. Только для администратора. Логируется в `audit_log`. Аккаунт сразу подтверждён (`is_phone_verified` и `is_verified` равны `true`).
+```json
+{
+  "phone": "+375291234567",
+  "password": "password8",
+  "full_name": "Иванов Иван",
+  "user_type": "individual",
+  "organization_name": null,
+  "contact_phone": null
+}
+```
+`user_type` — `individual` или `organization` (для `organization` обязательно `organization_name`). Пароль — минимум 8 символов. Ответ: созданный пользователь (`AdminUserListOut`), `201 Created`.
 
 ---
 
@@ -2629,11 +2675,6 @@ QR кодирует адрес публичной страницы: `{PUBLIC_BAS
 
 ---
 
-### PATCH `/admin/cabinets/{cabinet_id}/project`
-Привязка/отвязка конкретного шкафа к проекту — см. в разделе «Рут `admin: cabinets`» выше.
-
----
-
 ## Рут `qr` — генерация QR-кодов и добавление вне приложения
 
 Вступление в проект и добавление ШУ теперь не требуют ничьего одобрения (см.
@@ -2753,6 +2794,74 @@ Link (отдельная настройка на стороне мобильно
 
 Оба действия пишутся в журнал (`admin: audit`) как `phone_change_request.approve` /
 `phone_change_request.reject` со старым и новым номером.
+
+---
+
+## Рут `admin: registration requests` — заявки на регистрацию (просмотр — оператор/админ, решение — только админ)
+
+Заявку подаёт сам человек через `POST /auth/register/request`. Одобрение заводит настоящий аккаунт (`role=user`) из данных заявки; номер и личность заявителя Telegram-кодом не подтверждены, поэтому проверка — на администраторе.
+
+> **Ответственность на администраторе.** Система подтвердить владение номером не может — перед одобрением нужно убедиться в этом вне системы (позвонить, сверить организацию).
+
+### GET `/admin/registration-requests`
+Параметры: `status` (`pending`/`approved`/`rejected`), `search` (по ФИО, телефону, организации, подписи статуса — «На рассмотрении», «Одобрена», «Отклонена» — и типу пользователя), `sort_by` (`created_at`/`resolved_at`/`status`/`full_name`), `sort_order`, `page`, `size`.
+```json
+{
+  "items": [
+    {
+      "id": 5, "phone": "+375291234567", "full_name": "Иванов Иван", "user_type": "individual",
+      "organization_name": null, "contact_phone": null, "user_comment": "Работаю в ООО Ромашка",
+      "status": "pending", "admin_response": null,
+      "resolved_by_admin_id": null, "resolved_by_admin_name": null,
+      "created_user_id": null, "created_at": "2026-10-01T09:00:00Z", "resolved_at": null
+    }
+  ],
+  "total": 1, "page": 1, "size": 20, "pages": 1
+}
+```
+
+### POST `/admin/registration-requests/{request_id}/approve`
+Одобрить — заводит аккаунт, `204 No Content`. Тело: `{ "admin_response": "Проверено звонком" }` (`admin_response` необязателен). Заводятся и чаты «Поддержка» и «Заметки». Заявителю в приложении сообщить нечем — он ещё не пользователь, о решении узнаёт вне приложения. `409`, если заявка уже обработана или номер за это время занят.
+
+### POST `/admin/registration-requests/{request_id}/reject`
+Отклонить, `204 No Content`. `admin_response` **обязателен** (1–1000 символов). `409`, если заявка уже обработана.
+
+Оба действия пишутся в журнал: `registration_request.approve` / `registration_request.reject`.
+
+---
+
+## Рут `admin: password reset requests` — заявки на сброс пароля (просмотр — оператор/админ, решение — только админ)
+
+Заявку подаёт сам человек через `POST /auth/password-reset/request`, предложив новый пароль.
+
+> **Ответственность на администраторе.** Система подтвердить, что заявку подаёт владелец аккаунта, не может — перед одобрением это нужно проверить вне системы. Одобрение меняет пароль сразу.
+
+### GET `/admin/password-reset-requests`
+Параметры: `status` (`pending`/`approved`/`rejected`), `search` (по ФИО, телефону, организации и подписи статуса), `sort_by` (`created_at`/`resolved_at`/`status`/`user_full_name`), `sort_order`, `page`, `size`.
+```json
+{
+  "items": [
+    {
+      "id": 7, "user_id": 12, "user_full_name": "Иванов Иван", "user_phone": "+375291234567",
+      "user_type": "individual", "organization_name": null,
+      "user_is_verified": true, "user_registered_at": "2026-01-15T08:00:00Z",
+      "user_comment": "Нет доступа к Telegram",
+      "status": "pending", "admin_response": null,
+      "resolved_by_admin_id": null, "resolved_by_admin_name": null,
+      "created_at": "2026-10-01T09:00:00Z", "resolved_at": null
+    }
+  ],
+  "total": 1, "page": 1, "size": 20, "pages": 1
+}
+```
+
+### POST `/admin/password-reset-requests/{request_id}/approve`
+Одобрить, `204 No Content`. Тело: `{ "admin_response": "Проверено звонком" }` (необязателен). Пароль меняется на предложенный заявителем, **все его сессии закрываются**, пользователю уходит уведомление «Пароль изменён» (`request_status`). `409`, если заявка уже обработана.
+
+### POST `/admin/password-reset-requests/{request_id}/reject`
+Отклонить, `204 No Content`. `admin_response` **обязателен**; пользователю уходит уведомление с этой причиной.
+
+Оба действия пишутся в журнал: `password_reset_request.approve` / `password_reset_request.reject`.
 
 ---
 
@@ -4370,52 +4479,56 @@ ws.onmessage = (e) => {
 
 ---
 
-### GET `/admin/notifications/promo`
-Что лежит в подборке рекламных заготовок. Только для администратора.
+### GET `/admin/notifications/promo/messages`
+Список рекламных заготовок. Только для администратора. Заготовки хранятся в БД и целиком управляются из админки — файла `promo_messages.json` и переменных `.env` для этого больше нет.
 ```json
 [
-  { "id": "service_reminder", "title": "Плановое обслуживание",
-    "body": "Регулярное ТО шкафа управления…", "data": { "screen": "service_request" } }
+  { "id": 1, "title": "Плановое обслуживание", "body": "Регулярное ТО шкафа управления…",
+    "data": { "screen": "service_request" },
+    "created_at": "2026-10-01T09:00:00Z", "updated_at": "2026-10-01T09:00:00Z" }
 ]
 ```
-Файл читается заново на каждый запрос — список сразу показывает результат правок, перезапуск не нужен.
+`id` — число.
 
----
+### POST `/admin/notifications/promo/messages`
+Создать заготовку. `201 Created`, ответ — созданная заготовка. Пишется в журнал (`notification.promo_message_create`).
+```json
+{ "title": "Плановое обслуживание", "body": "Регулярное ТО шкафа управления…", "data": { "screen": "service_request" } }
+```
+`title` 1–255 символов, `body` 1–1000, `data` — произвольные ключи для клиента (например, экран для перехода).
+
+### PATCH `/admin/notifications/promo/messages/{message_id}`
+Изменить заготовку — передаются только изменяемые поля (`title`, `body`, `data`). Ответ — обновлённая заготовка.
+
+### DELETE `/admin/notifications/promo/messages/{message_id}`
+Удалить заготовку, `204 No Content`. Если на неё ссылается расписание (`message_ids`), оно просто перестаёт её учитывать — без ошибки.
 
 ### POST `/admin/notifications/promo/send`
-Разослать рекламу из подборки. Только для администратора. Параметры:
-- `promo_id` — конкретная заготовка. Без него берётся **случайная**
-- `role` — как в `broadcast`: `null` = всем активным, либо `user` / `operator` / `admin`
+Разослать рекламу из заготовок. Только для администратора. Параметры запроса:
+- `promo_id` — числовой id конкретной заготовки. Без него берётся **случайная**
+- `role` — `user` / `operator` / `admin`; без него — всем активным
 
 ```json
 { "sent_to": 42, "skipped_opted_out": 7,
-  "message": { "id": "remote_diagnostics", "title": "Удалённая диагностика", "body": "…", "data": {} } }
+  "message": { "id": 3, "title": "Удалённая диагностика", "body": "…", "data": {},
+               "created_at": "2026-10-01T09:00:00Z", "updated_at": "2026-10-01T09:00:00Z" } }
 ```
-Уважает переключатель `promotional`, как и обычная рассылка. В `data` уведомления кладётся `promo_id` — по нему в приложении можно понять, какую именно заготовку показали. Действие пишется в журнал.
+Уважает переключатель `promotional`, как и обычная рассылка. В `data` уведомления кладётся `promo_id`. Действие пишется в журнал.
 
-`400` — подборка пуста или файл не читается. `404` — заготовки с таким `promo_id` нет.
+`404` — заготовки с таким `promo_id` нет. `400` — заготовок нет вообще.
 
-#### Файл с рекламой
-
-Подборка лежит в `savt-backend/app/data/promo_messages.json` и правится руками:
+### GET `/admin/notifications/promo/schedule` и PATCH `/admin/notifications/promo/schedule`
+Расписание автоматической рассылки. Только для администратора. Настройки лежат в БД и действуют сразу, без перезапуска сервера.
 ```json
-{
-  "messages": [
-    { "id": "service_reminder",
-      "title": "Плановое обслуживание",
-      "body": "Регулярное ТО шкафа управления продлевает срок службы…",
-      "data": { "screen": "service_request" } }
-  ]
-}
+{ "enabled": false, "interval_days": 7, "send_hour": 10, "message_ids": null, "last_sent_at": null }
 ```
-- `id` — уникальный, попадает в `data.promo_id`;
-- `title` до 255 символов, `body` до 1000 — длиннее обрезается;
-- `data` — произвольные ключи для клиента (например, экран для перехода), значения приводятся к строкам;
-- записи без `title` или `body` пропускаются с `WARNING` в логе, остальные всё равно разошлются.
+- `enabled` — включена ли автоматическая рассылка. **По умолчанию выключена**: реклама уходит живым людям, включать её стоит осознанно
+- `interval_days` — не чаще, чем раз в столько дней (1–365)
+- `send_hour` — час суток по UTC (0–23), в который уходит рассылка
+- `message_ids` — `null` или `[]`: случайная заготовка среди всех; иначе — только среди перечисленных id
+- `last_sent_at` — когда рассылка уходила в последний раз
 
-Файл внутри образа только для чтения. Чтобы править без пересборки, положите свою копию рядом и укажите путь в `PROMO_MESSAGES_FILE` — например на уже примонтированной шаре NAS (`/mnt/projects/promo_messages.json`) или отдельным томом. Отсутствующий и битый файл рассылку не роняют: она просто не находит, что отправить, и говорит об этом `400`-м.
-
-**Автоматическая рассылка** по умолчанию выключена. Включается `PROMO_AUTO_SEND_HOUR` — час (0–23), в который раз в сутки уходит случайная заготовка всем пользователям с ролью `user`. Пусто, не число или значение вне диапазона — рассылка не регистрируется вовсе, остаётся только кнопка. Так по умолчанию сделано намеренно: реклама уходит живым людям, и включать её стоит осознанно.
+`PATCH` принимает любые из `enabled`, `interval_days`, `send_hour`, `message_ids`. Явный `message_ids: null` снимает ограничение. Раз в час фоновая задача сверяется с этими настройками; автоматическая рассылка идёт только пользователям с ролью `user`, и подряд не выбирается одна и та же заготовка. Изменение расписания пишется в журнал.
 
 ---
 
