@@ -246,6 +246,58 @@ curl https://helper.savt.by/health      # → {"app":"ok","db":true}
 
 ---
 
+## Веб-версия мобильного приложения (`/app/`)
+
+Flutter-приложение (репозиторий `savt_assist`, проект в папке `savt_control_panel`) собирается в статические файлы и отдаётся тем же nginx, что и API, по адресу `https://helper.savt.by/app/`. Тот же домен и HTTPS, поэтому CORS настраивать не нужно, а браузерные функции вроде геолокации работают. Админка живёт отдельно (порт 8080 → контейнер `savt-assist-frontend`) и этого не касается.
+
+**Что должно быть в конфигурации сервера** (в самом репозитории этих правок может не быть, проверьте при выкладке):
+
+1. `docker-compose.yml`, сервис `nginx`, раздел `volumes:` — папка со сборкой:
+   ```yaml
+         - ./mobile-web:/mobile-web:ro
+   ```
+2. `nginx.conf`, блок `server` с `listen 443 ssl;`, перед `location / {`:
+   ```nginx
+   location /app/ {
+       alias /mobile-web/;
+       try_files $uri $uri/ /app/index.html;
+       add_header Cache-Control "no-cache";
+   }
+   ```
+   `try_files` нужен, чтобы адреса внутри приложения открывались по обновлению страницы. Если на сервере включён `nginx.http-fallback.conf`, то же самое — в нём.
+3. Применить и проверить:
+   ```bash
+   docker compose up -d nginx
+   docker exec savt-backend-nginx-1 nginx -t     # syntax is ok
+   curl -I https://helper.savt.by/app/           # HTTP/2 200
+   ```
+
+**Сборка и обновление.** Flutter на сервер ставить не нужно — собираем во временном контейнере:
+
+```bash
+# первый раз (папка должна быть доступна на запись пользователю деплоя)
+cd /opt/savtAssistApp-server
+git clone https://github.com/Nadia111111/savt_assist.git savt-mobile-app
+
+# сборка и выкладка (и при каждом обновлении после git pull)
+cd /opt/savtAssistApp-server/savt-mobile-app && git pull
+cd savt_control_panel
+docker run --rm --network host -v "$PWD":/app -w /app ghcr.io/cirruslabs/flutter:stable \
+  bash -c "flutter pub get && flutter build web --release --base-href /app/"
+mkdir -p /opt/savtAssistApp-server/savt-backend/mobile-web
+rm -rf /opt/savtAssistApp-server/savt-backend/mobile-web/*
+cp -r build/web/. /opt/savtAssistApp-server/savt-backend/mobile-web/
+```
+
+- `--base-href /app/` обязателен: без него приложение ищет свои файлы в корне домена.
+- Образ `stable` скачивается один раз (около 1–2 ГБ), сборка занимает минуту-две. Тег `3.24.0` не подходит: проект требует пакет `path` версии не ниже 1.9.1, а в этом Flutter он закреплён на 1.9.0.
+- `--network host` — по той же причине, что и в `docker-compose.yml`: у сборщика своё изолированное сетевое пространство, в котором иногда ломается DNS.
+- При обновлении перезапускать nginx не нужно — он отдаёт файлы с диска; браузеру может понадобиться `Ctrl+F5`.
+- Файлы, созданные контейнером (`build/`, `.dart_tool/`), принадлежат root; удалять их придётся через `sudo`.
+- Адрес API в приложении должен указывать на `https://helper.savt.by`.
+
+---
+
 ## Вебхуки внешних интеграций
 
 Эти эндпоинты не вызываются фронтендом — их дёргают внешние сервисы (Bitrix24, Telegram). Настройка — на стороне соответствующего сервиса, не в коде.
