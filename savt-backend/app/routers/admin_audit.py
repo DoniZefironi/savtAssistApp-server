@@ -17,13 +17,14 @@ _SEARCH_IN = "^(all|action|entity_type|actor_name|payload)$"
 
 # ADMIN/OPERATOR видят только логи по заявкам (создание/одобрение/отклонение) —
 # CUD по шкафам/проектам/документам/пользователям видит только SUPERADMIN.
-# cabinet_share_request сюда больше не попадает: заявок на доступ к отдельному
-# ШУ больше нет, доступ выводится из проекта (см. project_share_request)
+# Это все виды заявок, которые решает оператор, — вся лента по ним у обоих
 _REQUEST_ENTITY_TYPES = [
     "cabinet_addition_request",
     "document_request",
-    "project_share_request",
     "service_request",
+    "registration_request",
+    "password_reset_request",
+    "phone_change_request",
 ]
 # Рекламации — отдельным списком, а не добавлены в общий выше, и видны
 # только ADMIN, не OPERATOR: у оператора и так нет доступа ни к одной ручке

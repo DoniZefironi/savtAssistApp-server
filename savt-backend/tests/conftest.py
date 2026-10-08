@@ -264,3 +264,34 @@ async def make_reclamation(db_session: AsyncSession, make_user, make_project):
         return rec
 
     return _make
+
+
+@pytest_asyncio.fixture
+async def api(db_session):
+    """HTTP-клиент к настоящему приложению (ASGI, без сети): обработчики, права и
+    проверка токенов — как в бою, но на тестовой сессии, поэтому созданное
+    тестом пользователи и данные ему видны, а после теста всё откатывается."""
+    import httpx
+    from app.core.dependencies import get_session
+    from app.main import app
+
+    async def override():
+        yield db_session
+
+    app.dependency_overrides[get_session] = override
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
+    app.dependency_overrides.pop(get_session, None)
+
+
+@pytest_asyncio.fixture
+async def tokens(make_user):
+    """Токен доступа на каждую роль: {"user": ..., "operator": ..., ...}."""
+    from app.core.security import create_access_token
+
+    result = {}
+    for role in ("user", "operator", "admin", "superadmin"):
+        user = await make_user(role)
+        result[role] = create_access_token(user_id=user.id, role=role)
+    return result

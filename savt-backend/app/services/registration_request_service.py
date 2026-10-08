@@ -43,6 +43,11 @@ class RegistrationRequestService:
             contact_phone=data.contact_phone,
             user_comment=data.user_comment,
         )
+        # Заявитель ещё не пользователь: автора (actor_id) у записи нет
+        self.audit.log(
+            "registration_request.create", "registration_request", req.id, None, "user",
+            {"phone": data.phone, "user_type": data.user_type},
+        )
         await self.session.commit()
         return RegistrationRequestOut(id=req.id, status=req.status, created_at=req.created_at)
 

@@ -15,12 +15,10 @@
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import httpx
 import jwt
 import pytest
 
 from app.config import settings
-from app.core.dependencies import get_session
 from app.core.security import create_access_token, create_guest_token
 from app.main import app
 from tests.route_permissions import AUTHENTICATED, PUBLIC, ROLES, USER_OR_GUEST, compute, render
@@ -71,26 +69,8 @@ def test_every_route_is_covered_and_nothing_unexpected_is_public():
 
 # --- живая проверка ---
 
-@pytest.fixture
-async def api(db_session):
-    async def override():
-        yield db_session
-
-    app.dependency_overrides[get_session] = override
-    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        yield client
-    app.dependency_overrides.pop(get_session, None)
-
-
-@pytest.fixture
-async def tokens(make_user):
-    result = {}
-    for role in ROLES:
-        user = await make_user(role)
-        result[role] = create_access_token(user_id=user.id, role=role)
-    return result
-
+# Фикстуры api (HTTP-клиент к настоящему приложению на тестовой сессии) и tokens
+# (токен на каждую роль) лежат в conftest.py — ими пользуются и другие тесты
 
 def _auth(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
@@ -201,6 +181,28 @@ async def test_demoted_admin_is_denied_by_the_database_role(api, make_user, db_s
     admin.role_id = operator_role.id  # понизили до оператора, токен старый
 
     assert (await api.post("/admin/users", headers=_auth(token))).status_code == 403
+
+
+# --- маршруты, открытые и гостю ---
+
+GUEST_ROUTES = ["/kb/categories", "/faq/categories", "/tags"]
+
+
+@pytest.mark.parametrize("path", GUEST_ROUTES)
+async def test_guest_and_user_can_read_public_content_but_anonymous_cannot(api, tokens, path):
+    assert (await api.get(path)).status_code == 401
+    assert (await api.get(path, headers=_auth(create_guest_token()))).status_code == 200
+    assert (await api.get(path, headers=_auth(tokens["user"]))).status_code == 200
+
+
+async def test_deactivated_user_is_refused_on_guest_friendly_routes_too(api, make_user):
+    user = await make_user("user")
+    token = create_access_token(user_id=user.id, role="user")
+    assert (await api.get("/kb/categories", headers=_auth(token))).status_code == 200
+
+    user.is_active = False
+
+    assert (await api.get("/kb/categories", headers=_auth(token))).status_code == 401
 
 
 # --- защита вебхуков и потоков событий ---

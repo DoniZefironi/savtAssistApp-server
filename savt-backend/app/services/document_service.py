@@ -430,5 +430,9 @@ class UserDocumentService:
             doc_type=doc.doc_type,
             user_message=user_message,
         )
+        AuditLogger(self.session).log(
+            "document_request.create", "document_request", req.id, user_id, "user",
+            {"document_id": doc_id, "doc_type": doc.doc_type},
+        )
         await self.session.commit()
         return req.id

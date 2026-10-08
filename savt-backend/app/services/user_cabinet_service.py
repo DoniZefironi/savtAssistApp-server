@@ -11,6 +11,7 @@ from app.repositories.cabinet import (
 )
 from app.repositories.project import ProjectRepository, UserProjectRepository
 from app.schemas.cabinet import UserCabinetDetailOut, UserCabinetListItemOut, UserCabinetPatchIn
+from app.services.audit_service import AuditLogger
 from app.utils.warranty import warranty_status as _warranty_status
 
 
@@ -128,6 +129,10 @@ class UserCabinetService:
             project_id=project_id,
             photo_url=photo_url,
             user_comment=user_comment,
+        )
+        AuditLogger(self.session).log(
+            "cabinet_request.create_addition", "cabinet_addition_request", request.id, user_id, "user",
+            {"project_id": project_id},
         )
         await self.session.commit()
         return request.id

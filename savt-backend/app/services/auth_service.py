@@ -10,6 +10,7 @@ from app.core.exceptions import (
     AuthenticationError,
     InvalidCodeError,
     NotFoundError,
+    PermissionDeniedError,
     RateLimitError,
 )
 from app.core.security import (
@@ -293,11 +294,15 @@ class AuthService:
             await self.token_repo.revoke(stored) # отзываем токен
         await self.session.commit()
 
-    # Удаление аккаунта
+    # Удаление аккаунта — анонимизация, см. app/services/account_deletion.py.
+    # Сотрудников это не касается: их учётки удаляет администратор, а то
+    # единственный суперадмин мог бы одним запросом оставить систему без владельца
     async def delete_account(self, user: User) -> None:
-        await self.token_repo.revoke_all_for_user(user.id)
-        await self.session.delete(user)
-        await self.session.commit()
+        role = await self.session.get(Role, user.role_id)
+        if role is not None and role.name != RoleName.USER.value:
+            raise PermissionDeniedError("Учётную запись сотрудника удаляет администратор")
+        from app.services.account_deletion import anonymize_user
+        await anonymize_user(self.session, user)
 
     
     async def _issue_tokens(

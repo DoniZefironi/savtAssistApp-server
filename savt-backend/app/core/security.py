@@ -19,7 +19,12 @@ def hash_password(plain_password: str) -> str:
 # верификация пароля
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     # passlib достаёт соль и параметры прям из хэша, хэширует пароль с теми же паратметрами и сравнивает результат с хэшем, возравщает бул
-    return _pwd_context.verify(plain_password, hashed_password)
+    try:
+        return _pwd_context.verify(plain_password, hashed_password)
+    except ValueError:
+        # Не хеш вовсе (у удалённых учёток раньше стояла строка-заглушка) — пароль
+        # не подходит, а не ошибка сервера
+        return False
 
 # генерация рефреш токена
 def generate_refresh_token() -> str:

@@ -280,9 +280,11 @@ class AdminUserService:
         )
 
         # Анонимизируем и деактивируем
+        from app.services.account_deletion import unusable_password_hash
+
         user.is_active = False
         user.login = f"_deleted_{user_id}"
-        user.hashed_password = "DELETED"
+        user.hashed_password = unusable_password_hash()
         user.full_name = None
         user.email = None
 
@@ -319,9 +321,11 @@ class AdminUserService:
             .values(revoked_at=datetime.now(timezone.utc))
         )
 
+        from app.services.account_deletion import unusable_password_hash
+
         user.is_active = False
         user.login = f"_deleted_{user_id}"
-        user.hashed_password = "DELETED"
+        user.hashed_password = unusable_password_hash()
         user.full_name = None
         user.email = None
 
