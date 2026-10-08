@@ -254,6 +254,7 @@ class ChatService:
                 project_name=project.name if project else None,
                 user_id=chat.user_id,
                 user_name=user.full_name if user else None,
+                user_phone=user.phone if user else None,
                 last_message_text=last_text,
                 last_message_at=chat.last_message_at,
                 unread_count=unread_counts.get(chat.id, 0),

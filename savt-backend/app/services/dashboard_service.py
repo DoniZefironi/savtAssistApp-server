@@ -13,6 +13,13 @@ from app.repositories.chat import ChatRepository
 from app.schemas.dashboard import DashboardOut, DashboardStats, RecentActivityItem
 
 
+def _snippet(text: str | None, limit: int = 80) -> str | None:
+    if not text:
+        return None
+    one_line = " ".join(text.split())
+    return one_line if len(one_line) <= limit else one_line[: limit - 1] + "…"
+
+
 class DashboardService:
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -79,7 +86,7 @@ class DashboardService:
             items.append(RecentActivityItem(
                 id=req.id, type="service", status=req.status,
                 user_id=req.user_id, user_full_name=user.full_name if user else None,
-                cabinet_id=req.cabinet_id, project_id=req.project_id, created_at=req.created_at,
+                cabinet_id=req.cabinet_id, project_id=req.project_id, detail=_snippet(req.description), created_at=req.created_at,
             ))
 
         rows = (await self.session.execute(
@@ -92,7 +99,7 @@ class DashboardService:
             items.append(RecentActivityItem(
                 id=req.id, type="document", status=req.status,
                 user_id=req.user_id, user_full_name=user.full_name if user else None,
-                cabinet_id=req.cabinet_id, created_at=req.created_at,
+                cabinet_id=req.cabinet_id, detail=req.doc_type, created_at=req.created_at,
             ))
 
         rows = (await self.session.execute(
@@ -105,7 +112,7 @@ class DashboardService:
             items.append(RecentActivityItem(
                 id=req.id, type="addition", status=req.status,
                 user_id=req.user_id, user_full_name=user.full_name if user else None,
-                cabinet_id=req.cabinet_id, created_at=req.created_at,
+                cabinet_id=req.cabinet_id, detail=_snippet(req.user_comment), created_at=req.created_at,
             ))
 
         rows = (await self.session.execute(
@@ -118,7 +125,7 @@ class DashboardService:
             items.append(RecentActivityItem(
                 id=req.id, type="phone_change", status=req.status,
                 user_id=req.user_id, user_full_name=user.full_name if user else None,
-                created_at=req.created_at,
+                detail=req.new_phone, created_at=req.created_at,
             ))
 
         rows = (await self.session.execute(
@@ -131,7 +138,7 @@ class DashboardService:
             items.append(RecentActivityItem(
                 id=req.id, type="password_reset", status=req.status,
                 user_id=req.user_id, user_full_name=user.full_name if user else None,
-                created_at=req.created_at,
+                detail=_snippet(req.user_comment), created_at=req.created_at,
             ))
 
         rows = (await self.session.execute(
@@ -144,7 +151,7 @@ class DashboardService:
             items.append(RecentActivityItem(
                 id=req.id, type="reclamation", status=req.status,
                 user_id=req.user_id, user_full_name=user.full_name if user else None,
-                cabinet_id=req.cabinet_id, created_at=req.created_at,
+                cabinet_id=req.cabinet_id, detail=_snippet(req.description), created_at=req.created_at,
             ))
 
         # Заявка на регистрацию — заявитель ещё не пользователь (см.
@@ -159,7 +166,7 @@ class DashboardService:
             items.append(RecentActivityItem(
                 id=req.id, type="registration", status=req.status,
                 user_id=None, user_full_name=req.full_name,
-                created_at=req.created_at,
+                detail=req.organization_name or req.phone, created_at=req.created_at,
             ))
 
         items.sort(key=lambda x: x.created_at, reverse=True)

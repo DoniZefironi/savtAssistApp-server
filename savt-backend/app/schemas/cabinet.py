@@ -11,6 +11,7 @@ class CabinetGeoItem(BaseModel):
     object_number: str
     admin_internal_name: str | None
     warranty_status: str
+    warranty_ends_at: datetime | None
     latitude: float | None
     longitude: float | None
     has_open_requests: bool

@@ -155,6 +155,9 @@ class GuestTokenOut(BaseModel):
 # Профиль пользователя
 class UserMeOut(BaseModel):
     id: int
+    # логин — у операторов и администраторов (у обычных пользователей null,
+    # они входят по телефону)
+    login: str | None = None
     # подтверждённый номер из Telegram, он же логин — меняется только через заявку
     phone: str | None
     # необязательный рабочий номер, меняется свободно через PATCH /auth/me

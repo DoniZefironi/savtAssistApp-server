@@ -870,6 +870,7 @@ Telegram позволяет менять номер аккаунта. После
 ```json
 {
   "id": 1,
+  "login": null,
   "phone": "+375291234567",
   "contact_phone": "+375291110000",
   "email": null,
@@ -881,6 +882,7 @@ Telegram позволяет менять номер аккаунта. После
   "is_verified": false
 }
 ```
+- `login` — логин оператора/администратора (`operator1`); у обычных пользователей `null`, они входят по телефону. Им удобно подписывать меню профиля сотрудника
 - `phone` — **подтверждённый номер из Telegram, он же логин.** Пользователь его не
   меняет: только через заявку с одобрением админа (`POST /auth/change-phone/request`)
 - `contact_phone` — рабочий номер, необязательный. Не подтверждается, на вход не
@@ -1243,6 +1245,7 @@ Telegram позволяет менять номер аккаунта. После
     "object_number": "29_099",
     "admin_internal_name": "Главная подстанция",
     "warranty_status": "active",
+    "warranty_ends_at": "2027-01-01T00:00:00Z",
     "latitude": 53.9,
     "longitude": 27.56,
     "has_open_requests": true
@@ -1251,6 +1254,7 @@ Telegram позволяет менять номер аккаунта. После
 ```
 
 `warranty_status`: `active` | `expiring_soon` | `expired` | `none`.
+`warranty_ends_at`: дата окончания гарантии, `null` — гарантия не задана.
 `has_open_requests`: есть ли хотя бы одна сервисная заявка со статусом `open`.  
 ШУ без координат тоже включены (`latitude`/`longitude` = `null`) — фронт фильтрует сам.
 
@@ -1555,6 +1559,7 @@ QR, в обход проекта (`added_at` — дата именно этой 
       "cabinet_id": null,
       "admin_response": null,
       "resolved_by_admin_id": null,
+      "resolved_by_admin_name": null,
       "created_at": "2026-05-12T08:00:00Z",
       "resolved_at": null
     }
@@ -2756,6 +2761,7 @@ Link (отдельная настройка на стороне мобильно
   "status": "pending",
   "admin_response": null,
   "resolved_by_admin_id": null,
+  "resolved_by_admin_name": null,
   "created_at": "2026-07-31T10:00:00Z",
   "resolved_at": null,
   "user_full_name": "Иванов Иван",
@@ -2985,7 +2991,7 @@ NAS-папки: такие всегда заводятся с `is_internal: true
 ---
 
 ### GET `/admin/document-requests`
-Заявки пользователей на доступ к закрытым документам. Параметры:
+Заявки пользователей на доступ к закрытым документам. **Список видят `admin` и `operator`, решают (`approve`/`reject`) — только `admin`: оператор получит `403`, кнопки решения ему показывать не нужно.** Параметры:
 - `status` — `pending` / `approved` / `rejected`
 - `resolved_by_admin_id` — заявки, обработанные конкретным администратором
 - `search` — поиск по ФИО/телефону/организации пользователя, типу документа, сообщению пользователя и ответу администратора
@@ -3013,6 +3019,7 @@ NAS-папки: такие всегда заводятся с `is_internal: true
       "user_message": "Нужен для проверки",
       "admin_response": null,
       "resolved_by_admin_id": null,
+      "resolved_by_admin_name": null,
       "created_at": "2026-06-01T09:00:00Z",
       "resolved_at": null
     }
@@ -3513,7 +3520,7 @@ NAS-папки: такие всегда заводятся с `is_internal: true
 
 Сортировка: сначала ожидающие оператора (`operator_requested=true`) — это очередь, личный пин её не перекрывает; внутри — сначала закреплённые ЭТИМ оператором (`is_pinned`, см. `PUT /operator/chats/{chat_id}/pin-chat` ниже); затем по последнему сообщению.
 
-Каждый чат содержит `user_id`, `user_name`, `cabinet_object_number`/`project_name`, `is_pinned` (личное для этого оператора, не видно другим), а для чатов заявок — ещё и `service_request_id`/`service_request_type`/`service_request_status`/`service_request_description`/`service_request_created_at` (см. `GET /chats` выше — формат ответа общий).
+Каждый чат содержит `user_id`, `user_name` (имя заявителя), `user_phone` (его телефон), `cabinet_object_number`/`project_name`, `is_pinned` (личное для этого оператора, не видно другим), а для чатов заявок — ещё и `service_request_id`/`service_request_type`/`service_request_status`/`service_request_description`/`service_request_created_at` (см. `GET /chats` выше — формат ответа общий).
 
 > **Оптимизация:** запрос выполняется за 3 DB-запроса независимо от числа чатов (JOIN на User+Cabinet + batch unread counts + batch last messages), вместо 4N+1 в предыдущей версии.
 
@@ -3521,7 +3528,7 @@ NAS-папки: такие всегда заводятся с `is_internal: true
 
 ### GET `/operator/chats/{chat_id}`
 Один чат по ID, с тем же набором полей, что и в `GET /operator/chats`
-(`user_id`/`user_name`, `cabinet_id`/`cabinet_name`/`cabinet_object_number`,
+(`user_id`/`user_name`/`user_phone`, `cabinet_id`/`cabinet_name`/`cabinet_object_number`,
 `project_id`/`project_name`, статус заявки и т.п.) — для прямого перехода к
 чату без предзагруженного списка: пуш-уведомление, ссылка, обновление
 страницы. `notes`-чаты (личные заметки пользователя) недоступны оператору
@@ -3809,6 +3816,7 @@ ws.onmessage = (e) => {
       "user_full_name": "Иванов Иван",
       "cabinet_id": 3,
       "project_id": null,
+      "detail": "Не включается вентилятор приточной установки",
       "created_at": "2026-06-24T10:00:00Z"
     }
   ]
@@ -3819,6 +3827,11 @@ ws.onmessage = (e) => {
 `password_reset` | `registration` | `reclamation`. У `type: "registration"`
 `user_id` всегда `null` — заявитель ещё не пользователь на момент заявки, имя
 берётся прямо из полей самой заявки, а не через связь с аккаунтом.
+`detail` — короткая подпись для ленты, суть заявки одной строкой (до 80 символов,
+длиннее обрезается с «…»), может быть `null`. Зависит от `type`: `service` и
+`reclamation` — начало описания, `document` — тип документа (`doc_type`),
+`addition` и `password_reset` — комментарий заявителя, `phone_change` — новый
+номер, `registration` — организация, а если её нет — номер телефона.
 `pending_reclamations` считает рекламации со статусом `new` (новая) или `review`
 (на рассмотрении) — обе ранние стадии, до того как их взяли в работу.
 `in_progress`/`resolved`/`rejected`/`invalid` уже не «висят» в очереди на
@@ -3829,7 +3842,7 @@ ws.onmessage = (e) => {
 ## Рут `service requests` — сервисные заявки
 
 Типы заявок (`request_type`): `repair` (ремонт), `diagnostics` (диагностика), `remote_adjustment` (наладка удалённо), `onsite_adjustment` (наладка с выездом), `other` (другое).
-Статусы: `open`, `in_progress`, `postponed`, `closed`. Переход между статусами не валидируется — администратор/оператор может установить любой статус через `PATCH /admin/service-requests/{req_id}/status` (типичный сценарий: `open → in_progress → closed`).
+Статусы: `open`, `in_progress`, `postponed`, `closed`. Переход между статусами не валидируется — администратор и оператор (оба) могут установить любой статус через `PATCH /admin/service-requests/{req_id}/status` (типичный сценарий: `open → in_progress → closed`).
 
 ### POST `/service-requests`
 Создать заявку — по конкретному ШУ либо по проекту в целом. Ровно одно из
@@ -5020,7 +5033,8 @@ SELECT source_type, COUNT(*) FROM embeddings GROUP BY source_type;
 
 ### GET `/admin/audit-logs`
 Журнал административных действий. Доступ разный по уровню:
-- **`admin`/`operator`** — видят только логи по заявкам (создание, одобрение, отклонение): `entity_type` принудительно ограничен списком `cabinet_addition_request`, `document_request`, `project_share_request`, `service_request` — сервер сам сужает выдачу до этого набора независимо от того, что передано в `entity_type`/`entity_id`. Заявок на доступ к отдельному ШУ (`cabinet_share_request`) больше нет — убраны вместе с самой сущностью.
+- **`operator`** — видит только логи по заявкам (создание, одобрение, отклонение): `entity_type` принудительно ограничен списком `cabinet_addition_request`, `document_request`, `service_request` (и устаревшего `project_share_request`, заявок которого больше нет) — сервер сам сужает выдачу до этого набора независимо от того, что передано в `entity_type`/`entity_id`.
+- **`admin`** — то же самое плюс логи по рекламациям (`entity_type = reclamation`).
 - **`superadmin`** — видит вообще всё, без ограничений: CUD по шкафам, проектам, документам, пользователям (баны/верификации), плюс те же заявки.
 
 Параметры:
@@ -5036,6 +5050,27 @@ SELECT source_type, COUNT(*) FROM embeddings GROUP BY source_type;
 - `sort_order` — `asc` / `desc`
 - `page`, `size` — пагинация (по умолч. `1` / `50`, максимум `200`)
 
+Ответ — страница:
+```json
+{
+  "items": [
+    {
+      "id": 812,
+      "actor_id": 3,
+      "actor_role": "admin",
+      "actor_name": "Иванов Иван",
+      "action": "reclamation.delete",
+      "entity_type": "reclamation",
+      "entity_id": 12,
+      "payload": { "status": "new", "user_id": 8 },
+      "created_at": "2026-10-07T09:12:00Z"
+    }
+  ],
+  "total": 1, "page": 1, "size": 50, "pages": 1
+}
+```
+`actor_id` и `actor_name` — `null` у системных действий (фоновые задачи, вебхуки) и у удалённых аккаунтов. `payload` — произвольный объект, состав зависит от `action` (что именно изменили, причина, количество получателей и т.п.). Поиск `search` понимает несколько слов и находит их в любом порядке; цифры ищутся точно.
+
 ---
 
 ## Рут `admin: bot` — управление ботом
@@ -5045,7 +5080,9 @@ SELECT source_type, COUNT(*) FROM embeddings GROUP BY source_type;
 
 Параметры:
 - `force=false` (по умолчанию) — индексирует только записи без существующих эмбеддингов (быстро)
-- `force=true` — полная переиндексация всего (медленно, пропорционально объёму данных)
+- `force=true` — полная переиндексация (медленно, пропорционально объёму данных)
+- `scope` — что индексировать: `all` (по умолчанию) / `faq` / `kb_article` / `document`
+- `project_id` — только документы этого проекта (вместе с его шкафами и дочерними проектами); имеет смысл со `scope=document` или `all`
 
 Считает в фоне — сам HTTP-запрос отвечает сразу (`202 Accepted`), не дожидаясь окончания. При заметном объёме данных `force=true` — это десятки/сотни синхронных вызовов Yandex API (эмбеддинги), что легко превышает `proxy_read_timeout` nginx, если считать синхронно внутри запроса.
 

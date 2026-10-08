@@ -268,6 +268,7 @@ class CabinetService:
                 object_number=row.object_number,
                 admin_internal_name=row.admin_internal_name,
                 warranty_status=_warranty_status(row.warranty_ends_at),
+                warranty_ends_at=row.warranty_ends_at,
                 latitude=row.latitude,
                 longitude=row.longitude,
                 has_open_requests=row.has_open_requests,

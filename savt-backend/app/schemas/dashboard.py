@@ -27,6 +27,9 @@ class RecentActivityItem(BaseModel):
     user_full_name: str | None
     cabinet_id: int | None = None
     project_id: int | None = None
+    # короткая подпись для ленты: суть заявки одной строкой (до 80 символов);
+    # зависит от type — см. DashboardService._get_recent_activity
+    detail: str | None = None
     created_at: datetime
 
 

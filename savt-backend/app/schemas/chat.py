@@ -140,6 +140,7 @@ class ChatListOut(BaseModel):
     project_name: str | None = None
     user_id: int | None = None
     user_name: str | None = None
+    user_phone: str | None = None
     last_message_text: str | None
     last_message_at: datetime | None
     unread_count: int

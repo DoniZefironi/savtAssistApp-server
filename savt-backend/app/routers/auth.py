@@ -206,6 +206,7 @@ async def me(
     role = await session.get(Role, user.role_id)
     return UserMeOut(
         id=user.id,
+        login=user.login,
         phone=user.phone,
         contact_phone=user.contact_phone,
         full_name=user.full_name,
@@ -293,6 +294,7 @@ async def update_profile(
     role = await session.get(Role, user.role_id)
     return UserMeOut(
         id=user.id,
+        login=user.login,
         phone=user.phone,
         contact_phone=user.contact_phone,
         full_name=user.full_name,
@@ -316,6 +318,7 @@ async def delete_email(
     role = await session.get(Role, user.role_id)
     return UserMeOut(
         id=user.id,
+        login=user.login,
         phone=user.phone,
         contact_phone=user.contact_phone,
         full_name=user.full_name,
