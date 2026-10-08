@@ -62,20 +62,24 @@ class ProjectRepository(BaseRepository[Project]):
         )
         return result.scalar_one_or_none()
 
-    # Поиск по открытому номеру проекта из Bitrix, включая мягко удалённые —
-    # нужен вебхуку сделок, чтобы воскресить проект, если его удалили в
-    # приложении, а сделка в Bitrix ещё жива (см. upsert_project_from_deal,
-    # app/services/bitrix_webhook_service.py handle_deal_event).
-    async def find_by_production_number_any(self, production_number: str) -> Project | None:
+    # Проект с этим номером, к которому ещё не привязана ни одна сделка
+    # (заведён до появления bitrix_deal_id), включая мягко удалённые — первая
+    # подходящая сделка его "усыновляет" (см. upsert_project_from_deal). Номер
+    # в базе не уникален (в Bitrix бывают сделки-дубли), поэтому берётся самый
+    # ранний, а не единственный.
+    async def find_unlinked_by_production_number(self, production_number: str) -> Project | None:
         result = await self.session.execute(
-            select(Project).where(Project.production_number == production_number)
+            select(Project)
+            .where(Project.production_number == production_number, Project.bitrix_deal_id.is_(None))
+            .order_by(Project.id)
+            .limit(1)
         )
         return result.scalar_one_or_none()
 
     # Поиск по ID сделки Bitrix, включая мягко удалённые — основной ключ
     # идемпотентности вебхука сделок (см. upsert_project_from_deal). В отличие
-    # от find_by_production_number_any однозначно определяет "та же самая
-    # сделка", а не "проект с таким же номером" — двух сделок с одним ID не бывает.
+    # от поиска по номеру однозначно определяет "та же самая сделка", а не
+    # "проект с таким же номером" — двух сделок с одним ID не бывает.
     async def find_by_bitrix_deal_id(self, bitrix_deal_id: str) -> Project | None:
         result = await self.session.execute(
             select(Project).where(Project.bitrix_deal_id == bitrix_deal_id)

@@ -277,9 +277,7 @@ async def upsert_project_from_deal(session, deal: dict):
     # не должно быть окончательным, пока сделку не закрыли и в CRM.
     existing = await project_repo.find_by_bitrix_deal_id(deal_id) if deal_id else None
     if existing is None:
-        candidate = await project_repo.find_by_production_number_any(production_number)
-        if candidate is not None and candidate.bitrix_deal_id is None:
-            existing = candidate
+        existing = await project_repo.find_unlinked_by_production_number(production_number)
 
     if existing is not None:
         if deal_id and existing.bitrix_deal_id != deal_id:
