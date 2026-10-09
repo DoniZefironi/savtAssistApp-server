@@ -88,13 +88,13 @@ GET    /admin/projects/{project_id}/qr  operator
 POST   /admin/projects/{project_id}/sync-folder  operator
 GET    /admin/projects/{project_id}/users  operator
 DELETE /admin/projects/{project_id}/users/{user_id}  admin
-GET    /admin/reclamations  admin
+GET    /admin/reclamations  operator
 GET    /admin/reclamations/bitrix-detached  admin
 GET    /admin/reclamations/bitrix-outbox  admin
 DELETE /admin/reclamations/bitrix-outbox/{outbox_id}  admin
 PATCH  /admin/reclamations/bitrix-outbox/{outbox_id}  admin
 DELETE /admin/reclamations/{reclamation_id}  admin
-GET    /admin/reclamations/{reclamation_id}  admin
+GET    /admin/reclamations/{reclamation_id}  operator
 GET    /admin/register-definitions  operator
 POST   /admin/register-definitions  admin
 GET    /admin/register-definitions/export  operator

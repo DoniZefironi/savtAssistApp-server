@@ -57,9 +57,9 @@ async def get_my_reclamation(
 
 
 # --- Администратор ---
-# Пока без Битрикса роль "закреплённых специалистов" из ТЗ временно исполняет
-# админ вручную (см. app/models/reclamation.py) — в отличие от ServiceRequest,
-# у operator здесь нет прав на обработку, только у admin/superadmin.
+# Список и карточка рекламации открыты админу и оператору — рекламация такая же
+# заявка, как остальные. Обслуживание связи с Bitrix (очередь отправки, отвязанные
+# карточки) и удаление остаются только у админа.
 
 @router.get("/admin/reclamations", response_model=PageOut[AdminReclamationListItemOut])
 async def list_all_reclamations(
@@ -73,7 +73,7 @@ async def list_all_reclamations(
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
-    _: User = Depends(require_role(RoleName.ADMIN)),
+    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
     return await ReclamationService(session).list_admin(
@@ -133,7 +133,7 @@ async def list_reclamations_detached_from_bitrix(
 @router.get("/admin/reclamations/{reclamation_id}", response_model=AdminReclamationOut)
 async def get_reclamation_admin(
     reclamation_id: int,
-    _: User = Depends(require_role(RoleName.ADMIN)),
+    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
     session: AsyncSession = Depends(get_session),
 ):
     return await ReclamationService(session).get_admin(reclamation_id)

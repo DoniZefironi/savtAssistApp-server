@@ -404,3 +404,23 @@ async def test_broadcast_and_promo_over_http(api, staff, make_user, db_session):
     assert (await api.patch("/admin/notifications/promo/schedule", headers=staff.a, json={"enabled": False})).status_code == 200
     assert [m["id"] for m in (await api.get("/admin/notifications/promo/messages", headers=staff.a)).json()] == [promo_id]
     assert (await api.delete(f"/admin/notifications/promo/messages/{promo_id}", headers=staff.a)).status_code == 204
+
+
+# --- рекламации ---
+
+async def test_operator_reads_reclamations_but_does_not_manage_bitrix_side(api, staff, make_reclamation):
+    reclamation = await make_reclamation(description="Не работает кнопка")
+
+    listed = await api.get("/admin/reclamations", headers=staff.o)
+    card = await api.get(f"/admin/reclamations/{reclamation.id}", headers=staff.o)
+
+    assert listed.status_code == 200 and reclamation.id in [r["id"] for r in listed.json()["items"]]
+    assert card.status_code == 200 and card.json()["id"] == reclamation.id
+    assert (await api.get("/admin/reclamations", headers=staff.a)).status_code == 200
+    for method, url in (
+        ("GET", "/admin/reclamations/bitrix-outbox"),
+        ("GET", "/admin/reclamations/bitrix-detached"),
+        ("DELETE", "/admin/reclamations/bitrix-outbox/1"),
+        ("DELETE", f"/admin/reclamations/{reclamation.id}"),
+    ):
+        assert (await api.request(method, url, headers=staff.o)).status_code == 403, url

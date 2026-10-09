@@ -4135,7 +4135,7 @@ ws.onmessage = (e) => {
 ---
 
 ### GET `/admin/reclamations`
-Все рекламации (только `admin`, оператору недоступно). Параметры: `status`,
+Все рекламации (`admin` и `operator`). Параметры: `status`,
 `object_type`, `warranty_classification` (`true`/`false`), `search`, `sort_by`,
 `sort_order`, `page`, `size`.
 
@@ -4191,7 +4191,7 @@ ws.onmessage = (e) => {
 ---
 
 ### GET `/admin/reclamations/{reclamation_id}`
-Подробности любой рекламации (только `admin`). То же самое, что
+Подробности любой рекламации (`admin` и `operator`). То же самое, что
 `GET /reclamations/{id}` у пользователя, плюс `user_id`/`user_full_name` — кто
 подал (не путать с `contact_name` — это снимок с формы заявки, может отличаться),
 `deadline_at` и `responsible_bitrix_user_id` (приходят только вебхуком из Bitrix,
