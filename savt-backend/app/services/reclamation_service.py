@@ -652,96 +652,111 @@ async def retry_bitrix_outbox() -> None:
             await session.commit()
 
 
+async def _outbox_item_id(session, row) -> tuple[Reclamation | None, str]:
+    """Рекламация и id её карточки в Bitrix для операций над уже созданной
+    карточкой. Нет карточки — повторять нечего, пока не прошло создание."""
+    rec = await session.get(Reclamation, row.reclamation_id)
+    bitrix_item_id = rec.bitrix_item_id if rec is not None else None
+    if not bitrix_item_id:
+        raise RuntimeError("У рекламации всё ещё нет bitrix_item_id (create не прошёл)")
+    return rec, bitrix_item_id
+
+
+async def _retry_create(session, row) -> None:
+    from app.core.signed_urls import sign_url
+    from app.services import bitrix_service
+
+    rec = await session.get(Reclamation, row.reclamation_id)
+    # рекламации нет, либо карточка уже создалась как-то иначе (например,
+    # починили руками) — повторять нечего, дублировать нельзя
+    if rec is None or rec.bitrix_item_id:
+        return
+    payload = row.payload
+    item_id = await bitrix_service.create_reclamation_item(
+        payload["description"], payload.get("deal_id"),
+        payload.get("company_id"), sign_url(payload.get("attachment_url")),
+        payload.get("project_name"), payload.get("object_serial_number"),
+        payload.get("contract_info"), payload.get("component_info"),
+    )
+    if not item_id:
+        raise RuntimeError("Bitrix не настроен (BITRIX_WEBHOOK_URL пуст)")
+    rec.bitrix_item_id = item_id
+
+
+async def _retry_status(session, row) -> None:
+    from app.core.signed_urls import sign_url
+    from app.services import bitrix_service
+
+    rec, bitrix_item_id = await _outbox_item_id(session, row)
+    saved_deadline = row.payload.get("deadline")
+    pushed_stage = await bitrix_service.update_reclamation_stage(
+        bitrix_item_id, row.payload["status"], sign_url(row.payload.get("confirmation_file_url")),
+        date.fromisoformat(saved_deadline) if saved_deadline else None,
+    )
+    if pushed_stage:
+        # Приводим статус к тому, что реально уехало в Bitrix. Пока попытка
+        # висела в очереди, наш статус мог откатиться вебхуком — карточка-то
+        # стояла на старой стадии. Ждать, что вебхук от этого же обновления
+        # всё исправит сам, нельзя: он прилетает раньше, чем закоммитится
+        # удаление строки очереди, и его отсечёт защита в
+        # sync_reclamation_from_bitrix
+        rec.status = row.payload["status"]
+
+
+async def _retry_deadline(session, row) -> None:
+    from app.services import bitrix_service
+
+    _, bitrix_item_id = await _outbox_item_id(session, row)
+    saved = row.payload.get("deadline")
+    await bitrix_service.update_reclamation_deadline(
+        bitrix_item_id, date.fromisoformat(saved) if saved else None,
+    )
+
+
+async def _retry_assignee(session, row) -> None:
+    from app.services import bitrix_service
+
+    _, bitrix_item_id = await _outbox_item_id(session, row)
+    await bitrix_service.update_reclamation_assignee(bitrix_item_id, row.payload["bitrix_user_id"])
+
+
+async def _retry_warranty(session, row) -> None:
+    from app.services import bitrix_service
+
+    _, bitrix_item_id = await _outbox_item_id(session, row)
+    await bitrix_service.update_reclamation_warranty(bitrix_item_id, row.payload["warranty"])
+
+
+async def _retry_comment(session, row) -> None:
+    from app.services import bitrix_service
+
+    _, bitrix_item_id = await _outbox_item_id(session, row)
+    await bitrix_service.add_reclamation_comment(bitrix_item_id, row.payload["text"])
+
+
+_OUTBOX_RETRIES = {
+    "create": _retry_create,
+    "status": _retry_status,
+    "deadline": _retry_deadline,
+    "assignee": _retry_assignee,
+    "warranty": _retry_warranty,
+    "comment": _retry_comment,
+}
+
+
 async def _retry_outbox_row(session, outbox_repo, row) -> bool:
     """Одна попытка повтора — общая для фонового retry_bitrix_outbox (по всем
     строкам, раз в 15 минут) и ручного повтора админом сразу после правки
     payload через PATCH /admin/reclamations/bitrix-outbox/{id}, чтобы увидеть
     результат правки тут же, а не ждать следующего цикла. Коммит — на
     вызывающей стороне, один раз после вызова этой функции."""
-    from app.core.signed_urls import sign_url
-    from app.services import bitrix_service
+    retry = _OUTBOX_RETRIES.get(row.operation)
+    if retry is None:
+        _log.warning("Reclamation outbox: неизвестная операция %s (id=%s)", row.operation, row.id)
+        return False
 
     try:
-        if row.operation == "create":
-            rec = await session.get(Reclamation, row.reclamation_id)
-            if rec is None:
-                await outbox_repo.delete(row)
-                return True
-            if rec.bitrix_item_id:
-                # уже создалось как-то иначе (например, починили руками) — не дублируем
-                await outbox_repo.delete(row)
-                return True
-            item_id = await bitrix_service.create_reclamation_item(
-                row.payload["description"], row.payload.get("deal_id"),
-                row.payload.get("company_id"), sign_url(row.payload.get("attachment_url")),
-                row.payload.get("project_name"), row.payload.get("object_serial_number"),
-                row.payload.get("contract_info"), row.payload.get("component_info"),
-            )
-            if not item_id:
-                raise RuntimeError("Bitrix не настроен (BITRIX_WEBHOOK_URL пуст)")
-            rec.bitrix_item_id = item_id
-
-        elif row.operation == "status":
-            rec = await session.get(Reclamation, row.reclamation_id)
-            bitrix_item_id = rec.bitrix_item_id if rec is not None else None
-            if not bitrix_item_id:
-                raise RuntimeError("У рекламации всё ещё нет bitrix_item_id (create не прошёл)")
-            saved_deadline = row.payload.get("deadline")
-            pushed_stage = await bitrix_service.update_reclamation_stage(
-                bitrix_item_id, row.payload["status"], sign_url(row.payload.get("confirmation_file_url")),
-                date.fromisoformat(saved_deadline) if saved_deadline else None,
-            )
-            if pushed_stage:
-                # Приводим статус к тому, что реально уехало в Bitrix.
-                # Пока попытка висела в очереди, наш статус мог
-                # откатиться вебхуком — карточка-то стояла на старой
-                # стадии. Ждать, что вебхук от этого же обновления всё
-                # исправит сам, нельзя: он прилетает раньше, чем
-                # закоммитится удаление строки ниже, и его отсечёт
-                # защита в sync_reclamation_from_bitrix
-                rec.status = row.payload["status"]
-
-        elif row.operation == "deadline":
-            rec = await session.get(Reclamation, row.reclamation_id)
-            bitrix_item_id = rec.bitrix_item_id if rec is not None else None
-            if not bitrix_item_id:
-                raise RuntimeError("У рекламации всё ещё нет bitrix_item_id (create не прошёл)")
-            saved = row.payload.get("deadline")
-            await bitrix_service.update_reclamation_deadline(
-                bitrix_item_id, date.fromisoformat(saved) if saved else None,
-            )
-
-        elif row.operation == "assignee":
-            rec = await session.get(Reclamation, row.reclamation_id)
-            bitrix_item_id = rec.bitrix_item_id if rec is not None else None
-            if not bitrix_item_id:
-                raise RuntimeError("У рекламации всё ещё нет bitrix_item_id (create не прошёл)")
-            await bitrix_service.update_reclamation_assignee(
-                bitrix_item_id, row.payload["bitrix_user_id"],
-            )
-
-        elif row.operation == "warranty":
-            rec = await session.get(Reclamation, row.reclamation_id)
-            bitrix_item_id = rec.bitrix_item_id if rec is not None else None
-            if not bitrix_item_id:
-                raise RuntimeError("У рекламации всё ещё нет bitrix_item_id (create не прошёл)")
-            await bitrix_service.update_reclamation_warranty(
-                bitrix_item_id, row.payload["warranty"],
-            )
-
-        elif row.operation == "comment":
-            rec = await session.get(Reclamation, row.reclamation_id)
-            bitrix_item_id = rec.bitrix_item_id if rec is not None else None
-            if not bitrix_item_id:
-                raise RuntimeError("У рекламации всё ещё нет bitrix_item_id (create не прошёл)")
-            await bitrix_service.add_reclamation_comment(
-                bitrix_item_id, row.payload["text"],
-            )
-
-        else:
-            _log.warning("Reclamation outbox: неизвестная операция %s (id=%s)", row.operation, row.id)
-            return False
-
+        await retry(session, row)
         await outbox_repo.delete(row)
         _log.info("Reclamation outbox: повтор успешен (id=%s, operation=%s)", row.id, row.operation)
         return True

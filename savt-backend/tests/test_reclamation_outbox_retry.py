@@ -1,187 +1,205 @@
-"""_retry_outbox_row — повтор недоставленной операции (п.8 ТЗ).
-
-Реальная БД (транзакция теста), bitrix_service целиком замокан (mock_bitrix из
-conftest) — ничего из этих тестов никогда не уходит в настоящий Bitrix, даже
-читающие вызовы тут не нужны. Проверяем контракт: при успехе строка очереди
-удаляется и нужный bitrix_service-вызов происходит с правильными аргументами,
-при сбое — попытка засчитывается, а не теряется молча.
-"""
-
+"""Повтор недоставленных операций с Bitrix (очередь ReclamationBitrixOutbox):
+каждая операция при успехе уходит в Bitrix с сохранёнными данными и снимается с
+очереди, при сбое получает +1 попытку, удалённая карточка отвязывает рекламацию.
+Bitrix не вызывается: пишущие функции записывает фикстура mock_bitrix."""
+import pytest
 from sqlalchemy import select
 
 from app.models.reclamation_bitrix_outbox import ReclamationBitrixOutbox
 from app.repositories.reclamation_outbox import ReclamationOutboxRepository
-from app.services.reclamation_service import _retry_outbox_row
+from app.services import bitrix_service, reclamation_service
+from app.services.reclamation_service import _retry_outbox_row, retry_bitrix_outbox
 
 
-async def _outbox_count(db_session, reclamation_id: int) -> int:
-    rows = (await db_session.execute(
-        select(ReclamationBitrixOutbox).where(ReclamationBitrixOutbox.reclamation_id == reclamation_id)
-    )).scalars().all()
-    return len(rows)
+class _SessionContext:
+    def __init__(self, session):
+        self.session = session
+
+    async def __aenter__(self):
+        return self.session
+
+    async def __aexit__(self, *exc):
+        return False
 
 
-# --- create ---
+async def _row(db_session, rec, operation, payload=None):
+    return await ReclamationOutboxRepository(db_session).create(rec.id, operation, payload or {}, "сбой сети")
 
-async def test_create_success_sets_bitrix_item_id_and_removes_row(db_session, make_reclamation, mock_bitrix):
+
+async def _retry(db_session, row):
+    return await _retry_outbox_row(db_session, ReclamationOutboxRepository(db_session), row)
+
+
+async def _rows(db_session, rec):
+    return list((await db_session.execute(
+        select(ReclamationBitrixOutbox).where(ReclamationBitrixOutbox.reclamation_id == rec.id)
+    )).scalars())
+
+
+def _calls(mock_bitrix, name):
+    return [(args, kwargs) for n, args, kwargs in mock_bitrix if n == name]
+
+
+# --- создание карточки ---
+
+async def test_create_is_retried_with_the_saved_payload(db_session, make_reclamation, mock_bitrix):
     rec = await make_reclamation()
-    repo = ReclamationOutboxRepository(db_session)
-    row = await repo.create(
-        rec.id, "create",
-        {"description": "Неисправность", "deal_id": "42", "company_id": "17",
-         "project_name": "Проект", "object_serial_number": "SN-1",
-         "contract_info": None, "component_info": None},
-        "первая попытка упала",
-    )
-    await db_session.commit()
+    row = await _row(db_session, rec, "create", {
+        "description": "Не работает кнопка", "deal_id": "77", "company_id": "5",
+        "project_name": "Космос", "object_serial_number": "SN-1",
+    })
 
-    ok = await _retry_outbox_row(db_session, repo, row)
-    await db_session.commit()
+    assert await _retry(db_session, row) is True
 
-    assert ok is True
-    assert await _outbox_count(db_session, rec.id) == 0
-    await db_session.refresh(rec)
-    assert rec.bitrix_item_id == "999999"  # фейковый id из mock_bitrix
-    assert mock_bitrix[0] == (
-        "create_reclamation_item",
-        ("Неисправность", "42", "17", None, "Проект", "SN-1", None, None),
-        {},
-    )
+    assert rec.bitrix_item_id == "999999"
+    [(args, _)] = _calls(mock_bitrix, "create_reclamation_item")
+    assert args[:3] == ("Не работает кнопка", "77", "5") and "Космос" in args and "SN-1" in args
+    assert await _rows(db_session, rec) == []
 
 
-async def test_create_skipped_if_bitrix_item_id_already_set(db_session, make_reclamation, mock_bitrix):
-    # починили руками, пока запись висела в очереди — не должны создать дубль в Bitrix
-    rec = await make_reclamation(bitrix_item_id="111")
-    repo = ReclamationOutboxRepository(db_session)
-    row = await repo.create(rec.id, "create", {"description": "x"}, "err")
-    await db_session.commit()
+async def test_create_is_skipped_when_the_card_already_exists(db_session, make_reclamation, mock_bitrix):
+    rec = await make_reclamation(bitrix_item_id="123")
+    row = await _row(db_session, rec, "create", {"description": "x"})
 
-    ok = await _retry_outbox_row(db_session, repo, row)
-    await db_session.commit()
+    assert await _retry(db_session, row) is True
 
-    assert ok is True
-    assert await _outbox_count(db_session, rec.id) == 0
-    assert mock_bitrix == []  # create_reclamation_item не вызывался вообще
+    assert _calls(mock_bitrix, "create_reclamation_item") == [] and rec.bitrix_item_id == "123"
+    assert await _rows(db_session, rec) == []
 
 
-async def test_create_failure_keeps_row_and_records_error(db_session, make_reclamation, monkeypatch):
+async def test_create_without_configured_bitrix_counts_as_a_failure(db_session, make_reclamation, mock_bitrix, monkeypatch):
+    async def not_configured(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(bitrix_service, "create_reclamation_item", not_configured)
     rec = await make_reclamation()
-    repo = ReclamationOutboxRepository(db_session)
-    row = await repo.create(rec.id, "create", {"description": "x"}, "err")
-    await db_session.commit()
+    row = await _row(db_session, rec, "create", {"description": "x"})
 
-    attempts_before = row.attempts  # снять ДО повтора — row мутируется in-place тем же вызовом
+    assert await _retry(db_session, row) is False
 
-    async def _boom(*args, **kwargs):
-        raise RuntimeError("Bitrix crm.item.add 500: сервер недоступен")
-    monkeypatch.setattr("app.services.bitrix_service.create_reclamation_item", _boom)
-
-    ok = await _retry_outbox_row(db_session, repo, row)
-    await db_session.commit()
-
-    assert ok is False
-    assert await _outbox_count(db_session, rec.id) == 1
-    refreshed = await repo.get(row.id)
-    assert refreshed.attempts == attempts_before + 1
-    assert "500" in refreshed.last_error
+    assert row.attempts == 2 and "BITRIX_WEBHOOK_URL" in row.last_error and rec.bitrix_item_id is None
+    assert await _rows(db_session, rec) == [row]
 
 
-# --- status: статус применяется у нас, только если Bitrix реально подвинул стадию ---
+# --- остальные операции ---
 
-async def test_status_retry_applies_status_only_if_bitrix_pushed_stage(db_session, make_reclamation, monkeypatch):
-    rec = await make_reclamation(bitrix_item_id="123", status="review")
-    repo = ReclamationOutboxRepository(db_session)
-    row = await repo.create(rec.id, "status", {"status": "in_progress", "confirmation_file_url": None}, "err")
-    await db_session.commit()
+async def test_status_retry_aligns_our_status_with_what_was_pushed(db_session, make_reclamation, mock_bitrix, monkeypatch):
+    async def pushed(*args, **kwargs):
+        return "DT1176_69:SUCCESS"
 
-    async def _fake_update_stage(*args, **kwargs):
-        return False  # Bitrix не принял смену стадии
-    monkeypatch.setattr("app.services.bitrix_service.update_reclamation_stage", _fake_update_stage)
+    monkeypatch.setattr(bitrix_service, "update_reclamation_stage", pushed)
+    rec = await make_reclamation(bitrix_item_id="500", status="review")
+    row = await _row(db_session, rec, "status", {"status": "resolved", "deadline": "2026-12-01"})
 
-    ok = await _retry_outbox_row(db_session, repo, row)
-    await db_session.commit()
+    assert await _retry(db_session, row) is True
 
-    assert ok is True  # сама отправка прошла без исключения
-    await db_session.refresh(rec)
-    assert rec.status == "review"  # но статус у нас не поменялся, раз Bitrix стадию не подвинул
+    assert rec.status == "resolved" and await _rows(db_session, rec) == []
 
 
-async def test_status_retry_requires_bitrix_item_id(db_session, make_reclamation, mock_bitrix):
+async def test_status_retry_without_a_pushed_stage_keeps_our_status(db_session, make_reclamation, mock_bitrix):
+    rec = await make_reclamation(bitrix_item_id="500", status="review")
+    row = await _row(db_session, rec, "status", {"status": "resolved"})
+
+    assert await _retry(db_session, row) is True
+
+    [(args, _)] = _calls(mock_bitrix, "update_reclamation_stage")
+    assert args[0] == "500" and args[1] == "resolved" and args[3] is None
+    assert rec.status == "review"
+
+
+@pytest.mark.parametrize("operation,payload,function,expected_args", [
+    ("deadline", {"deadline": "2026-12-01"}, "update_reclamation_deadline", ("500", __import__("datetime").date(2026, 12, 1))),
+    ("deadline", {"deadline": None}, "update_reclamation_deadline", ("500", None)),
+    ("assignee", {"bitrix_user_id": 15}, "update_reclamation_assignee", ("500", 15)),
+    ("warranty", {"warranty": True}, "update_reclamation_warranty", ("500", True)),
+    ("comment", {"text": "Позвонил клиенту"}, "add_reclamation_comment", ("500", "Позвонил клиенту")),
+])
+async def test_simple_operations_are_replayed(db_session, make_reclamation, mock_bitrix, operation, payload, function, expected_args):
+    rec = await make_reclamation(bitrix_item_id="500")
+    row = await _row(db_session, rec, operation, payload)
+
+    assert await _retry(db_session, row) is True
+
+    assert _calls(mock_bitrix, function) == [(expected_args, {})]
+    assert await _rows(db_session, rec) == []
+
+
+@pytest.mark.parametrize("operation,payload", [
+    ("status", {"status": "resolved"}),
+    ("deadline", {"deadline": None}),
+    ("assignee", {"bitrix_user_id": 15}),
+    ("warranty", {"warranty": True}),
+    ("comment", {"text": "x"}),
+])
+async def test_operations_wait_until_the_card_exists(db_session, make_reclamation, mock_bitrix, operation, payload):
     rec = await make_reclamation(bitrix_item_id=None)
-    repo = ReclamationOutboxRepository(db_session)
-    row = await repo.create(rec.id, "status", {"status": "in_progress"}, "err")
-    await db_session.commit()
+    row = await _row(db_session, rec, operation, payload)
 
-    ok = await _retry_outbox_row(db_session, repo, row)
-    await db_session.commit()
+    assert await _retry(db_session, row) is False
 
-    assert ok is False
-    assert await _outbox_count(db_session, rec.id) == 1
-    assert mock_bitrix == []  # до вызова update_reclamation_stage дело не дошло
+    assert row.attempts == 2 and "bitrix_item_id" in row.last_error
+    assert mock_bitrix == [] and await _rows(db_session, rec) == [row]
 
 
-# --- warranty: НИКОГДА не передаёт stageId, см. предупреждение в коде про автозакрытие ---
+async def test_unknown_operation_is_left_alone(db_session, make_reclamation, mock_bitrix):
+    """База не даёт завести такую строку (ограничение на operation), но защитная
+    ветка не должна ни падать, ни удалять то, чего не поняла."""
+    from types import SimpleNamespace
+    rec = await make_reclamation(bitrix_item_id="500")
+    row = SimpleNamespace(operation="teleport", id=1, reclamation_id=rec.id, payload={})
 
-async def test_warranty_retry_calls_update_with_item_id_and_value(db_session, make_reclamation, mock_bitrix):
-    rec = await make_reclamation(bitrix_item_id="123")
-    repo = ReclamationOutboxRepository(db_session)
-    row = await repo.create(rec.id, "warranty", {"warranty": True}, "err")
-    await db_session.commit()
+    assert await _retry(db_session, row) is False
 
-    ok = await _retry_outbox_row(db_session, repo, row)
-    await db_session.commit()
-
-    assert ok is True
-    assert mock_bitrix == [("update_reclamation_warranty", ("123", True), {})]
+    assert mock_bitrix == []
 
 
-async def test_warranty_retry_clear_sends_none_not_skipped(db_session, make_reclamation, mock_bitrix):
-    # баг 2026-09-28: раньше warranty=None вообще не отправлялся, и очистка в
-    # нашей админке не долетала до Bitrix — проверяем, что None уходит как есть
-    rec = await make_reclamation(bitrix_item_id="123")
-    repo = ReclamationOutboxRepository(db_session)
-    row = await repo.create(rec.id, "warranty", {"warranty": None}, "err")
-    await db_session.commit()
+# --- сбои ---
 
-    await _retry_outbox_row(db_session, repo, row)
-    await db_session.commit()
+async def test_failed_retry_counts_an_attempt_and_keeps_the_row(db_session, make_reclamation, mock_bitrix, monkeypatch):
+    async def broken(*args, **kwargs):
+        raise RuntimeError("Bitrix недоступен")
 
-    assert mock_bitrix == [("update_reclamation_warranty", ("123", None), {})]
+    monkeypatch.setattr(bitrix_service, "add_reclamation_comment", broken)
+    rec = await make_reclamation(bitrix_item_id="500")
+    row = await _row(db_session, rec, "comment", {"text": "x"})
 
+    assert await _retry(db_session, row) is False
+    assert await _retry(db_session, row) is False
 
-# --- comment ---
-
-async def test_comment_retry_calls_add_comment(db_session, make_reclamation, mock_bitrix):
-    rec = await make_reclamation(bitrix_item_id="123")
-    repo = ReclamationOutboxRepository(db_session)
-    row = await repo.create(rec.id, "comment", {"text": "Коренная причина: брак датчика"}, "err")
-    await db_session.commit()
-
-    ok = await _retry_outbox_row(db_session, repo, row)
-    await db_session.commit()
-
-    assert ok is True
-    assert mock_bitrix == [("add_reclamation_comment", ("123", "Коренная причина: брак датчика"), {})]
+    assert row.attempts == 3 and row.last_error == "Bitrix недоступен" and row.last_attempted_at is not None
+    assert rec.bitrix_item_id == "500"
 
 
-# --- удалённая карточка: не повторяем вечно, отвязываем рекламацию ---
+async def test_deleted_card_detaches_the_reclamation_and_clears_its_queue(db_session, make_reclamation, make_user, mock_bitrix, monkeypatch):
+    async def gone(*args, **kwargs):
+        raise RuntimeError("ERROR_NOT_FOUND: элемент не найден")
 
-async def test_not_found_marks_item_deleted_instead_of_retrying(db_session, make_reclamation, monkeypatch):
-    rec = await make_reclamation(bitrix_item_id="123", status="in_progress")
-    repo = ReclamationOutboxRepository(db_session)
-    row = await repo.create(rec.id, "warranty", {"warranty": True}, "err")
-    await db_session.commit()
+    monkeypatch.setattr(bitrix_service, "add_reclamation_comment", gone)
+    admin = await make_user("admin")
+    rec = await make_reclamation(bitrix_item_id="500")
+    row = await _row(db_session, rec, "comment", {"text": "x"})
+    await _row(db_session, rec, "deadline", {"deadline": None})
 
-    async def _not_found(*args, **kwargs):
-        raise RuntimeError("Bitrix crm.item.update: NOT_FOUND")
-    monkeypatch.setattr("app.services.bitrix_service.update_reclamation_warranty", _not_found)
+    assert await _retry(db_session, row) is False
 
-    ok = await _retry_outbox_row(db_session, repo, row)
-    await db_session.commit()
+    assert rec.bitrix_item_id is None and rec.bitrix_deleted_at is not None
+    assert await _rows(db_session, rec) == []   # снята вся очередь рекламации, не только эта строка
+    from app.models.notification import Notification
+    notes = (await db_session.execute(select(Notification).where(Notification.user_id == admin.id))).scalars().all()
+    assert any("отвязана от Bitrix" in (n.body or "") for n in notes)
 
-    assert ok is False
-    await db_session.refresh(rec)
-    assert rec.bitrix_item_id is None
-    assert rec.bitrix_deleted_at is not None
-    # NOT_FOUND снимает ВСЕ операции этой рекламации с очереди, не только текущую
-    assert await _outbox_count(db_session, rec.id) == 0
+
+# --- фоновый цикл ---
+
+async def test_background_cycle_replays_every_row(db_session, make_reclamation, mock_bitrix, monkeypatch):
+    monkeypatch.setattr("app.database.AsyncSessionLocal", lambda: _SessionContext(db_session))
+    first = await make_reclamation(bitrix_item_id="500")
+    second = await make_reclamation(bitrix_item_id="501")
+    await _row(db_session, first, "comment", {"text": "первый"})
+    await _row(db_session, second, "assignee", {"bitrix_user_id": 7})
+
+    await retry_bitrix_outbox()
+
+    assert len(_calls(mock_bitrix, "add_reclamation_comment")) == 1
+    assert len(_calls(mock_bitrix, "update_reclamation_assignee")) == 1
+    assert await _rows(db_session, first) == [] and await _rows(db_session, second) == []
