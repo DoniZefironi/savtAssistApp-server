@@ -472,6 +472,108 @@ async def handle_bitrix_item_deleted(item_id: str) -> None:
         await session.commit()
 
 
+_FINAL_STATUSES = ("resolved", "rejected", "invalid")
+
+
+def _pull_deadline(rec: Reclamation, item: dict) -> bool:
+    """Дедлайн тянем обратно всегда — его могли поменять прямо в карточке, минуя
+    нашу админку. True, если значение изменилось."""
+    from app.services import bitrix_service
+
+    bitrix_deadline = bitrix_service.parse_reclamation_deadline(item)
+    if bitrix_deadline == rec.deadline_at:
+        return False
+    _log.info(
+        "Bitrix reclamation webhook: рекламация %s — дедлайн %s -> %s",
+        rec.id, rec.deadline_at, bitrix_deadline,
+    )
+    rec.deadline_at = bitrix_deadline
+    return True
+
+
+async def _pull_assignee(rec: Reclamation, item: dict) -> bool:
+    """Ответственного тянем обратно всегда, по той же причине, что и дедлайн.
+    True, если значение изменилось."""
+    from app.services import bitrix_service
+
+    raw_assignee = item.get("assignedById")
+    bitrix_assignee = int(raw_assignee) if raw_assignee else None
+    if bitrix_assignee == rec.responsible_bitrix_user_id:
+        return False
+
+    bitrix_user = await bitrix_service.get_bitrix_user(bitrix_assignee) if bitrix_assignee else None
+    _log.info(
+        "Bitrix reclamation webhook: рекламация %s — ответственный %s -> %s",
+        rec.id, rec.responsible_bitrix_user_id, bitrix_assignee,
+    )
+    rec.responsible_bitrix_user_id = bitrix_assignee
+    # Резолвится best-effort: если Bitrix недоступен или сотрудник не найден, ID
+    # всё равно сохраняем, а текстовые поля просто не трогаем — лучше
+    # устаревшее ФИО, чем стереть контакт, который заявитель уже видел
+    if bitrix_user is not None:
+        rec.responsible_name = bitrix_user["full_name"]
+        rec.responsible_phone = bitrix_user["phone"]
+    elif bitrix_assignee is None:
+        rec.responsible_name = None
+        rec.responsible_phone = None
+    return True
+
+
+async def _pull_warranty(rec: Reclamation, item: dict) -> bool:
+    """Гарантию тянем обратно осторожнее остальных: parse_reclamation_warranty
+    намеренно бросает исключение вместо None при сбое резолва (сеть, незнакомый
+    ID варианта) — временный сбой не должен затирать уже известную
+    классификацию, она просто остаётся как есть. True, если значение изменилось."""
+    from app.services import bitrix_service
+
+    try:
+        bitrix_warranty = await bitrix_service.parse_reclamation_warranty(item)
+    except Exception:
+        _log.exception(
+            "Bitrix reclamation webhook: не удалось прочитать гарантию у рекламации %s, "
+            "оставляю как есть", rec.id,
+        )
+        return False
+    if bitrix_warranty == rec.warranty_classification:
+        return False
+    _log.info(
+        "Bitrix reclamation webhook: рекламация %s — гарантия %s -> %s",
+        rec.id, rec.warranty_classification, bitrix_warranty,
+    )
+    rec.warranty_classification = bitrix_warranty
+    return True
+
+
+async def _incoming_status(session, rec: Reclamation, item_id: str, stage_id: str | None) -> str | None:
+    """Новый статус, который надо применить по стадии из Bitrix, либо None, если
+    применять нечего (причина пишется в лог)."""
+    from app.repositories.reclamation_outbox import ReclamationOutboxRepository
+    from app.services import bitrix_service
+
+    # Пока у рекламации висит неотправленная смена статуса, карточка в Bitrix
+    # заведомо отстала от нас, и принимать из неё статус нельзя: иначе наш же
+    # неудавшийся push откатил бы то, что админ только что выставил (например,
+    # обновление ответственного возвращается вебхуком раньше, чем уезжает стадия).
+    if await ReclamationOutboxRepository(session).has_pending_status_change(rec.id):
+        _log.info(
+            "Bitrix reclamation webhook: рекламация %s — есть неотправленная смена статуса, "
+            "статус из Bitrix (стадия %s) не применяю",
+            rec.id, stage_id,
+        )
+        return None
+
+    new_status = bitrix_service.RECLAMATION_STAGE_TO_STATUS.get(stage_id)
+    if new_status is None:
+        _log.info("Bitrix reclamation webhook: неизвестная стадия %s у элемента %s", stage_id, item_id)
+        return None
+    if new_status == rec.status:
+        _log.info(
+            "Bitrix reclamation webhook: рекламация %s уже в статусе %s, пропускаю", rec.id, new_status,
+        )
+        return None
+    return new_status
+
+
 async def sync_reclamation_from_bitrix(item_id: str) -> None:
     """Применяет реальное состояние элемента Bitrix к нашей рекламации —
     вызывается из вебхука ONCRMDYNAMICITEMUPDATE (см.
@@ -498,96 +600,22 @@ async def sync_reclamation_from_bitrix(item_id: str) -> None:
             _log.info("Bitrix reclamation webhook: crm.item.get не вернул элемент %s", item_id)
             return
 
-        # Дедлайн и ответственного тянем обратно всегда — их могли поменять
-        # прямо в карточке, минуя нашу админку. *_changed нужны, чтобы правка
-        # доехала до БД и на ранних выходах ниже, где статус мы менять не станем
+        # Дедлайн, ответственный и гарантия доезжают до БД независимо от того,
+        # будет ли применён статус
+        deadline_changed = _pull_deadline(rec, item)
+        assignee_changed = await _pull_assignee(rec, item)
+        warranty_changed = await _pull_warranty(rec, item)
+
         stage_id = item.get("stageId")
-        bitrix_deadline = bitrix_service.parse_reclamation_deadline(item)
-        deadline_changed = bitrix_deadline != rec.deadline_at
-        if deadline_changed:
-            _log.info(
-                "Bitrix reclamation webhook: рекламация %s — дедлайн %s -> %s",
-                rec.id, rec.deadline_at, bitrix_deadline,
-            )
-            rec.deadline_at = bitrix_deadline
-
-        raw_assignee = item.get("assignedById")
-        bitrix_assignee = int(raw_assignee) if raw_assignee else None
-        assignee_changed = bitrix_assignee != rec.responsible_bitrix_user_id
-        if assignee_changed:
-            bitrix_user = await bitrix_service.get_bitrix_user(bitrix_assignee) if bitrix_assignee else None
-            _log.info(
-                "Bitrix reclamation webhook: рекламация %s — ответственный %s -> %s",
-                rec.id, rec.responsible_bitrix_user_id, bitrix_assignee,
-            )
-            rec.responsible_bitrix_user_id = bitrix_assignee
-            # Резолвится best-effort: если Bitrix недоступен или сотрудник не
-            # найден, ID всё равно сохраняем, а текстовые поля просто не трогаем
-            # — лучше устаревшее ФИО, чем стереть контакт, который заявитель уже видел
-            if bitrix_user is not None:
-                rec.responsible_name = bitrix_user["full_name"]
-                rec.responsible_phone = bitrix_user["phone"]
-            elif bitrix_assignee is None:
-                rec.responsible_name = None
-                rec.responsible_phone = None
-
-        # Гарантию тоже тянем обратно, но осторожнее: parse_reclamation_warranty
-        # намеренно бросает исключение вместо None при сбое резолва (сеть,
-        # незнакомый ID варианта) — иначе временный сбой мог бы затереть уже
-        # известную классификацию, а не просто оставить её как есть
-        try:
-            bitrix_warranty = await bitrix_service.parse_reclamation_warranty(item)
-            warranty_changed = bitrix_warranty != rec.warranty_classification
-            if warranty_changed:
-                _log.info(
-                    "Bitrix reclamation webhook: рекламация %s — гарантия %s -> %s",
-                    rec.id, rec.warranty_classification, bitrix_warranty,
-                )
-                rec.warranty_classification = bitrix_warranty
-        except Exception:
-            _log.exception(
-                "Bitrix reclamation webhook: не удалось прочитать гарантию у рекламации %s, "
-                "оставляю как есть", rec.id,
-            )
-            warranty_changed = False
-
-        # Пока у рекламации висит неотправленная смена статуса, карточка в
-        # Bitrix заведомо отстала от нас, и принимать из неё статус нельзя:
-        # иначе наш же неудавшийся push откатывает то, что админ только что
-        # выставил. Случилось 2026-09-23 на №16 — обновление ответственного
-        # вернулось вебхуком раньше, чем уехала стадия, и resolved сам стал
-        # review.
-        from app.repositories.reclamation_outbox import ReclamationOutboxRepository
-        if await ReclamationOutboxRepository(session).has_pending_status_change(rec.id):
-            if deadline_changed or assignee_changed or warranty_changed:
-                await session.commit()
-            _log.info(
-                "Bitrix reclamation webhook: рекламация %s — есть неотправленная смена статуса, "
-                "статус из Bitrix (стадия %s) не применяю",
-                rec.id, stage_id,
-            )
-            return
-
-        new_status = bitrix_service.RECLAMATION_STAGE_TO_STATUS.get(stage_id)
+        new_status = await _incoming_status(session, rec, item_id, stage_id)
         if new_status is None:
             if deadline_changed or assignee_changed or warranty_changed:
                 await session.commit()
-            _log.info(
-                "Bitrix reclamation webhook: неизвестная стадия %s у элемента %s", stage_id, item_id,
-            )
-            return
-        if new_status == rec.status:
-            if deadline_changed or assignee_changed or warranty_changed:
-                await session.commit()
-            _log.info(
-                "Bitrix reclamation webhook: рекламация %s уже в статусе %s, пропускаю",
-                rec.id, new_status,
-            )
             return
 
         old_status = rec.status
         rec.status = new_status
-        if new_status in ("resolved", "rejected", "invalid"):
+        if new_status in _FINAL_STATUSES:
             if rec.resolved_at is None:
                 rec.resolved_at = datetime.now(timezone.utc)
         else:

@@ -442,3 +442,45 @@ async def test_bot_failure_is_logged_and_does_not_break_the_message(db_session, 
 
     assert result.text == "Не работает насос"
     assert "Bot reply failed" in caplog.text
+
+
+async def test_race_between_identical_requests_returns_the_stored_message(db_session, make_user, make_chat, env, monkeypatch):
+    """Два одинаковых запроса прошли предпроверку одновременно: в базу проехал один,
+    второй получает его же вместо ошибки."""
+    from sqlalchemy.exc import IntegrityError
+    owner = await make_user()
+    chat = await make_chat(owner, chat_type="support", bot_active=False)
+    first = await send(db_session, chat, owner, text_msg(client_token="race-1"))
+
+    service = ChatService(db_session)
+    real_find = service.msg_repo.find_by_client_token
+    calls = {"n": 0}
+
+    async def find_once_blind(sender_id, token):
+        calls["n"] += 1
+        return None if calls["n"] == 1 else await real_find(sender_id, token)
+
+    async def duplicate(**kwargs):
+        raise IntegrityError("INSERT", {}, Exception("duplicate client_token"))
+
+    monkeypatch.setattr(service.msg_repo, "find_by_client_token", find_once_blind)
+    monkeypatch.setattr(service.msg_repo, "create", duplicate)
+
+    second = await service.send_message(chat.id, owner.id, text_msg("Другой текст", client_token="race-1"))
+
+    assert second.id == first.id and second.text == first.text
+
+
+async def test_insert_failure_without_a_token_is_not_swallowed(db_session, make_user, make_chat, env, monkeypatch):
+    from sqlalchemy.exc import IntegrityError
+    owner = await make_user()
+    chat = await make_chat(owner, chat_type="support", bot_active=False)
+    service = ChatService(db_session)
+
+    async def broken(**kwargs):
+        raise IntegrityError("INSERT", {}, Exception("constraint"))
+
+    monkeypatch.setattr(service.msg_repo, "create", broken)
+
+    with pytest.raises(IntegrityError):
+        await service.send_message(chat.id, owner.id, text_msg())

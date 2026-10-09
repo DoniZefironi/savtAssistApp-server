@@ -380,43 +380,74 @@ class ChatService:
             raise PermissionDeniedError("Чат архивирован, отправка сообщений недоступна")
 
         if data.client_token:
-            existing = await self.msg_repo.find_by_client_token(sender_id, data.client_token)
+            existing = await self._message_by_client_token(sender_id, data.client_token)
             if existing is not None:
-                from app.repositories.user import UserRepository
-                sender = await UserRepository(self.session).get_by_id(sender_id)
-                return await self._build_message_out(existing, sender)
+                return existing
 
-        reply_to = data.reply_to_message_id if data.reply_to_message_id else None
         try:
             msg = await self.msg_repo.create(
                 chat_id=chat_id,
                 sender_id=sender_id,
                 text=data.text,
-                reply_to_message_id=reply_to,
+                reply_to_message_id=data.reply_to_message_id or None,
                 client_token=data.client_token,
             )
         except IntegrityError:
             # Гонка: два одинаковых запроса (тот же sender_id + client_token)
             # прошли pre-check одновременно, в БД проехал только один — тот и отдаём.
             await self.session.rollback()
-            if not data.client_token:
-                raise
-            existing = await self.msg_repo.find_by_client_token(sender_id, data.client_token)
+            existing = await self._message_by_client_token(sender_id, data.client_token)
             if existing is None:
                 raise
-            from app.repositories.user import UserRepository
-            sender = await UserRepository(self.session).get_by_id(sender_id)
-            return await self._build_message_out(existing, sender)
+            return existing
 
-        for att in data.attachments:
+        await self._store_attachments(msg.id, data.attachments)
+        chat.last_message_at = datetime.now(timezone.utc)
+        if chat.user_id == sender_id:
+            chat.last_user_message_at = chat.last_message_at
+
+        await self.session.commit()
+        await self.session.refresh(msg)
+        sender = await self._get_user(sender_id)
+        result = await self._build_message_out(msg, sender)
+
+        await publish_message_created(chat_id, result.model_dump(mode="json"))
+        await publish_chat_updated(chat_id, chat_summary_dict(chat, result.text))
+
+        # sync_to_bitrix=False — для сообщений, которые сами пришли из Bitrix
+        # (см. bitrix_webhook_service.py), иначе комментарий уйдёт туда же по кругу
+        if sync_to_bitrix:
+            self._mirror_to_bitrix(chat, sender, sender_id, data)
+        if sender_id != chat.user_id:
+            await self._push_to_chat_owner(chat, sender, data)
+        self._schedule_bot_reply(chat, sender_id, data)
+
+        return result
+
+    async def _get_user(self, user_id: int):
+        from app.repositories.user import UserRepository
+        return await UserRepository(self.session).get_by_id(user_id)
+
+    # Уже записанное сообщение с этим client_token (повторная отправка того же
+    # запроса) — отдаём его, а не заводим второе. None, если такого нет или токена нет.
+    async def _message_by_client_token(self, sender_id: int, client_token: str | None) -> MessageOut | None:
+        if not client_token:
+            return None
+        existing = await self.msg_repo.find_by_client_token(sender_id, client_token)
+        if existing is None:
+            return None
+        return await self._build_message_out(existing, await self._get_user(sender_id))
+
+    async def _store_attachments(self, message_id: int, attachments) -> None:
+        for att in attachments:
             if att.latitude is not None and att.longitude is not None:
-                await self.msg_repo.add_attachment(msg.id, {
+                await self.msg_repo.add_attachment(message_id, {
                     "attachment_type": "location",
                     "latitude": att.latitude,
                     "longitude": att.longitude,
                 })
             else:
-                await self.msg_repo.add_attachment(msg.id, {
+                await self.msg_repo.add_attachment(message_id, {
                     "attachment_type": _attachment_type(att.mime_type),
                     "file_url": att.file_url,
                     "file_name": att.file_name,
@@ -424,104 +455,56 @@ class ChatService:
                     "mime_type": att.mime_type,
                     "duration_seconds": att.duration_seconds,
                 })
-        chat.last_message_at = datetime.now(timezone.utc)
-        if chat.user_id == sender_id:
-            chat.last_user_message_at = chat.last_message_at
 
-        await self.session.commit()
-        await self.session.refresh(msg)
-        from app.repositories.user import UserRepository
-        sender = await UserRepository(self.session).get_by_id(sender_id)
-        result = await self._build_message_out(msg, sender)
+    # Сообщение в чате заявки дублируется в комментарий Bitrix-задачи, от
+    # заявителя и от оператора/админа/суперадмина одинаково. Бот в чатах заявок
+    # не участвует — синхронизировать больше нечего.
+    @staticmethod
+    def _mirror_to_bitrix(chat: Chat, sender, sender_id: int, data: MessageCreateIn) -> None:
+        if chat.chat_type != "service_request" or chat.service_request_id is None:
+            return
+        from app.core.signed_urls import sign_url_long
+        from app.services.service_request_service import sync_message_to_bitrix
+        sender_name = sender.full_name if sender else str(sender_id)
+        # Ссылку открывают из комментария Bitrix, часто спустя дни, и человек
+        # там не авторизован в нашем API — нужна подпись с длинным сроком
+        attachment_urls = [
+            signed for att in data.attachments
+            if (signed := sign_url_long(att.file_url)) is not None
+        ]
+        sync_message_to_bitrix(chat.service_request_id, sender_name, data.text, attachment_urls)
 
-        await publish_message_created(chat_id, result.model_dump(mode="json"))
-        await publish_chat_updated(chat_id, chat_summary_dict(chat, result.text))
+    # Push владельцу чата, когда пишет не он сам (оператор, админ)
+    async def _push_to_chat_owner(self, chat: Chat, sender, data: MessageCreateIn) -> None:
+        from app.services.push_service import send_push
+        await send_push(
+            self.session, chat.user_id, sender.full_name if sender else "Оператор",
+            (data.text or "Вложение")[:100],
+            {"chat_id": str(chat.id), "type": "chat_message"},
+            notification_type="chat_message",
+        )
 
-        # Сообщение в чате заявки — дублируем в комментарий Bitrix-задачи,
-        # от заявителя и от оператора/админа/суперадмина одинаково
-        # (бот в чатах заявок не участвует, см. проверку ниже — синхронизировать нечего).
-        # sync_to_bitrix=False — для сообщений, которые сами пришли из Bitrix
-        # (см. bitrix_webhook_service.py), иначе комментарий уйдёт туда же по кругу
-        if (
-            sync_to_bitrix
-            and chat.chat_type == "service_request"
-            and chat.service_request_id is not None
-        ):
-            from app.core.signed_urls import sign_url_long
-            from app.services.service_request_service import sync_message_to_bitrix
-            sender_name = sender.full_name if sender else str(sender_id)
-            # Ссылку открывают из комментария Bitrix, часто спустя дни, и человек
-            # там не авторизован в нашем API — нужна подпись с длинным сроком
-            attachment_urls = [
-                signed for att in data.attachments
-                if (signed := sign_url_long(att.file_url)) is not None
-            ]
-            sync_message_to_bitrix(chat.service_request_id, sender_name, data.text, attachment_urls)
+    # Бот отвечает только на сообщения владельца чата — не в личных заметках и
+    # не в чатах заявок (там ведёт человек, при необходимости эскалируется в Bitrix)
+    @staticmethod
+    def _schedule_bot_reply(chat: Chat, sender_id: int, data: MessageCreateIn) -> None:
+        if chat.user_id != sender_id or not chat.bot_active or chat.chat_type in ("notes", "service_request"):
+            return
+        chat_id = chat.id
 
-        # Push пользователю от оператора
-        if sender_id != chat.user_id:
-            from app.services.push_service import send_push
-            notif_body = (data.text or "Вложение")[:100]
-            sender_name = sender.full_name if sender else "Оператор"
-            await send_push(
-                self.session, chat.user_id, sender_name, notif_body,
-                {"chat_id": str(chat_id), "type": "chat_message"},
-                notification_type="chat_message",
-            )
-
-        # Бот отвечает только на сообщения владельца чата — не в личных заметках
-        # и не в чатах заявок (там ведёт человек, при необходимости эскалируется в Bitrix)
-        if chat.user_id == sender_id and chat.bot_active and chat.chat_type not in ("notes", "service_request"):
-            import logging
+        async def _bot_reply():
             from app.database import AsyncSessionLocal
             from app.services.bot_service import handle_message
+            try:
+                text_for_bot = await _bot_input_text(data)
+                if not text_for_bot:
+                    return
+                async with AsyncSessionLocal() as bot_session:
+                    await handle_message(bot_session, chat_id, text_for_bot)
+            except Exception:
+                logger.exception("Bot reply failed for chat %s", chat_id)
 
-            _log = logging.getLogger(__name__)
-
-            async def _bot_reply():
-                try:
-                    parts = [data.text] if data.text else []
-
-                    # Голосовое без текста — распознаём и отвечаем на
-                    # расшифровку так же, как на обычный текст. Расшифровка
-                    # нигде не сохраняется (как и у ручного POST
-                    # /upload/transcribe) — при сбое STT просто ничего не
-                    # добавляется, как и раньше на голосовые.
-                    if not data.text:
-                        voice_att = next(
-                            (a for a in data.attachments
-                             if a.file_url and a.mime_type and a.mime_type.startswith("audio/")),
-                            None,
-                        )
-                        if voice_att is not None:
-                            transcript = await _transcribe_voice_attachment(voice_att.file_url)
-                            if transcript:
-                                parts.append(transcript)
-
-                    # Фото — анализируем независимо от того, есть текст или
-                    # нет (подпись к фото и само фото дополняют друг друга).
-                    # Лимит на количество — не гонять vision-модель по всем
-                    # фото разом, если их прислали сразу много
-                    image_atts = [
-                        a for a in data.attachments
-                        if a.file_url and a.mime_type and a.mime_type.startswith("image/")
-                    ][:_MAX_BOT_IMAGES_PER_MESSAGE]
-                    for att in image_atts:
-                        description = await _analyze_image_attachment(att.file_url, att.mime_type)
-                        if description:
-                            parts.append(f"[Фото: {description}]")
-
-                    text_for_bot = "\n\n".join(parts)
-                    if not text_for_bot:
-                        return
-                    async with AsyncSessionLocal() as bot_session:
-                        await handle_message(bot_session, chat.id, text_for_bot)
-                except Exception:
-                    _log.exception("Bot reply failed for chat %s", chat.id)
-
-            spawn(_bot_reply())
-
-        return result
+        spawn(_bot_reply())
 
     async def get_messages(
         self, chat_id: int, user_id: int, before_id: int | None, limit: int,
@@ -958,6 +941,41 @@ def _build_message(msg, user, atts, rxns) -> MessageOut:
         attachments=[AttachmentOut.model_validate(a) for a in atts],
         reactions=[ReactionOut.model_validate(r) for r in rxns],
     )
+
+
+async def _bot_input_text(data: MessageCreateIn) -> str:
+    """Текст, на который отвечает бот: сам текст сообщения плюс расшифровка
+    голосового (если текста нет) и описания прикреплённых фото.
+
+    Голосовое без текста распознаётся и обрабатывается так же, как обычный
+    текст; расшифровка нигде не сохраняется (как и у ручного POST
+    /upload/transcribe), при сбое распознавания ничего не добавляется. Фото
+    анализируются независимо от наличия текста — подпись и само фото дополняют
+    друг друга; их количество ограничено, чтобы не гонять vision-модель по всем
+    сразу, если их прислали много."""
+    parts = [data.text] if data.text else []
+
+    if not data.text:
+        voice_att = next(
+            (a for a in data.attachments
+             if a.file_url and a.mime_type and a.mime_type.startswith("audio/")),
+            None,
+        )
+        if voice_att is not None:
+            transcript = await _transcribe_voice_attachment(voice_att.file_url)
+            if transcript:
+                parts.append(transcript)
+
+    image_atts = [
+        a for a in data.attachments
+        if a.file_url and a.mime_type and a.mime_type.startswith("image/")
+    ][:_MAX_BOT_IMAGES_PER_MESSAGE]
+    for att in image_atts:
+        description = await _analyze_image_attachment(att.file_url, att.mime_type)
+        if description:
+            parts.append(f"[Фото: {description}]")
+
+    return "\n\n".join(parts)
 
 
 async def _transcribe_voice_attachment(file_url: str) -> str | None:

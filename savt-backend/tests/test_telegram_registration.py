@@ -270,3 +270,12 @@ async def test_code_delivery_failure_does_not_roll_back_the_account(db_session, 
 
     [user] = await _users_with_phone(db_session, "+375291234567")
     assert pending.user_id == user.id
+
+
+async def test_failed_reply_does_not_break_the_webhook(db_session, tg, monkeypatch):
+    async def blocked(channel, chat_id, text):
+        raise messenger_service.MessengerSendError("бот заблокирован")
+
+    monkeypatch.setattr(messenger_service, "send_plain", blocked)
+
+    await bot.handle_telegram_update(_contact_update("375291234567"))  # регистрации нет — ответ не уйдёт, но и ошибки нет
