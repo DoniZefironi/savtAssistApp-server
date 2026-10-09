@@ -195,8 +195,8 @@ class CabinetRepository(BaseRepository[Cabinet]):
         return list(result.scalars().all())
 
     # Кол-во живых ШУ сразу по нескольким проектам, одним запросом — вместо
-    # N отдельных list_by_project в цикле (см. UserProjectService.list_projects,
-    # где раньше это было N+1: по одному запросу на каждый проект пользователя)
+    # N отдельных list_by_project в цикле (см. UserProjectService.list_projects:
+    # иначе на каждый проект пользователя уходил бы отдельный запрос)
     async def count_by_projects(self, project_ids: list[int]) -> dict[int, int]:
         if not project_ids:
             return {}

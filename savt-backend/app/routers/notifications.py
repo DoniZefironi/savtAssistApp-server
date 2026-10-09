@@ -145,7 +145,7 @@ async def broadcast(
     return await NotificationService(session).broadcast(payload, actor.id, actor_role)
 
 
-# --- рекламные заготовки (раньше жили в файле PROMO_MESSAGES_FILE, теперь в БД) ---
+# --- рекламные заготовки (хранятся в БД) ---
 
 @router.get("/admin/notifications/promo/messages", response_model=list[PromoMessageOut])
 async def list_promo_messages(

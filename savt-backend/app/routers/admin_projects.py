@@ -48,7 +48,7 @@ async def sync_all_project_folders_now(
 
 
 # Проекты создаются только из Bitrix (см. bitrix_webhook_service.upsert_project_from_deal
-# и app/cli.py import-bitrix-deals) — ручного POST /admin/projects больше нет.
+# и app/cli.py import-bitrix-deals) — ручного POST /admin/projects нет.
 
 # Все проекты. Фильтры двух видов: has_* / tag_ids / cabinet_warranty_status
 # отбирают по шкафам проекта (подошёл хотя бы один), остальные — по самому
@@ -161,7 +161,7 @@ async def delete_project(
 ):
     await ProjectService(session).delete(project_id, actor.id, actor_role)
 
-# Участники проекта — единственное место, где теперь хранится доступ к
+# Участники проекта — единственное место, где хранится доступ к
 # шкафам (доступ выводится из проекта целиком, не по отдельным ШУ)
 @router.get("/{project_id}/users", response_model=list[ProjectUserOut])
 async def list_project_users(

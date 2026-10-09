@@ -180,8 +180,7 @@ class TelemetryIngestService:
         # повторение уже известного состояния (их в разы больше, чем реальных
         # изменений) улетал бы пуш ни о чём — а каждый такой пуш дёргает
         # админку/приложение на полный рефетч, что при частой телеметрии с
-        # активной аварией быстро упирается в rate limit (см. инцидент
-        # 2026-08-14 — ШУ 118 заваливал админку 429 именно так)
+        # активной аварией быстро упирается в rate limit
         name_map = await _build_name_map(self.def_repo, self.override_repo, cabinet.id)
         transitions_by_address = {
             address: _named_bit_transitions(old_values.get(address, 0), new_value, address, name_map)

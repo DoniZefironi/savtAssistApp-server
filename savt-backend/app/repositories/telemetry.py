@@ -75,8 +75,8 @@ class CabinetRegisterStateRepository:
         await self.session.execute(stmt)
 
     # Значения ДО перезаписи — чтобы понять, что из входящего сообщения реально
-    # изменилось (см. TelemetryIngestService.ingest). Адресов, которых раньше
-    # не было (первое сообщение по ним), в результате не будет — вызывающий
+    # изменилось (см. TelemetryIngestService.ingest). Адресов, по которым ещё
+    # не было сообщений (первое сообщение по ним), в результате не будет — вызывающий
     # код трактует отсутствие как 0 (ничего не взведено)
     async def get_values_for_addresses(
         self, cabinet_id: int, addresses: list[int],

@@ -315,9 +315,9 @@ class ProjectService:
             from app.services import project_folder_service
             project_folder_service.schedule_cabinet_folder(cabinet_id)
 
-    # Участники проекта — единственное место, где теперь хранится доступ к
-    # шкафам (Cabinet.project_id + членство здесь). Заменяет прежний
-    # "пользователи ШУ" на уровне отдельного шкафа.
+    # Участники проекта — единственное место, где хранится доступ к шкафам
+    # (Cabinet.project_id + членство здесь); на уровне отдельного шкафа
+    # пользователей нет.
     async def list_project_users(self, project_id: int) -> list["ProjectUserOut"]:
         from app.schemas.admin_users import ProjectUserOut
 

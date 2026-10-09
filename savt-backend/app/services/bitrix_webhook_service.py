@@ -15,7 +15,7 @@ _FORWARD_PREFIX = "/sa"
 
 # Номер проекта — две цифры года, подчёркивание и дальше номер: "26_138".
 # Год не фиксирован: в работе одновременно бывают 25-е, 26-е и 27-е номера,
-# поэтому раньше стоявший здесь единственный префикс отсекал живые сделки.
+# поэтому фиксированный префикс отсекал бы живые сделки.
 # Ограничить список годов можно настройкой bitrix_production_years.
 _PRODUCTION_NUMBER_RE = re.compile(r"^(\d{2}_\S+)")
 
@@ -173,11 +173,11 @@ async def handle_task_update_webhook(form: dict) -> None:
 
 def extract_production_number(deal: dict) -> str | None:
     """Номер проекта из сделки: сначала из выделенного поля, при пустом — из
-    названия, как было раньше.
+    названия.
 
     Поле надёжнее: название сделки правят руками, и любая опечатка в начале
-    раньше означала, что проект не создастся или не найдётся. Откат на название
-    оставлен, чтобы ничего не потерялось, пока поле заполнено не у всех сделок."""
+    означала бы, что проект не создастся или не найдётся. Откат на название
+    нужен, пока поле заполнено не у всех сделок."""
     raw = None
     if settings.bitrix_field_production_number:
         raw = str(deal.get(settings.bitrix_field_production_number) or "").strip()
@@ -351,9 +351,8 @@ async def handle_deal_event(form: dict) -> None:
 
 async def handle_reclamation_webhook(form: dict) -> None:
     """Обрабатывает ONCRMDYNAMICITEMUPDATE — общее событие на изменение
-    ЛЮБОГО элемента ЛЮБОГО смарт-процесса на портале (проверено вживую —
-    первые реальные срабатывания пришли с ENTITY_TYPE_ID=1118 "Закупка",
-    не 1176), поэтому сначала фильтруем по ENTITY_TYPE_ID."""
+    ЛЮБОГО элемента ЛЮБОГО смарт-процесса на портале (например, приходят
+    события с ENTITY_TYPE_ID=1118 "Закупка", а не 1176), поэтому сначала фильтруем по ENTITY_TYPE_ID."""
     entity_type_id = _extract(form, "[entity_type_id]")
     if entity_type_id != str(settings.bitrix_reclamation_entity_type_id):
         _log.info(

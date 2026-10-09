@@ -15,7 +15,7 @@ from app.services.push_service import send_push
 logger = logging.getLogger(__name__)
 
 
-# --- заготовки (CRUD, раньше жили в файле PROMO_MESSAGES_FILE) ---
+# --- заготовки (CRUD) ---
 
 async def list_messages(session: AsyncSession) -> list[PromoMessage]:
     result = await session.execute(select(PromoMessage).order_by(PromoMessage.id))

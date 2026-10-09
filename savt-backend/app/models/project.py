@@ -45,7 +45,7 @@ class Project(Base):
     # --- наше, Bitrix не трогает ---
     # Поля гарантии в CRM нет, даты ставит администратор. По warranty_ends_at
     # отбираются проекты для ночной синхронизации папок на NAS: если она задана,
-    # решает она, иначе — как раньше, максимум по гарантиям ШУ проекта
+    # решает она, иначе — максимум по гарантиям ШУ проекта
     # (см. project_folder_service.is_sync_eligible).
     warranty_starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     warranty_ends_at: Mapped[datetime | None] = mapped_column(

@@ -31,8 +31,8 @@ class TelemetryEventOut(BaseModel):
 # "Текущее состояние" — то, что реально отдаёт GET /cabinets/{id}/telemetry.
 # У каждого бита своё updated_at (наследуется от updated_at всего регистра —
 # разные регистры меняются с разной частотой), в отличие от TelemetryEventOut,
-# где все биты одного сообщения делят один received_at — то была история
-# сообщений, это снимок "что сейчас"
+# где все биты одного сообщения делят один received_at (там история сообщений,
+# здесь снимок "что сейчас")
 class TelemetryCurrentRegisterOut(BaseModel):
     address: int
     bit: int

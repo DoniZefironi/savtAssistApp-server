@@ -157,8 +157,8 @@ class NotificationService:
     ) -> BroadcastResultOut:
         all_ids = await self.repo.get_all_user_ids(data.role)
         # Рассылка уважает переключатель promotional — и для пуша, и для записи
-        # в списке уведомлений. Раньше он не проверялся вовсе: пользователь мог
-        # выключить рекламные уведомления и всё равно их получать.
+        # в списке уведомлений. Иначе пользователь, выключивший
+        # рекламные уведомления, всё равно их получал бы.
         user_ids = await self.repo.filter_by_setting(all_ids, "promotional")
         for user_id in user_ids:
             await self.repo.create(

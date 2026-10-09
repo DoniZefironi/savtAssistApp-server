@@ -48,7 +48,7 @@ async def update_cabinet(
     service = UserCabinetService(session)
     return await service.update_cabinet(current_user.id, cabinet_id, payload)
 
-# Отвязки одного ШУ больше нет — доступ выводится из проекта целиком, см.
+# Отвязки одного ШУ нет — доступ выводится из проекта целиком, см.
 # DELETE /projects/{project_id} (выйти из проекта — теряет доступ разом ко
 # всем его шкафам)
 

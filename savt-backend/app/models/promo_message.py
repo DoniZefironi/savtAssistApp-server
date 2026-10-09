@@ -7,9 +7,8 @@ from app.database import Base
 
 
 class PromoMessage(Base):
-    """Заготовка рекламного уведомления — раньше жили в файле на сервере
-    (promo_messages.json, правился вручную), теперь заводятся/редактируются
-    из админки (см. app/routers/notifications.py, PromoMessage*)."""
+    """Заготовка рекламного уведомления — заводится и редактируется из админки
+    (см. app/routers/notifications.py, PromoMessage*)."""
     __tablename__ = "promo_messages"
 
     id: Mapped[int] = mapped_column(primary_key=True)

@@ -54,5 +54,5 @@ async def reject_addition(
 ):
     await CabinetRequestService(session).reject_addition(request_id, payload, actor.id, actor_role)
 
-# Заявок на доступ к отдельному ШУ больше нет — доступ выводится из проекта,
+# Заявок на доступ к отдельному ШУ нет — доступ выводится из проекта,
 # см. GET/POST /admin/project-requests (заявка на вступление в проект целиком)

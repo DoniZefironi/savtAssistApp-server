@@ -67,7 +67,7 @@ class BroadcastResultOut(BaseModel):
 
 class PromoMessageOut(BaseModel):
     """Заготовка рекламного уведомления — хранится в БД, редактируется из
-    админки (раньше жили в файле PROMO_MESSAGES_FILE, теперь не используется)."""
+    админки."""
     id: int
     title: str
     body: str

@@ -14,7 +14,7 @@ router = APIRouter(tags=["add-qr"])
 # Публичная страница для QR, отсканированного обычной камерой телефона, а не
 # внутри приложения — сам этот адрес и зашит в QR (см. app/routers/qr.py,
 # app/services/project_folder_service.py). Сканирование ВНУТРИ приложения
-# по-прежнему идёт через POST /projects|cabinets/add-by-qr напрямую, эта
+# идёт через POST /projects|cabinets/add-by-qr напрямую, эта
 # страница в том сценарии вообще не открывается.
 #
 # Если приложение уже установлено и настроен Android App Link на наш домен —

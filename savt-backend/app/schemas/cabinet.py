@@ -19,7 +19,7 @@ class CabinetGeoItem(BaseModel):
 
 class CabinetCreateIn(BaseModel):
     # ШУ создаётся только внутри проекта — самостоятельных, ничейных шкафов
-    # больше не заводится (см. PATCH /admin/cabinets/{id}/project для отвязки
+    # не заводится (см. PATCH /admin/cabinets/{id}/project для отвязки
     # уже существующих)
     project_id: int = Field(..., gt=0)
     type: str = Field(..., min_length=1, max_length=100)

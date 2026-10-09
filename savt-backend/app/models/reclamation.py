@@ -17,9 +17,9 @@ class Reclamation(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
 
     # Статусы соответствуют стадиям смарт-процесса Bitrix один к одному —
-    # отдельного поля под стадию нет намеренно: пока "Новая рекламация" и
-    # "На рассмотрении" схлопывались в один review, обратная синхронизация была
-    # принципиально неполной (из Bitrix уже не восстановить, какая из двух).
+    # отдельного поля под стадию нет намеренно: если бы "Новая рекламация" и
+    # "На рассмотрении" были одним статусом, обратная синхронизация была бы
+    # принципиально неполной (из Bitrix не восстановить, какая из двух).
     # Карту статус<->стадия держит bitrix_service._RECLAMATION_STATUS_TO_STAGE:
     #   new         Новая рекламация
     #   review      На рассмотрении
@@ -105,12 +105,11 @@ class Reclamation(Base):
     responsible_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     responsible_phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # ID пользователя Bitrix, назначенного ответственным (assignedById).
-    # Раньше это поле нигде не хранилось — только "прокидывалось" в Bitrix и
-    # забывалось (см. AdminReclamationUpdateIn.responsible_bitrix_user_id),
-    # из-за чего было невозможно ни надёжно предвыбрать текущего ответственного
-    # в дропдауне админки (сверка по одному только ФИО ненадёжна — тёзки,
-    # смена фамилии), ни узнать, что назначение сменили прямо в Bitrix, минуя
-    # нашу админку. Обновляется и когда назначаем мы, и по вебхуку — см.
+    # Хранится, а не только прокидывается в Bitrix (см.
+    # AdminReclamationUpdateIn.responsible_bitrix_user_id): иначе нельзя ни
+    # надёжно предвыбрать текущего ответственного в дропдауне админки (сверка по
+    # одному только ФИО ненадёжна — тёзки, смена фамилии), ни узнать, что
+    # назначение сменили прямо в Bitrix, минуя нашу админку. Обновляется и когда назначаем мы, и по вебхуку — см.
     # reclamation_service.sync_reclamation_from_bitrix
     responsible_bitrix_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
@@ -129,10 +128,10 @@ class Reclamation(Base):
             "status IN ('new', 'review', 'in_progress', 'resolved', 'rejected', 'invalid')",
             name="ck_reclamation_status",
         ),
-        # На проде уже есть рекламации без обоих полей (до этой правки
-        # project_id не существовал) — в миграции констрейнт добавляется как
-        # NOT VALID, чтобы не упасть на старых данных, здесь же описан как
-        # обычный CHECK для свежих БД (create_all там данных ещё нет)
+        # Запрещает привязку сразу к ШУ и к проекту, но не требует хотя бы одного:
+        # у части рекламаций нет ни того, ни другого. В миграции констрейнт
+        # добавляется как NOT VALID (существующие данные не проверяются), здесь
+        # описан как обычный CHECK для свежих БД (create_all там данных ещё нет)
         CheckConstraint(
             "NOT (cabinet_id IS NOT NULL AND project_id IS NOT NULL)",
             name="ck_reclamation_cabinet_or_project",

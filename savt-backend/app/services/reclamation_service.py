@@ -41,9 +41,8 @@ class ReclamationService:
         # (обязательная колонка, см. app/models/cabinets.py), пользователь
         # ничего не вводит. А вот для "line"/"component" это ровно те поля,
         # что уходят в нативные UF-поля Bitrix (см. _build_bitrix_native_fields)
-        # — раньше были необязательны, из-за чего карточка реально уезжала в
-        # Bitrix с пустым "Заводской номер ШУ или линии" / "Данные ПКИ"
-        # (обнаружено 2026-09-28 тестовой рекламацией №44)
+        # — без них карточка уехала бы в Bitrix с пустым "Заводской номер ШУ
+        # или линии" / "Данные ПКИ"
         if data.object_type in ("cabinet", "line"):
             if not data.object_details or not data.object_details.get("serial_number"):
                 raise ValidationError("Нужно указать заводской номер")
@@ -164,9 +163,8 @@ class ReclamationService:
         return [ReclamationOutboxOut.model_validate(r) for r in rows]
 
     # Ручное вмешательство администратора интеграции в застрявшую операцию
-    # (см. историю с рекламацией №30 — company_id в сделке Bitrix отсутствовал,
-    # а поправить payload или просто снять операцию с повторов было нельзя,
-    # только руками в БД). retry_outbox_now пробует отправить сразу с новыми
+    # (например, в сделке Bitrix отсутствует company_id, и нужно поправить
+    # payload или снять операцию с повторов). retry_outbox_now пробует отправить сразу с новыми
     # данными, не дожидаясь ближайшего 15-минутного цикла retry_bitrix_outbox.
     async def retry_outbox_now(
         self, outbox_id: int, payload: dict,
@@ -210,8 +208,8 @@ class ReclamationService:
 
     async def _notify_status_change(self, rec) -> None:
         if rec.status == "in_progress":
-            # Классификация больше не обязательна к этому моменту (снято
-            # 2026-09-25) — warranty_classification может быть ещё null,
+            # Классификация к этому моменту не обязательна —
+            # warranty_classification может быть ещё null,
             # и это не то же самое, что "не гарантия": заказчику нельзя
             # молча сказать "платно" раньше, чем это реально решили
             if rec.warranty_classification is None:
@@ -290,8 +288,7 @@ def _build_bitrix_native_fields(
     object_type: str, object_details: dict | None,
     contract_number: str | None, order_number: str | None, ttn_number: str | None,
 ) -> tuple[str | None, str | None, str | None]:
-    """Собирает значения для трёх новых нативных полей процесса (появились
-    2026-09-23) — заводской номер, № договора/заказа/ТТН, данные ПКИ.
+    """Собирает значения для трёх нативных полей процесса — заводской номер, № договора/заказа/ТТН, данные ПКИ.
     Возвращает (object_serial_number, contract_info, component_info)."""
     object_serial_number = component_info = None
     if object_type in ("cabinet", "line") and object_details:
@@ -362,13 +359,12 @@ def _sync_to_bitrix(
 
 
 async def _notify_integration_admins(session, title: str, body: str, data: dict) -> None:
-    """п.8 ТЗ: 'при ошибке передачи ... уведомить администратора интеграции' —
-    раньше этого не было вообще, узнать о сбое можно было только зайдя
-    вручную в GET /admin/reclamations/bitrix-outbox (так реально копились
-    незамеченные сбои — см. историю с рекламацией №16). Получатели — те же,
-    кому вообще доступны ручки /admin/reclamations (require_role(ADMIN) даёт
-    admin+superadmin, см. app/core/dependencies._ROLE_HIERARCHY), operator
-    к обработке рекламаций доступа не имеет и сюда не входит."""
+    """п.8 ТЗ: 'при ошибке передачи ... уведомить администратора интеграции'.
+    Без уведомления о сбое узнать о нём можно было бы, только зайдя вручную в
+    GET /admin/reclamations/bitrix-outbox. Получатели — те, кому доступна очередь
+    Bitrix (require_role(ADMIN) даёт admin+superadmin, см.
+    app/core/dependencies._ROLE_HIERARCHY); operator читает рекламации, но очередь
+    Bitrix ему недоступна, и сюда он не входит."""
     from sqlalchemy import select
     from app.models.role import Role
     from app.models.user import User
@@ -418,8 +414,8 @@ async def _record_bitrix_failure(
 
 def _is_item_gone(error_text: str) -> bool:
     """Ответ Bitrix про удалённую карточку. Отличать важно: обычный сбой имеет
-    смысл повторять, а удаление — неустранимо, и повторы будут долбиться
-    вечно (реально накопилось 10 попыток, прежде чем это заметили)."""
+    смысл повторять, а удаление — неустранимо, и повторы продолжались бы
+    вечно."""
     return "NOT_FOUND" in error_text
 
 
@@ -778,8 +774,8 @@ async def _retry_outbox_row(session, outbox_repo, row) -> bool:
 def _build_bitrix_description(rec: Reclamation) -> str:
     """Текстовая сводка в sourceDescription — только то, подо что в
     смарт-процессе НЕТ своего поля. Договор/заказ/ТТН, заводской номер и данные
-    ПКИ раньше дублировались сюда текстом, теперь у них есть нативные поля
-    (см. bitrix_service.create_reclamation_item), и в описании им делать нечего."""
+    ПКИ имеют нативные поля (см. bitrix_service.create_reclamation_item), и в
+    описании их дублировать не нужно."""
     lines = [rec.description, "", "--- Дополнительно (Savt Assist) ---"]
     # для cabinet/line/component object_details целиком уходит в свои поля
     # (см. _build_bitrix_native_fields), а для software/documentation

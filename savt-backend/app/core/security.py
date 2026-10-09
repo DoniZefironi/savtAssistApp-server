@@ -22,8 +22,8 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     try:
         return _pwd_context.verify(plain_password, hashed_password)
     except ValueError:
-        # Не хеш вовсе (у удалённых учёток раньше стояла строка-заглушка) — пароль
-        # не подходит, а не ошибка сервера
+        # Значение не является хешем (например, строка-заглушка у удалённых учёток) —
+        # пароль не подходит, а не ошибка сервера
         return False
 
 # генерация рефреш токена

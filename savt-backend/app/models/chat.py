@@ -18,7 +18,7 @@ class Chat(Base):
     chat_type: Mapped[str] = mapped_column(String(20), index=True)
     # ид шкафа
     cabinet_id: Mapped[int | None] = mapped_column(ForeignKey("cabinets.id"), index=True)
-    # ид проекта (только для chat_type='project') — проект теперь самостоятельная
+    # ид проекта (только для chat_type='project') — проект самостоятельная
     # сущность со своим чатом, наравне с ШУ
     project_id: Mapped[int | None] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True

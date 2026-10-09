@@ -18,8 +18,8 @@ class UserProjectService:
         self.chat_repo = ChatRepository(session)
 
     # Список проектов пользователя. Кол-во ШУ — одним батч-запросом на все
-    # проекты разом (count_by_projects), не по одному в цикле — раньше это
-    # был N+1: список из 10 проектов означал 11 запросов вместо 2
+    # проекты разом (count_by_projects), не по одному в цикле: иначе список из
+    # 10 проектов означал бы 11 запросов вместо 2
     async def list_projects(self, user_id: int) -> list[UserProjectListItemOut]:
         rows = await self.user_project_repo.list_for_user(user_id)
         cabinet_counts = await self.cabinet_repo.count_by_projects([project.id for _up, project in rows])

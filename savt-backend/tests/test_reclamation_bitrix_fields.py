@@ -1,10 +1,8 @@
 """Сборка нативных полей Bitrix из object_type/object_details (_build_bitrix_native_fields).
 
-Это та самая логика, из-за пустоты которой карточка реально уезжала в Bitrix
-с незаполненным "Заводской номер ШУ или линии"/"Данные ПКИ" (обнаружено
-тестовой рекламацией №44, см. README) — ровно то место, где стоит закрепить
-поведение тестом, а не полагаться на то, что кто-то снова заметит пустое поле
-в карточке руками.
+Пустые значения этих полей означают карточку в Bitrix без "Заводской номер ШУ
+или линии"/"Данные ПКИ" — поэтому поведение закреплено тестом, а не проверкой
+глазами в карточке.
 """
 from app.services.reclamation_service import _build_bitrix_native_fields
 
@@ -18,7 +16,7 @@ def test_cabinet_takes_serial_number_from_object_details():
 
 
 def test_cabinet_without_object_details_gives_empty_serial():
-    # это ровно тот случай, что валидация на создании рекламации теперь блокирует
+    # это ровно тот случай, что валидация на создании рекламации блокирует
     # заранее (см. ReclamationService.create) — здесь фиксируем, что сама сборка
     # полей на пустом object_details не падает, а просто ничего не находит
     serial, _, _ = _build_bitrix_native_fields("cabinet", None, None, None, None)
