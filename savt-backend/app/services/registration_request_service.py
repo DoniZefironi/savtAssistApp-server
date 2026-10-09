@@ -1,5 +1,3 @@
-from datetime import datetime, timezone
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AlreadyExistsError, NotFoundError
@@ -14,6 +12,7 @@ from app.schemas.auth import (
 from app.schemas.pagination import PageOut, make_page
 from app.schemas.requests import RejectRequestIn
 from app.services.audit_service import AuditLogger
+from app.services.request_resolution import ensure_pending, resolve_request
 
 
 class RegistrationRequestService:
@@ -85,8 +84,7 @@ class RegistrationRequestService:
         req = await self.request_repo.get(request_id)
         if req is None:
             raise NotFoundError("Заявка не найдена")
-        if req.status != "pending":
-            raise AlreadyExistsError("Заявка уже обработана")
+        ensure_pending(req)
         if await self.user_repo.find_by_phone(req.phone) is not None:
             raise AlreadyExistsError("Пользователь с таким номером телефона уже зарегистрирован")
 
@@ -116,10 +114,7 @@ class RegistrationRequestService:
         from app.services.chat_service import ChatService, chat_summary_dict
         support_chat = await ChatService(self.session).ensure_support_and_notes(user.id)
 
-        req.status = "approved"
-        req.admin_response = data.admin_response
-        req.resolved_by_admin_id = admin_id
-        req.resolved_at = datetime.now(timezone.utc)
+        resolve_request(req, "approved", data.admin_response, admin_id)
         req.created_user_id = user.id
 
         self.audit.log("registration_request.approve", "registration_request", request_id,
@@ -136,13 +131,9 @@ class RegistrationRequestService:
         req = await self.request_repo.get(request_id)
         if req is None:
             raise NotFoundError("Заявка не найдена")
-        if req.status != "pending":
-            raise AlreadyExistsError("Заявка уже обработана")
+        ensure_pending(req)
 
-        req.status = "rejected"
-        req.admin_response = data.admin_response
-        req.resolved_by_admin_id = admin_id
-        req.resolved_at = datetime.now(timezone.utc)
+        resolve_request(req, "rejected", data.admin_response, admin_id)
 
         self.audit.log("registration_request.reject", "registration_request", request_id,
                        admin_id, actor_role, {"phone": req.phone, "reason": data.admin_response})

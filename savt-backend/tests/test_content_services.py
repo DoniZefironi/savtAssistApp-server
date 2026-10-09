@@ -464,8 +464,8 @@ async def test_faq_entry_list_filters_and_favorites(db_session, env, make_user):
     svc = FaqEntryService(db_session)
     liked = await svc.create(FaqEntryCreateIn(category_id=first_cat.id, question="Как включить насос?", answer="Нажмите кнопку"))
     hidden = await svc.create(FaqEntryCreateIn(category_id=second_cat.id, question="Скрытый вопрос тут", answer="Ответ"))
-    assert liked.is_published is False  # вопросы FAQ создаются черновиками
-    await svc.update(liked.id, FaqEntryUpdateIn(is_published=True))
+    assert liked.is_published is True and hidden.is_published is True  # вопросы публикуются сразу
+    await svc.update(hidden.id, FaqEntryUpdateIn(is_published=False))
     db_session.add(UserFavorite(user_id=user.id, entity_type="faq_entry", entity_id=liked.id))
     await db_session.flush()
 

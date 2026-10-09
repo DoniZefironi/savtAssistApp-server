@@ -4800,7 +4800,7 @@ ws.onmessage = (e) => {
 ---
 
 ### POST `/admin/faq/entries`
-Создать вопрос и ответ сразу. Создаётся неопубликованным (`is_published=false`) — опубликовать через `PATCH` (см. ниже).
+Создать вопрос и ответ сразу. Вопрос сразу публикуется (`is_published=true`); снять публикацию (сделать черновиком) можно через `PATCH .../entries/{entry_id}` с `is_published: false`.
 ```json
 {
   "category_id": 1,

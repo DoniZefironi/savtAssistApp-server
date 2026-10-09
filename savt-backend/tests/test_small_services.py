@@ -351,3 +351,19 @@ async def test_fcm_crash_does_not_break_the_caller(db_session, fcm, make_user, m
     monkeypatch.setattr(push_service.messaging, "send_each", boom)
 
     await push_service.send_push(db_session, user.id, "a", "b")  # исключения быть не должно
+
+
+# --- общие шаги решения по заявке ---
+
+def test_request_can_be_resolved_only_once():
+    from app.services.request_resolution import ensure_pending, resolve_request
+
+    req = SimpleNamespace(status="pending", admin_response=None, resolved_by_admin_id=None, resolved_at=None)
+    ensure_pending(req)
+
+    resolve_request(req, "approved", "Всё верно", 7)
+
+    assert (req.status, req.admin_response, req.resolved_by_admin_id) == ("approved", "Всё верно", 7)
+    assert req.resolved_at is not None
+    with pytest.raises(AlreadyExistsError):
+        ensure_pending(req)

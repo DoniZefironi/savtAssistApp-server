@@ -10,6 +10,7 @@ from app.schemas.auth import AdminPhoneChangeRequestOut, PhoneChangeRequestOut
 from app.schemas.pagination import PageOut, make_page
 from app.schemas.requests import RejectRequestIn
 from app.services.audit_service import AuditLogger
+from app.services.request_resolution import ensure_pending, resolve_request
 
 
 class PhoneChangeService:
@@ -122,8 +123,7 @@ class PhoneChangeService:
         req = await self.repo.get_by_id(request_id)
         if req is None:
             raise NotFoundError("Заявка не найдена")
-        if req.status != "pending":
-            raise AlreadyExistsError("Заявка уже обработана")
+        ensure_pending(req)
 
         user = await self.user_repo.get_by_id(req.user_id)
         if user is None:
@@ -139,10 +139,7 @@ class PhoneChangeService:
         old_phone = user.phone
         user.phone = req.new_phone
 
-        req.status = "approved"
-        req.admin_response = admin_response
-        req.resolved_by_admin_id = admin_id
-        req.resolved_at = datetime.now(timezone.utc)
+        resolve_request(req, "approved", admin_response, admin_id)
 
         self.audit.log(
             "phone_change_request.approve", "phone_change_request", request_id,
@@ -168,13 +165,9 @@ class PhoneChangeService:
         req = await self.repo.get_by_id(request_id)
         if req is None:
             raise NotFoundError("Заявка не найдена")
-        if req.status != "pending":
-            raise AlreadyExistsError("Заявка уже обработана")
+        ensure_pending(req)
 
-        req.status = "rejected"
-        req.admin_response = data.admin_response
-        req.resolved_by_admin_id = admin_id
-        req.resolved_at = datetime.now(timezone.utc)
+        resolve_request(req, "rejected", data.admin_response, admin_id)
 
         self.audit.log(
             "phone_change_request.reject", "phone_change_request", request_id,

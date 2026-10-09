@@ -261,11 +261,12 @@ async def test_faq_administration_over_http(api, staff):
 
     entry = await api.post("/admin/faq/entries", headers=staff.a,
                            json={"category_id": cat["id"], "question": "Как продлить гарантию?", "answer": "Через сервис"})
-    assert entry.status_code == 201 and entry.json()["is_published"] is False
+    assert entry.status_code == 201 and entry.json()["is_published"] is True   # публикуется сразу
     entry_id = entry.json()["id"]
-    published = await api.patch(f"/admin/faq/entries/{entry_id}", headers=staff.a, json={"is_published": True})
-    assert (published.json()["is_published"], published.json()["version"]) == (True, 2)
-    assert [e["id"] for e in (await api.get("/admin/faq/entries?is_published=true", headers=staff.o)).json()["items"]] == [entry_id]
+    draft = await api.patch(f"/admin/faq/entries/{entry_id}", headers=staff.a, json={"is_published": False})
+    assert (draft.json()["is_published"], draft.json()["version"]) == (False, 2)
+    assert [e["id"] for e in (await api.get("/admin/faq/entries?is_published=false", headers=staff.o)).json()["items"]] == [entry_id]
+    assert (await api.get("/admin/faq/entries?is_published=true", headers=staff.o)).json()["items"] == []
     assert (await api.post("/admin/faq/entries", headers=staff.a, json={"category_id": cat["id"], "question": "?", "answer": "x"})).status_code == 422
     assert (await api.delete(f"/admin/faq/entries/{entry_id}", headers=staff.a)).status_code == 204
     assert (await api.delete(f"/admin/faq/categories/{child['id']}", headers=staff.a)).status_code == 204

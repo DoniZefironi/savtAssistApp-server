@@ -1,5 +1,3 @@
-from datetime import datetime, timezone
-
 from pathlib import Path
 
 from fastapi import UploadFile
@@ -12,6 +10,7 @@ from app.repositories.tag import TagRepository
 from app.repositories.user import UserRepository
 from app.services import project_folder_service
 from app.services.audit_service import AuditLogger
+from app.services.request_resolution import ensure_pending, resolve_request
 from app.services.upload_service import UPLOAD_ROOT
 from app.schemas.documents import (
     ApproveDocumentRequestIn,
@@ -250,15 +249,11 @@ class AdminDocumentService:
         req = await self.request_repo.get_by_id(request_id)
         if req is None:
             raise NotFoundError("Заявка не найдена")
-        if req.status != "pending":
-            raise AlreadyExistsError("Заявка уже обработана")
+        ensure_pending(req)
         if req.document_id is None:
             raise AlreadyExistsError("Сначала укажите документ в заявке")
         await self.doc_repo.grant_access(req.user_id, req.document_id, admin_id)
-        req.status = "approved"
-        req.admin_response = data.admin_response
-        req.resolved_by_admin_id = admin_id
-        req.resolved_at = datetime.now(timezone.utc)
+        resolve_request(req, "approved", data.admin_response, admin_id)
         self.audit.log("document_request.approve", "document_request", request_id, admin_id, actor_role,
                        {"user_id": req.user_id, "document_id": req.document_id})
         await self.session.commit()
@@ -272,12 +267,8 @@ class AdminDocumentService:
         req = await self.request_repo.get_by_id(request_id)
         if req is None:
             raise NotFoundError("Заявка не найдена")
-        if req.status != "pending":
-            raise AlreadyExistsError("Заявка уже обработана")
-        req.status = "rejected"
-        req.admin_response = data.admin_response
-        req.resolved_by_admin_id = admin_id
-        req.resolved_at = datetime.now(timezone.utc)
+        ensure_pending(req)
+        resolve_request(req, "rejected", data.admin_response, admin_id)
         self.audit.log("document_request.reject", "document_request", request_id, admin_id, actor_role,
                        {"user_id": req.user_id, "reason": data.admin_response})
         await self.session.commit()

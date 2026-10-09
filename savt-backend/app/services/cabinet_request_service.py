@@ -1,5 +1,3 @@
-from datetime import datetime, timezone
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AlreadyExistsError, NotFoundError
@@ -13,6 +11,7 @@ from app.schemas.requests import (
     RejectRequestIn,
 )
 from app.services.audit_service import AuditLogger
+from app.services.request_resolution import ensure_pending, resolve_request
 
 
 class CabinetRequestService:
@@ -89,8 +88,7 @@ class CabinetRequestService:
         req = await self.request_repo.get_addition(request_id)
         if req is None:
             raise NotFoundError("Заявка не найдена")
-        if req.status != "pending":
-            raise AlreadyExistsError("Заявка уже обработана")
+        ensure_pending(req)
 
         cabinet = await self.cabinet_repo.get_by_id(data.cabinet_id)
         if cabinet is None or cabinet.deleted_at is not None:
@@ -106,11 +104,8 @@ class CabinetRequestService:
         # Чат ШУ никогда не создаётся автоматически — только сам пользователь,
         # открыв ШУ и нажав на чат (см. ChatService.get_cabinet_chat)
 
-        req.status = "approved"
         req.cabinet_id = data.cabinet_id
-        req.admin_response = data.admin_response
-        req.resolved_by_admin_id = admin_id
-        req.resolved_at = datetime.now(timezone.utc)
+        resolve_request(req, "approved", data.admin_response, admin_id)
 
         self.audit.log("cabinet_request.approve_addition", "cabinet_addition_request", request_id,
                        admin_id, actor_role, {"user_id": req.user_id, "cabinet_id": data.cabinet_id})
@@ -127,13 +122,9 @@ class CabinetRequestService:
         req = await self.request_repo.get_addition(request_id)
         if req is None:
             raise NotFoundError("Заявка не найдена")
-        if req.status != "pending":
-            raise AlreadyExistsError("Заявка уже обработана")
+        ensure_pending(req)
 
-        req.status = "rejected"
-        req.admin_response = data.admin_response
-        req.resolved_by_admin_id = admin_id
-        req.resolved_at = datetime.now(timezone.utc)
+        resolve_request(req, "rejected", data.admin_response, admin_id)
 
         self.audit.log("cabinet_request.reject_addition", "cabinet_addition_request", request_id,
                        admin_id, actor_role, {"user_id": req.user_id, "reason": data.admin_response})

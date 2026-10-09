@@ -54,8 +54,8 @@ class FaqEntryRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def create(self, category_id: int, question: str, answer: str) -> FaqEntry:
-        entry = FaqEntry(category_id=category_id, question=question, answer=answer)
+    async def create(self, category_id: int, question: str, answer: str, is_published: bool = True) -> FaqEntry:
+        entry = FaqEntry(category_id=category_id, question=question, answer=answer, is_published=is_published)
         self.session.add(entry)
         await self.session.flush()
         return entry
