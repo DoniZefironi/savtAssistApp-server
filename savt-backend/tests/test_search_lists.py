@@ -18,7 +18,7 @@ from app.repositories.cabinet import CabinetRepository
 from app.repositories.chat import ChatRepository, MessageRepository
 from app.repositories.faq import FaqCategoryRepository, FaqEntryRepository
 from app.repositories.kb import KbArticleRepository, KbCategoryRepository
-from app.repositories.project import ProjectRepository
+from app.repositories.project import ProjectFilters, ProjectRepository
 from app.repositories.registration_request import RegistrationRequestRepository
 from app.repositories.service_request import ServiceRequestRepository
 from app.repositories.user import UserRepository
@@ -113,7 +113,7 @@ async def test_project_search_company_filter(db_session, make_project):
     hit = await make_project(name="П1", company_name="ООО Ромашка")
     await make_project(name="П2", company_name="ЗАО Лютик")
 
-    items, _ = await ProjectRepository(db_session).search(company="Ромашка")
+    items, _ = await ProjectRepository(db_session).search(filters=ProjectFilters(company="Ромашка"))
 
     assert [p.id for p in items] == [hit.id]
 

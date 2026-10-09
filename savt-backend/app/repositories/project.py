@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import Integer, String, cast, exists, func, or_, select
@@ -46,6 +47,166 @@ def _warranty_conditions(column, status: str) -> list:
     if status == "none":
         return [column.is_(None)]
     return []
+
+
+@dataclass(frozen=True)
+class ProjectFilters:
+    """Фильтры списка проектов. Заданные вместе складываются по И."""
+    # --- по шкафам проекта: проект проходит, если подошёл хотя бы один ---
+    tag_ids: list[int] | None = None
+    has_documents: bool | None = None
+    has_photos: bool | None = None
+    has_users: bool | None = None
+    has_service_requests: bool | None = None
+    cabinet_warranty_status: str | None = None
+    # --- по самому проекту ---
+    year: int | None = None
+    company: str | None = None
+    shipped: bool | None = None
+    # *_before — граница исключающая (начало следующих суток), см.
+    # project_service._next_day_start
+    shipment_planned_from: datetime | None = None
+    shipment_planned_before: datetime | None = None
+    shipment_actual_from: datetime | None = None
+    shipment_actual_before: datetime | None = None
+    has_project_documents: bool | None = None
+    has_project_photos: bool | None = None
+    has_project_users: bool | None = None
+    has_contacts: bool | None = None
+    warranty_status: str | None = None
+
+
+def _text_match(query: str):
+    """(условие отбора, релевантность) для текстового запроса.
+
+    Ищем и по карточке проекта, и по контактным лицам заказчика: искать проект
+    по фамилии или телефону человека из сделки — обычный сценарий, а название и
+    номер оператор помнит не всегда.
+
+    Релевантность — отдельно от самого отбора (fuzzy_condition только решает,
+    попадает ли строка в выдачу вообще). Название и номер проекта весят больше
+    совпадения в компании, а то — больше совпадения по контакту: спросили "100",
+    нашёлся и проект с таким номером, и проект, у чьего контакта "100" затесалось
+    в телефоне — первый должен быть выше, а не когда повезёт по sort_by."""
+    contact_match = exists(
+        select(ProjectContact.id).where(
+            ProjectContact.project_id == Project.id,
+            fuzzy_condition(
+                query,
+                ProjectContact.full_name, ProjectContact.post,
+                # телефоны и почты — JSON-списки; по тексту списка
+                # находится и "+375291112233", и "ivanov@"
+                cast(ProjectContact.phones, String),
+                cast(ProjectContact.emails, String),
+            ),
+        )
+    )
+    condition = or_(
+        fuzzy_condition(query, Project.name, Project.production_number, Project.company_name),
+        contact_match,
+    )
+
+    contact_score = (
+        select(func.max(func.greatest(
+            match_score(query, ProjectContact.full_name, 0.3),
+            match_score(query, ProjectContact.post, 0.3),
+            match_score(query, cast(ProjectContact.phones, String), 0.3),
+            match_score(query, cast(ProjectContact.emails, String), 0.3),
+        )))
+        .where(ProjectContact.project_id == Project.id)
+        .correlate(Project)
+        .scalar_subquery()
+    )
+    relevance = func.greatest(
+        match_score(query, Project.name, 1.0),
+        match_score(query, Project.production_number, 1.0),
+        match_score(query, Project.company_name, 0.6),
+        func.coalesce(contact_score, 0.0),
+    )
+    return condition, relevance
+
+
+def _project_conditions(f: ProjectFilters) -> list:
+    """Условия по самому проекту: год, компания, отгрузка, наличие связанного, гарантия."""
+    conditions = []
+    if f.year is not None:
+        conditions.append(project_year_expr() == f.year)
+    if f.company:
+        conditions.append(fuzzy_condition(f.company, Project.company_name))
+    if f.shipped is not None:
+        conditions.append(
+            Project.shipment_actual_at.isnot(None) if f.shipped
+            else Project.shipment_actual_at.is_(None)
+        )
+    for column, bound, is_lower in (
+        (Project.shipment_planned_at, f.shipment_planned_from, True),
+        (Project.shipment_planned_at, f.shipment_planned_before, False),
+        (Project.shipment_actual_at, f.shipment_actual_from, True),
+        (Project.shipment_actual_at, f.shipment_actual_before, False),
+    ):
+        if bound is not None:
+            conditions.append(column >= bound if is_lower else column < bound)
+
+    for flag, subquery in (
+        (f.has_project_documents, select(Document.id).where(Document.project_id == Project.id)),
+        (f.has_project_photos, select(CabinetPhoto.id).where(CabinetPhoto.project_id == Project.id)),
+        (f.has_project_users, select(UserProject.id).where(UserProject.project_id == Project.id)),
+        (f.has_contacts, select(ProjectContact.id).where(ProjectContact.project_id == Project.id)),
+    ):
+        if flag is not None:
+            condition = exists(subquery)
+            conditions.append(condition if flag else ~condition)
+
+    if f.warranty_status:
+        conditions.extend(_warranty_conditions(Project.warranty_ends_at, f.warranty_status))
+    return conditions
+
+
+def _cabinet_conditions(f: ProjectFilters) -> list:
+    """Проект попадает в выдачу, если условиям соответствует хотя бы один его шкаф."""
+    cabinet_conditions = cabinet_match_conditions(
+        tag_ids=f.tag_ids, has_documents=f.has_documents, has_photos=f.has_photos,
+        has_users=f.has_users, has_service_requests=f.has_service_requests,
+        warranty_status=f.cabinet_warranty_status,
+    )
+    if not cabinet_conditions:
+        return []
+    return [exists(
+        select(Cabinet.id).where(
+            Cabinet.project_id == Project.id,
+            Cabinet.deleted_at.is_(None),
+            *cabinet_conditions,
+        )
+    )]
+
+
+def _order_by(sort_by: str, sort_order: str, relevance) -> tuple:
+    cabinet_count = (
+        select(func.count(Cabinet.id))
+        .where(Cabinet.project_id == Project.id, Cabinet.deleted_at.is_(None))
+        .scalar_subquery()
+    )
+    sort_column = {
+        "name": Project.name,
+        "created_at": Project.created_at,
+        "production_number": Project.production_number,
+        "year": project_year_expr(),
+        "company_name": Project.company_name,
+        "shipment_planned_at": Project.shipment_planned_at,
+        "shipment_actual_at": Project.shipment_actual_at,
+        "warranty_ends_at": Project.warranty_ends_at,
+        "cabinet_count": cabinet_count,
+    }.get(sort_by, Project.created_at)
+
+    # Пустое значение — всегда в конце, в обе стороны сортировки: проект без
+    # даты отгрузки не должен занимать верх списка, отсортированного по ней
+    order = sort_column.asc() if sort_order == "asc" else sort_column.desc()
+    # Пока есть поисковый запрос — релевантность впереди выбранной сортировки,
+    # а не наоборот (как в обычном поиске): sort_by решает только порядок среди
+    # одинаково релевантных строк, не перебивает его
+    if relevance is not None:
+        return (relevance.desc(), order.nulls_last(), Project.id.desc())
+    return (order.nulls_last(), Project.id.desc())
 
 
 class ProjectRepository(BaseRepository[Project]):
@@ -148,164 +309,30 @@ class ProjectRepository(BaseRepository[Project]):
     async def search(
         self,
         query: str | None = None,
-        # --- фильтры по шкафам проекта: проект проходит, если подошёл хотя бы один ---
-        tag_ids: list[int] | None = None,
-        has_documents: bool | None = None,
-        has_photos: bool | None = None,
-        has_users: bool | None = None,
-        has_service_requests: bool | None = None,
-        cabinet_warranty_status: str | None = None,
-        # --- фильтры по самому проекту ---
-        year: int | None = None,
-        company: str | None = None,
-        shipped: bool | None = None,
-        # *_before — граница исключающая (начало следующих суток), см.
-        # project_service._next_day_start
-        shipment_planned_from: datetime | None = None,
-        shipment_planned_before: datetime | None = None,
-        shipment_actual_from: datetime | None = None,
-        shipment_actual_before: datetime | None = None,
-        has_project_documents: bool | None = None,
-        has_project_photos: bool | None = None,
-        has_project_users: bool | None = None,
-        has_contacts: bool | None = None,
-        warranty_status: str | None = None,
+        filters: ProjectFilters | None = None,
         sort_by: str = "created_at",
         sort_order: str = "desc",
         offset: int = 0,
         limit: int = 20,
     ) -> tuple[list[Project], int]:
+        filters = filters or ProjectFilters()
         conditions = [Project.deleted_at.is_(None)]
 
+        relevance = None
         if query:
-            # Ищем и по карточке проекта, и по контактным лицам заказчика: искать
-            # проект по фамилии или телефону человека из сделки — обычный сценарий,
-            # а название и номер оператор помнит не всегда
-            contact_match = exists(
-                select(ProjectContact.id).where(
-                    ProjectContact.project_id == Project.id,
-                    fuzzy_condition(
-                        query,
-                        ProjectContact.full_name, ProjectContact.post,
-                        # телефоны и почты — JSON-списки; по тексту списка
-                        # находится и "+375291112233", и "ivanov@"
-                        cast(ProjectContact.phones, String),
-                        cast(ProjectContact.emails, String),
-                    ),
-                )
-            )
-            conditions.append(or_(
-                fuzzy_condition(
-                    query,
-                    Project.name, Project.production_number, Project.company_name,
-                ),
-                contact_match,
-            ))
+            text_condition, relevance = _text_match(query)
+            conditions.append(text_condition)
+        conditions.extend(_project_conditions(filters))
+        conditions.extend(_cabinet_conditions(filters))
 
-            # Релевантность — отдельно от самого отбора выше (fuzzy_condition
-            # только решает, попадает ли строка в выдачу вообще). Название и
-            # номер проекта весят больше совпадения в компании, а то — больше
-            # совпадения по контакту: спросили "100", нашёлся и проект с таким
-            # номером, и проект, у чьего контакта "100" затесалось в телефоне —
-            # первый должен быть выше, а не когда повезёт по sort_by
-            contact_score = (
-                select(func.max(func.greatest(
-                    match_score(query, ProjectContact.full_name, 0.3),
-                    match_score(query, ProjectContact.post, 0.3),
-                    match_score(query, cast(ProjectContact.phones, String), 0.3),
-                    match_score(query, cast(ProjectContact.emails, String), 0.3),
-                )))
-                .where(ProjectContact.project_id == Project.id)
-                .correlate(Project)
-                .scalar_subquery()
-            )
-            relevance = func.greatest(
-                match_score(query, Project.name, 1.0),
-                match_score(query, Project.production_number, 1.0),
-                match_score(query, Project.company_name, 0.6),
-                func.coalesce(contact_score, 0.0),
-            )
-        else:
-            relevance = None
+        total = (await self.session.execute(
+            select(func.count(Project.id)).where(*conditions)
+        )).scalar() or 0
 
-        if year is not None:
-            conditions.append(project_year_expr() == year)
-        if company:
-            conditions.append(fuzzy_condition(company, Project.company_name))
-        if shipped is not None:
-            conditions.append(
-                Project.shipment_actual_at.isnot(None) if shipped
-                else Project.shipment_actual_at.is_(None)
-            )
-        for column, bound, is_lower in (
-            (Project.shipment_planned_at, shipment_planned_from, True),
-            (Project.shipment_planned_at, shipment_planned_before, False),
-            (Project.shipment_actual_at, shipment_actual_from, True),
-            (Project.shipment_actual_at, shipment_actual_before, False),
-        ):
-            if bound is not None:
-                conditions.append(column >= bound if is_lower else column < bound)
-
-        for flag, subquery in (
-            (has_project_documents, select(Document.id).where(Document.project_id == Project.id)),
-            (has_project_photos, select(CabinetPhoto.id).where(CabinetPhoto.project_id == Project.id)),
-            (has_project_users, select(UserProject.id).where(UserProject.project_id == Project.id)),
-            (has_contacts, select(ProjectContact.id).where(ProjectContact.project_id == Project.id)),
-        ):
-            if flag is not None:
-                condition = exists(subquery)
-                conditions.append(condition if flag else ~condition)
-
-        if warranty_status:
-            conditions.extend(_warranty_conditions(Project.warranty_ends_at, warranty_status))
-
-        # Проект попадает в выдачу, если условиям соответствует хотя бы один его шкаф
-        cabinet_conditions = cabinet_match_conditions(
-            tag_ids=tag_ids, has_documents=has_documents, has_photos=has_photos,
-            has_users=has_users, has_service_requests=has_service_requests,
-            warranty_status=cabinet_warranty_status,
-        )
-        if cabinet_conditions:
-            conditions.append(exists(
-                select(Cabinet.id).where(
-                    Cabinet.project_id == Project.id,
-                    Cabinet.deleted_at.is_(None),
-                    *cabinet_conditions,
-                )
-            ))
-
-        count_stmt = select(func.count(Project.id)).where(*conditions)
-        total = (await self.session.execute(count_stmt)).scalar() or 0
-
-        cabinet_count = (
-            select(func.count(Cabinet.id))
-            .where(Cabinet.project_id == Project.id, Cabinet.deleted_at.is_(None))
-            .scalar_subquery()
-        )
-        sort_column = {
-            "name": Project.name,
-            "created_at": Project.created_at,
-            "production_number": Project.production_number,
-            "year": project_year_expr(),
-            "company_name": Project.company_name,
-            "shipment_planned_at": Project.shipment_planned_at,
-            "shipment_actual_at": Project.shipment_actual_at,
-            "warranty_ends_at": Project.warranty_ends_at,
-            "cabinet_count": cabinet_count,
-        }.get(sort_by, Project.created_at)
-
-        # Пустое значение — всегда в конце, в обе стороны сортировки: проект без
-        # даты отгрузки не должен занимать верх списка, отсортированного по ней
-        order = sort_column.asc() if sort_order == "asc" else sort_column.desc()
-        # Пока есть поисковый запрос — релевантность впереди выбранной
-        # сортировки, а не наоборот (как в обычном поиске): sort_by решает
-        # только порядок среди одинаково релевантных строк, не перебивает его
-        order_by = (relevance.desc(), order.nulls_last(), Project.id.desc()) if relevance is not None \
-            else (order.nulls_last(), Project.id.desc())
         stmt = (
             select(Project)
             .where(*conditions)
-            .order_by(*order_by)
+            .order_by(*_order_by(sort_by, sort_order, relevance))
             .offset(offset)
             .limit(limit)
         )

@@ -5,7 +5,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AlreadyExistsError, NotFoundError
 from app.repositories.cabinet import CabinetRepository
-from app.repositories.project import ProjectContactRepository, ProjectRepository, UserProjectRepository
+from app.repositories.project import (
+    ProjectContactRepository, ProjectFilters, ProjectRepository, UserProjectRepository,
+)
 from app.schemas.pagination import PageOut, make_page
 from app.utils.project_year import project_year
 from app.utils.warranty import warranty_status as _warranty_status
@@ -249,8 +251,8 @@ class ProjectService:
         size: int = 20,
     ) -> PageOut[ProjectListOut]:
         offset = (page - 1) * size
-        projects, total = await self.repo.search(
-            query=query, tag_ids=tag_ids,
+        filters = ProjectFilters(
+            tag_ids=tag_ids,
             has_documents=has_documents, has_photos=has_photos,
             has_users=has_users, has_service_requests=has_service_requests,
             cabinet_warranty_status=cabinet_warranty_status,
@@ -264,6 +266,9 @@ class ProjectService:
             has_project_users=has_project_users,
             has_contacts=has_contacts,
             warranty_status=warranty_status,
+        )
+        projects, total = await self.repo.search(
+            query=query, filters=filters,
             sort_by=sort_by, sort_order=sort_order, offset=offset, limit=size,
         )
         cabinet_counts = await self.cabinet_repo.count_by_projects([p.id for p in projects])
