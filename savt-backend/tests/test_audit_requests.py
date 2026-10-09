@@ -1,5 +1,5 @@
-"""Лента активности: создание и решение каждого вида заявок попадает в журнал, а
-оператор и админ видят все виды заявок (суперадмин — вообще всё)."""
+"""Журнал действий: создание и решение каждого вида заявок попадает в журнал,
+а читать журнал может только суперадмин."""
 import pytest
 from sqlalchemy import select
 
@@ -75,44 +75,36 @@ async def _seed(db_session):
     await db_session.flush()
 
 
-async def _seen(api, token):
-    response = await api.get("/admin/audit-logs", params={"size": 200}, headers=_auth(token))
-    assert response.status_code == 200
-    return {item["entity_type"] for item in response.json()["items"]}
-
-
-async def test_operator_sees_every_kind_of_request_and_nothing_else(api, db_session, tokens):
-    await _seed(db_session)
-
-    seen = await _seen(api, tokens["operator"])
-
-    assert set(REQUEST_TYPES) <= seen
-    assert not {"reclamation", "user", "cabinet"} & seen
-
-
-async def test_admin_sees_requests_and_reclamations(api, db_session, tokens):
-    await _seed(db_session)
-
-    seen = await _seen(api, tokens["admin"])
-
-    assert set(REQUEST_TYPES) | {"reclamation"} <= seen
-    assert not {"user", "cabinet"} & seen
-
-
 async def test_superadmin_sees_everything(api, db_session, tokens):
     await _seed(db_session)
 
-    seen = await _seen(api, tokens["superadmin"])
+    response = await api.get("/admin/audit-logs", params={"size": 200}, headers=_auth(tokens["superadmin"]))
 
+    assert response.status_code == 200
+    seen = {item["entity_type"] for item in response.json()["items"]}
     assert set(REQUEST_TYPES) | {"reclamation", "user", "cabinet"} <= seen
 
 
-@pytest.mark.parametrize("entity_type", REQUEST_TYPES)
-async def test_operator_can_filter_by_each_request_type(api, db_session, tokens, entity_type):
+@pytest.mark.parametrize("role", ["admin", "operator", "user"])
+async def test_journal_is_closed_to_everyone_but_the_superadmin(api, db_session, tokens, role):
     await _seed(db_session)
 
-    response = await api.get(
-        "/admin/audit-logs", params={"entity_type": entity_type}, headers=_auth(tokens["operator"]),
-    )
+    response = await api.get("/admin/audit-logs", headers=_auth(tokens[role]))
 
-    assert {i["entity_type"] for i in response.json()["items"]} == {entity_type}
+    assert response.status_code == 403
+
+
+async def test_journal_requires_authorization(api):
+    assert (await api.get("/admin/audit-logs")).status_code in (401, 403)
+
+
+async def test_superadmin_can_filter_by_any_role_and_entity(api, db_session, tokens):
+    await _seed(db_session)
+    AuditLogger(db_session).log("user.ban", "user", 99, None, "superadmin", {})
+    await db_session.flush()
+
+    by_role = await api.get("/admin/audit-logs", params={"actor_role": "superadmin"}, headers=_auth(tokens["superadmin"]))
+    by_entity = await api.get("/admin/audit-logs", params={"entity_type": "cabinet"}, headers=_auth(tokens["superadmin"]))
+
+    assert {i["action"] for i in by_role.json()["items"]} == {"user.ban"}
+    assert {i["entity_type"] for i in by_entity.json()["items"]} == {"cabinet"}

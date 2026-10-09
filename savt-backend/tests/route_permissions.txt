@@ -5,7 +5,7 @@ GET    /admin/admins  superadmin
 POST   /admin/admins  superadmin
 DELETE /admin/admins/{user_id}  superadmin
 GET    /admin/admins/{user_id}  superadmin
-GET    /admin/audit-logs  operator
+GET    /admin/audit-logs  superadmin
 POST   /admin/bot/prune  admin
 POST   /admin/bot/reindex  admin
 GET    /admin/cabinet-requests/additions  operator

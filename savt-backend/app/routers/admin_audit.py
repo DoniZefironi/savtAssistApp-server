@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleName
-from app.core.dependencies import get_role_from_token, get_session, require_role
+from app.core.dependencies import get_session, require_role
 from app.models.user import User
 from app.schemas.audit import AuditLogOut
 from app.schemas.pagination import PageOut
@@ -11,29 +11,9 @@ from app.services.audit_service import AuditService
 
 router = APIRouter(prefix="/admin/audit-logs", tags=["admin: audit"])
 
-_ROLES = "^(admin|operator|user|system)$"
+_ROLES = "^(superadmin|admin|operator|user|system)$"
 _SORT = "^(created_at|action|entity_type|actor_role|actor_id)$"
 _SEARCH_IN = "^(all|action|entity_type|actor_name|payload)$"
-
-# ADMIN/OPERATOR видят только логи по заявкам (создание/одобрение/отклонение) —
-# CUD по шкафам/проектам/документам/пользователям видит только SUPERADMIN.
-# Это все виды заявок, которые решает оператор, — вся лента по ним у обоих
-_REQUEST_ENTITY_TYPES = [
-    "cabinet_addition_request",
-    "document_request",
-    "service_request",
-    "registration_request",
-    "password_reset_request",
-    "phone_change_request",
-]
-# Рекламации — отдельным списком, а не добавлены в общий выше, и видны
-# только ADMIN, не OPERATOR: у оператора и так нет доступа ни к одной ручке
-# /admin/reclamations (require_role(ADMIN) на всех них), так что просто
-# добавить "reclamation" в общий список означало бы впервые открыть ему то,
-# что нигде больше не видно. Сам список выше заведён раньше, чем появились
-# рекламации, и не был обновлён — из-за этого ADMIN, который их реально
-# обрабатывает, не видел их историю через эту ручку вообще (см. §10 ТЗ п.5)
-_RECLAMATION_ENTITY_TYPES = ["reclamation"]
 
 
 @router.get("", response_model=PageOut[AuditLogOut])
@@ -55,24 +35,14 @@ async def list_audit_logs(
     # пагинация
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
-    _: User = Depends(require_role(RoleName.ADMIN, RoleName.OPERATOR)),
-    caller_role: str = Depends(get_role_from_token),
+    _: User = Depends(require_role(RoleName.SUPERADMIN)),
     session: AsyncSession = Depends(get_session),
 ) -> PageOut[AuditLogOut]:
-    # Только суперадмин видит полный лог (CUD по шкафам/проектам/документам/пользователям
-    # + заявки + рекламации); ADMIN — заявки и рекламации; OPERATOR — только заявки
-    if caller_role == "superadmin":
-        entity_types = None
-    elif caller_role == "admin":
-        entity_types = _REQUEST_ENTITY_TYPES + _RECLAMATION_ENTITY_TYPES
-    else:
-        entity_types = _REQUEST_ENTITY_TYPES
     return await AuditService(session).list_logs(
         actor_id=actor_id,
         actor_role=actor_role,
         action=action,
         entity_type=entity_type,
-        entity_types=entity_types,
         entity_id=entity_id,
         search=search,
         search_in=search_in,
