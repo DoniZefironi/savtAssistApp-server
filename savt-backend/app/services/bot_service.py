@@ -587,6 +587,194 @@ async def _advance_bot_down_intake(session: AsyncSession, chat: Chat, bot_user_i
     )
 
 
+async def _resolve_if_thanked(
+    session: AsyncSession, chat: Chat, bot_user_id: int, sentiment: str | None,
+) -> bool:
+    """Благодарность в чате с открытой проблемой — закрываем её. True, если сообщение обработано."""
+    if sentiment != "positive" or chat.problem_status != "open":
+        return False
+    chat.problem_status = "resolved"
+    chat.follow_up_sent = True
+    chat.bot_no_count = 0
+    await _send_bot_message(
+        session, chat, bot_user_id,
+        "Рад, что удалось помочь! Если возникнут новые вопросы — обращайтесь.",
+    )
+    await session.commit()
+    return True
+
+
+async def _answer_operator_offer(
+    session: AsyncSession, chat: Chat, bot_user_id: int, user_text: str,
+) -> bool:
+    """Бот только что САМ явно предложил оператора (готовой фразой после
+    исчерпания попыток) — ответ трактуется безусловно, а не по счётчику
+    bot_no_count. Предложение идёт всегда только отсюда, детерминированно: LLM
+    системным промптом запрещено предлагать оператора самой (см.
+    _SYSTEM_PROMPT). True, если сообщение обработано."""
+    if not chat.bot_offered_operator:
+        return False
+    chat.bot_offered_operator = False
+    operator_answer = _operator_intent(user_text)
+    if operator_answer == "want":
+        chat.operator_requested = True
+        chat.bot_active = False
+        await _send_bot_message(
+            session, chat, bot_user_id,
+            "Понял, передаю вас оператору. Ожидайте — скоро с вами свяжутся.",
+        )
+        await session.commit()
+        await _notify_operators(session, chat.id)
+        return True
+    if operator_answer == "refuse":
+        chat.bot_no_count = 0
+        chat.follow_up_sent = False
+        await _send_bot_message(
+            session, chat, bot_user_id,
+            "Хорошо! Если возникнут вопросы — я здесь. Чем ещё могу помочь?",
+        )
+        await session.commit()
+        return True
+    # неоднозначный ответ (не да, не нет) — трактуем как новое сообщение
+    # (например, сразу новый вопрос) и идём в обычный цикл
+    return False
+
+
+async def _handle_operator_request(
+    session: AsyncSession, chat: Chat, bot_user_id: int, user_text: str,
+) -> tuple[bool, bool]:
+    """Незапрошенная просьба оператора (бот сам не предлагал): не передаём чат
+    сразу, а первые _OPERATOR_INSIST_LIMIT раз настаиваем на своей помощи.
+    Само сообщение может содержать реальный вопрос ("не работает АСУ,
+    позовите оператора") — на него всё равно отвечаем как обычно; счётчик
+    пользователю не виден.
+
+    Возвращает (обработано, настаиваем): обработано — сообщение исчерпано
+    (фиксированный ответ или передача оператору), настаиваем — просьба
+    учтена, но вопрос идёт в обычный ответ."""
+    if not _explicit_operator_request(user_text):
+        return False, False
+
+    if chat.operator_insist_count < _OPERATOR_INSIST_LIMIT:
+        chat.operator_insist_count += 1
+        if _is_bare_operator_request(user_text):
+            # Нечего отвечать по существу — не гоняем "вопрос" вроде
+            # "вызывай оператора" через RAG/LLM (модель честно скажет, что не
+            # может вызвать оператора сама, а это только запутает). Фиксированный
+            # ответ, без LLM
+            await _send_bot_message(
+                session, chat, bot_user_id,
+                "Извините, может я всё-таки смогу вам помочь — задайте мне вопрос, и я обязательно постараюсь вам с ним помочь.",
+            )
+            await session.commit()
+            return True, False
+        return False, True
+
+    chat.operator_requested = True
+    chat.bot_active = False
+    chat.operator_insist_count = 0
+    await _send_bot_message(
+        session, chat, bot_user_id,
+        "Хорошо, передаю вас оператору. Ожидайте — скоро с вами свяжутся.",
+    )
+    await session.commit()
+    await _notify_operators(
+        session, chat.id,
+        title="Пользователь просит оператора",
+        body=f"Пользователь настойчиво просит оператора в чате #{chat.id}",
+    )
+    return True, False
+
+
+def _build_search_query(history: list[Message], bot_user_id: int, user_text: str) -> str:
+    """Запрос для векторного поиска. Короткий ответ ("ШУ-52", "да", "12") сам по
+    себе почти не несёт смысла — это ответ НА уточняющий вопрос бота, а не новый
+    вопрос; поиск по одному "ШУ-52" ничего не найдёт, и бот потеряет тему
+    разговора. Поэтому короткий текст склеивается с несколькими последними
+    сообщениями пользователя (не только с самым последним: между содержательным
+    вопросом и коротким уточнением мог затесаться "подгоняющий" ответ без номера
+    ШУ). Склейка идёт ТОЛЬКО для поиска — в промпт текст уходит как есть."""
+    if len(_tokens(user_text)) > 4:
+        return user_text
+    recent_user_texts = [
+        h.text for h in reversed(history[:-1])
+        if h.sender_id != bot_user_id and h.text
+    ][:3]
+    if not recent_user_texts:
+        return user_text
+    return f"{' '.join(reversed(recent_user_texts))} {user_text}"
+
+
+async def _build_prompt_text(session: AsyncSession, chat: Chat, search_query: str, user_text: str) -> str:
+    """Текст последнего сообщения для модели: данные проекта и список ШУ из БД
+    (точные структурированные данные, которых нет в базе знаний и которые не
+    найдутся поиском по документам), найденные куски базы знаний и сам вопрос.
+    Для чата поддержки и ШУ вне проекта блоки проекта не добавляются."""
+    context_chunks = await _retrieve_context(session, search_query, chat.cabinet_id, chat.project_id)
+    if context_chunks:
+        parts = [f"[{c['source']}]\n{c['content']}" for c in context_chunks]
+        context_text = "\n---\n".join(parts)
+    else:
+        context_text = "Контекст не найден."
+
+    project_id = await _resolve_chat_project_id(session, chat)
+    directory_context = await _cabinet_directory_context(session, project_id) if project_id else None
+    project_context = await _project_info_context(session, project_id) if project_id else None
+
+    prompt_text = f"Контекст из базы знаний:\n{context_text}"
+    if directory_context:
+        prompt_text = f"{directory_context}\n\n{prompt_text}"
+    if project_context:
+        prompt_text = f"{project_context}\n\n{prompt_text}"
+    return prompt_text + f"\n\nВопрос пользователя: {user_text}"
+
+
+async def _generate_answer(
+    session: AsyncSession, chat: Chat, bot_user_id: int, user_text: str,
+) -> str:
+    """Ответ модели по истории чата и найденному контексту. Любой сбой Yandex
+    (эмбеддинги или генерация) уходит исключением наверх."""
+    history_rows = (await session.execute(
+        select(Message)
+        .where(Message.chat_id == chat.id, Message.deleted_at.is_(None))
+        .order_by(Message.id.desc())
+        .limit(settings.bot_history_limit)
+    )).scalars().all()
+    history = list(reversed(history_rows))
+
+    search_query = _build_search_query(history, bot_user_id, user_text)
+    prompt_text = await _build_prompt_text(session, chat, search_query, user_text)
+
+    # история без последнего сообщения — это текущий вопрос, он идёт в prompt_text
+    gpt_messages = [
+        {"role": "assistant" if h.sender_id == bot_user_id else "user", "text": h.text}
+        for h in history[:-1] if h.text
+    ]
+    gpt_messages.append({"role": "user", "text": prompt_text})
+
+    system = _SYSTEM_PROMPT
+    if chat.bot_no_count > 0:
+        system += f"\n\nЭто попытка {chat.bot_no_count + 1} из {settings.bot_max_attempts}. Постарайся помочь точнее."
+
+    return await yandex_service.complete(system, gpt_messages)
+
+
+def _update_attempt_counters(chat: Chat, sentiment: str | None, insisting: bool) -> None:
+    """Счётчики по итогам обычного ответа."""
+    if sentiment == "negative":
+        chat.bot_no_count += 1
+        chat.follow_up_sent = False  # после негатива разрешаем ещё один follow-up
+    else:
+        chat.bot_no_count = 0
+        # follow_up_sent не сбрасываем — бот не будет слать follow-up каждые N минут
+
+    # Счётчик настойчивых просьб оператора сбрасывается, как только пользователь
+    # получил обычный реальный ответ (без просьбы оператора в этом же сообщении) —
+    # иначе одно случайное упоминание оператора когда-то раньше копилось бы вечно
+    if not insisting and chat.operator_insist_count > 0:
+        chat.operator_insist_count = 0
+
+
 async def handle_message(
     session: AsyncSession,
     chat_id: int,
@@ -603,195 +791,40 @@ async def handle_message(
     if bot_user_id is None:
         return
 
-    # Идёт пошаговый опрос после сбоя Yandex API (см. except в конце функции) —
-    # это сообщение трактуется как ответ на ТЕКУЩИЙ по счёту вопрос, минуя
-    # обычную логику (сентимент, просьба оператора и т.п.) целиком: цель этой
-    # ветки — довести пользователя до оператора со всеми ответами, а не отвечать самому
+    # Идёт пошаговый опрос после сбоя Yandex API (см. except ниже) — это
+    # сообщение трактуется как ответ на ТЕКУЩИЙ по счёту вопрос, минуя обычную
+    # логику (сентимент, просьба оператора и т.п.) целиком: цель этой ветки —
+    # довести пользователя до оператора со всеми ответами, а не отвечать самому
     if chat.bot_down_intake_step > 0:
         await _advance_bot_down_intake(session, chat, bot_user_id)
         return
 
     sentiment = _classify(user_text)
 
-    # Проблема решена — пользователь доволен
-    if sentiment == "positive" and chat.problem_status == "open":
-        chat.problem_status = "resolved"
-        chat.follow_up_sent = True
-        chat.bot_no_count = 0
-        await _send_bot_message(
-            session, chat, bot_user_id,
-            "Рад, что удалось помочь! Если возникнут новые вопросы — обращайтесь.",
-        )
-        await session.commit()
+    if await _resolve_if_thanked(session, chat, bot_user_id, sentiment):
+        return
+    if await _answer_operator_offer(session, chat, bot_user_id, user_text):
+        return
+    handled, insisting = await _handle_operator_request(session, chat, bot_user_id, user_text)
+    if handled:
         return
 
-    # Бот только что САМ явно предложил оператора (готовой фразой после
-    # исчерпания попыток) — ответ трактуется безусловно, а не по счётчику
-    # bot_no_count. Раньше проверка была завязана именно на счётчик, а LLM
-    # могла упомянуть оператора в своём ответе раньше, чем счётчик дорастал
-    # до порога — согласие пользователя терялось и уходило в RAG как новый
-    # вопрос (отсюда и системному промпту теперь явно запрещено предлагать
-    # оператора самой, см. _SYSTEM_PROMPT — предложение всегда идёт только
-    # отсюда, детерминированно).
-    if chat.bot_offered_operator:
-        chat.bot_offered_operator = False
-        operator_answer = _operator_intent(user_text)
-        if operator_answer == "want":
-            chat.operator_requested = True
-            chat.bot_active = False
-            await _send_bot_message(
-                session, chat, bot_user_id,
-                "Понял, передаю вас оператору. Ожидайте — скоро с вами свяжутся.",
-            )
-            await session.commit()
-            await _notify_operators(session, chat.id)
-            return
-        elif operator_answer == "refuse":
-            chat.bot_no_count = 0
-            chat.follow_up_sent = False
-            await _send_bot_message(
-                session, chat, bot_user_id,
-                "Хорошо! Если возникнут вопросы — я здесь. Чем ещё могу помочь?",
-            )
-            await session.commit()
-            return
-        # неоднозначный ответ (не да, не нет) — трактуем как новое сообщение
-        # (например, сразу новый вопрос) и идём в обычный цикл ниже
-
-    # Незапрошенная просьба оператора (бот сам не предлагал) — не передаём
-    # сразу, настаиваем на своей помощи первые _OPERATOR_INSIST_LIMIT раз.
-    # Само сообщение может содержать реальный вопрос ("не работает АСУ,
-    # позовите оператора") — на него всё равно отвечаем как обычно ниже,
-    # просто добавляем настойчивую приписку; счётчик пользователю не виден
-    insisting = False
-    if _explicit_operator_request(user_text):
-        if chat.operator_insist_count < _OPERATOR_INSIST_LIMIT:
-            chat.operator_insist_count += 1
-            if _is_bare_operator_request(user_text):
-                # Нечего отвечать по существу — не гоняем "вопрос" вроде
-                # "вызывай оператора" через RAG/LLM (модель честно скажет,
-                # что не может вызвать оператора сама, а это только запутает
-                # рядом с настойчивой припиской бота). Фиксированный ответ,
-                # без LLM
-                await _send_bot_message(
-                    session, chat, bot_user_id,
-                    "Извините, может я всё-таки смогу вам помочь — задайте мне вопрос, и я обязательно постараюсь вам с ним помочь.",
-                )
-                await session.commit()
-                return
-            insisting = True
-        else:
-            chat.operator_requested = True
-            chat.bot_active = False
-            chat.operator_insist_count = 0
-            await _send_bot_message(
-                session, chat, bot_user_id,
-                "Хорошо, передаю вас оператору. Ожидайте — скоро с вами свяжутся.",
-            )
-            await session.commit()
-            await _notify_operators(
-                session, chat.id,
-                title="Пользователь просит оператора",
-                body=f"Пользователь настойчиво просит оператора в чате #{chat.id}",
-            )
-            return
-
     try:
-        # Получаем последние сообщения для контекста диалога
-        history_rows = (await session.execute(
-            select(Message)
-            .where(Message.chat_id == chat_id, Message.deleted_at.is_(None))
-            .order_by(Message.id.desc())
-            .limit(settings.bot_history_limit)
-        )).scalars().all()
-        history = list(reversed(history_rows))
-
-        # Короткий ответ ("ШУ-52", "да", "12") сам по себе почти не несёт
-        # смысла для векторного поиска — это ответ НА уточняющий вопрос бота,
-        # а не новый вопрос. Без этого поиск шёл по одному "ШУ-52", ничего не
-        # находил, и бот "терял" тему разговора (спрашивал про красную кнопку,
-        # уточнил модель — а бот снова "чем могу помочь"), хотя история и
-        # передавалась модели: контекст диалога у неё был, а вот сам поиск по
-        # базе знаний — нет. Склеиваем с последним реальным вопросом
-        # пользователя ТОЛЬКО для поиска — в сам промпт уходит текст как есть
-        search_query = user_text
-        if len(_tokens(user_text)) <= 4:
-            # Не только последнее сообщение пользователя, а несколько последних:
-            # между содержательным вопросом ("какие характеристики у ШУ 123") и
-            # текущим коротким ("технические характеристики") мог затесаться
-            # короткий "подгоняющий" ответ ("так посмотри в руководстве") без
-            # самого важного — номера ШУ. Взяв только последнее, поиск терял
-            # этот номер и промахивался мимо документа именно этого ШУ.
-            recent_user_texts = [
-                h.text for h in reversed(history[:-1])
-                if h.sender_id != bot_user_id and h.text
-            ][:3]
-            if recent_user_texts:
-                search_query = f"{' '.join(reversed(recent_user_texts))} {user_text}"
-
-        # RAG: ищем релевантные куски
-        context_chunks = await _retrieve_context(session, search_query, chat.cabinet_id, chat.project_id)
-        if context_chunks:
-            parts = [f"[{c['source']}]\n{c['content']}" for c in context_chunks]
-            context_text = "\n---\n".join(parts)
-        else:
-            context_text = "Контекст не найден."
-
-        # Список ШУ проекта и поля самого проекта (даты отгрузки, заказчик и
-        # т.п.) — отдельно от RAG, это структурированные данные из БД (см.
-        # _cabinet_directory_context/_project_info_context), не найдутся никаким
-        # поиском по документам. None для чата поддержки/ШУ вне проекта —
-        # тогда просто не добавляем блоки вообще
-        project_id = await _resolve_chat_project_id(session, chat)
-        directory_context = await _cabinet_directory_context(session, project_id) if project_id else None
-        project_context = await _project_info_context(session, project_id) if project_id else None
-
-        # Формируем историю для GPT
-        gpt_messages = []
-        for h in history[:-1]:  # без последнего (это текущее сообщение)
-            role = "assistant" if h.sender_id == bot_user_id else "user"
-            if h.text:
-                gpt_messages.append({"role": role, "text": h.text})
-
-        prompt_text = f"Контекст из базы знаний:\n{context_text}"
-        if directory_context:
-            prompt_text = f"{directory_context}\n\n{prompt_text}"
-        if project_context:
-            prompt_text = f"{project_context}\n\n{prompt_text}"
-        prompt_text += f"\n\nВопрос пользователя: {user_text}"
-        gpt_messages.append({"role": "user", "text": prompt_text})
-
-        system = _SYSTEM_PROMPT
-        if chat.bot_no_count > 0:
-            system += f"\n\nЭто попытка {chat.bot_no_count + 1} из {settings.bot_max_attempts}. Постарайся помочь точнее."
-
-        answer = await yandex_service.complete(system, gpt_messages)
+        answer = await _generate_answer(session, chat, bot_user_id, user_text)
     except Exception:
-        # Любой сбой Yandex API (эмбеддинги или генерация): ключ невалиден,
-        # закончились деньги, сеть недоступна и т.п. — не пытаемся угадать причину,
-        # запускаем пошаговый опрос вместо тишины/дежурной фразы (см.
-        # _start_bot_down_intake) — оператор зовётся не сразу, а после того как
-        # пользователь ответит на все вопросы по очереди
+        # Любой сбой Yandex API: ключ невалиден, закончились деньги, сеть
+        # недоступна и т.п. — не пытаемся угадать причину, запускаем пошаговый
+        # опрос вместо тишины/дежурной фразы (см. _start_bot_down_intake) —
+        # оператор зовётся не сразу, а после того как пользователь ответит на
+        # все вопросы по очереди
         await _start_bot_down_intake(session, chat, bot_user_id)
         return
 
-    # Обновляем счётчик если пользователь недоволен
-    if sentiment == "negative":
-        chat.bot_no_count += 1
-        chat.follow_up_sent = False  # после негатива разрешаем ещё один follow-up
-    else:
-        chat.bot_no_count = 0
-        # follow_up_sent не сбрасываем — бот не будет слать follow-up каждые N минут
-
-    # Счётчик настойчивых просьб оператора сбрасывается, как только пользователь
-    # получил обычный реальный ответ (без просьбы оператора в этом же сообщении) —
-    # иначе одно случайное упоминание оператора когда-то раньше копилось бы вечно
-    if not insisting and chat.operator_insist_count > 0:
-        chat.operator_insist_count = 0
+    _update_attempt_counters(chat, sentiment, insisting)
 
     # Если исчерпаны попытки — предлагаем оператора. Флаг, а не текст сам по
     # себе — именно по нему следующий ответ пользователя трактуется как
-    # согласие/отказ безусловно (см. начало функции)
+    # согласие/отказ безусловно (см. _answer_operator_offer)
     if chat.bot_no_count >= settings.bot_max_attempts:
         answer += "\n\nЯ пытался помочь несколько раз, но, похоже, проблема не решена. Хотите, чтобы я позвал оператора? (да / нет)"
         chat.bot_offered_operator = True

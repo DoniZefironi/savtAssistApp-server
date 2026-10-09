@@ -549,3 +549,16 @@ async def test_follow_up_goes_only_to_silent_open_chats(db_session, env, make_us
         assert await _bot_texts(db_session, chat, bot_id) == []
     await bot_service.send_follow_up(db_session)  # повторный запуск второго письма не шлёт
     assert len(await _bot_texts(db_session, due, bot_id)) == 1
+
+
+async def test_found_context_goes_into_the_prompt_with_its_source(db_session, env, make_user, make_chat, say):
+    user = await make_user()
+    chat = await make_chat(user, "support")
+    await _embed(db_session, "faq", 1, "Гарантия — 24 месяца со дня отгрузки", _vec(1.0), {"title": "Срок гарантии"})
+    await say(chat, user, "Какой срок гарантии на шкафы управления")
+
+    await bot_service.handle_message(db_session, chat.id, "Какой срок гарантии на шкафы управления")
+
+    prompt = env.completions[0].messages[-1]["text"]
+    assert "[FAQ: Срок гарантии]\nГарантия — 24 месяца со дня отгрузки" in prompt
+    assert "Контекст не найден." not in prompt
