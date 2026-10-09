@@ -31,5 +31,5 @@ async def list_entries(
 ):
     return await FaqEntryService(session).list_entries(
         category_id, search, sort_by, sort_order, page, size,
-        user_id=current_user.id if current_user else None,
+        is_published=True, user_id=current_user.id if current_user else None,
     )

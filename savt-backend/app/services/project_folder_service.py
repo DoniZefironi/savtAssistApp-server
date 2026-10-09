@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.background import spawn
 from app.config import settings
 from app.database import AsyncSessionLocal
+from app.models.cabinet_photo import CabinetPhoto
 from app.models.cabinets import Cabinet
 from app.models.document import Document
 from app.models.project import Project
@@ -370,10 +371,98 @@ async def _relocate_cabinet_structure(root: Path, cabinet: Cabinet, session: Asy
         await session.commit()
 
 
+async def _load_photos(
+    session: AsyncSession, cabinet_id: int | None, project_id: int | None,
+) -> list[CabinetPhoto]:
+    from sqlalchemy import select
+
+    stmt = select(CabinetPhoto).order_by(CabinetPhoto.sort_order, CabinetPhoto.id)
+    stmt = stmt.where(
+        CabinetPhoto.project_id == project_id if project_id is not None
+        else CabinetPhoto.cabinet_id == cabinet_id
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def _check_exported_photo(
+    session: AsyncSession, photo: CabinetPhoto, dest_dir: Path, dest_dir_existed: bool,
+) -> tuple[bool, bool]:
+    """Сверка фото, которое уже выгружалось (nas_filename проставлен). Возвращает
+    (оставить ли фото, изменилась ли запись)."""
+    dest = dest_dir / photo.nas_filename
+    if not await asyncio.to_thread(dest.exists):
+        # Была ли папка на месте ДО этого прогона — критично для решения "файл
+        # пропал = удалили вручную". Если папку только что создали мы сами
+        # (relocate/переименование проекта не нашёл старую папку, NAS был
+        # временно недоступен и т.п.), все "пропавшие" файлы в ней ложные, и
+        # трогать фото в БД в этом прогоне нельзя.
+        if not dest_dir_existed:
+            logger.warning(
+                "Фото %s: файл %s не найден, но подпапка «Фото» только что "
+                "создана этим прогоном — не удаляю, похоже на проблему с "
+                "переездом/доступностью папки, а не на реальное удаление",
+                photo.id, dest,
+            )
+            return True, False
+        await session.delete(photo)
+        logger.info("Фото %s удалено вручную с NAS (%s) — убрано и в приложении", photo.id, dest)
+        return False, True
+
+    mtime = (await asyncio.to_thread(dest.stat)).st_mtime
+    if photo.nas_mtime is None:
+        # Первая сверка с этим полем в схеме — фиксируем базовую точку,
+        # само по себе это не значит, что файл только что заменили
+        photo.nas_mtime = mtime
+        return True, True
+    if mtime - photo.nas_mtime <= _MTIME_EPSILON_SECONDS:
+        return True, False
+
+    try:
+        info = await asyncio.to_thread(save_local_file, dest)
+    except OSError:
+        logger.exception("Не удалось перезалить изменённое фото %s из %s", photo.id, dest)
+        return True, False
+    if not info.mime_type.startswith("image/"):
+        logger.warning(
+            "Файл %s заменён на не-изображение (%s) — фото %s не обновлено", dest, info.mime_type, photo.id,
+        )
+        return True, False
+    photo.url = info.url
+    photo.nas_mtime = mtime
+    logger.info("Фото %s заменено на NAS (%s) — обновлено в приложении", photo.id, dest)
+    return True, True
+
+
+async def _export_new_photo(photo: CabinetPhoto, index: int, dest_dir: Path) -> bool:
+    """Первая выгрузка фото в папку. Возвращает, изменилась ли запись."""
+    src = UPLOAD_ROOT / (photo.url or "").removeprefix("/static/")
+    if not await asyncio.to_thread(src.is_file):
+        return False
+
+    # Номер в начале удерживает порядок сортировки в проводнике
+    stem = sanitize_folder_name(photo.caption) if photo.caption else f"Фото {index}"
+    dest = dest_dir / f"{index:03d} {stem}{src.suffix}"
+    if await asyncio.to_thread(dest.exists):
+        # Файл с таким именем уже на месте — почти наверняка наша же прошлая
+        # выгрузка, просто ещё не привязанная к записи (nas_filename пуст).
+        # Привязываем, не перезаписывая содержимое.
+        photo.nas_filename = dest.name
+        photo.nas_mtime = (await asyncio.to_thread(dest.stat)).st_mtime
+        return True
+    try:
+        await asyncio.to_thread(shutil.copyfile, src, dest)
+        photo.nas_filename = dest.name
+        photo.nas_mtime = (await asyncio.to_thread(dest.stat)).st_mtime
+        return True
+    except OSError:
+        logger.exception("Не удалось скопировать фото %s в %s", photo.id, dest)
+        return False
+
+
 async def export_photos(
     session: AsyncSession, dest_dir: Path, *,
     cabinet_id: int | None = None, project_id: int | None = None,
-) -> list["CabinetPhoto"]:
+) -> list[CabinetPhoto]:
     """Раскладывает фотографии в готовую папку «Фото» (её путь передаёт вызывающий
     код: сама «Фото» — для проекта, «Фото/{ШУ}» — для конкретного ШУ) и возвращает
     список оставшихся фото (без удалённых по ходу сверки) — вызывающий код передаёт
@@ -392,23 +481,10 @@ async def export_photos(
     разошёлся с CabinetPhoto.nas_mtime) — новое содержимое перезаливается в
     /uploads, url обновляется. caption/sort_order при этом не трогаются, это
     поля приложения, а не диска."""
-    from app.models.cabinet_photo import CabinetPhoto
-    from sqlalchemy import select
-
-    stmt = select(CabinetPhoto).order_by(CabinetPhoto.sort_order, CabinetPhoto.id)
-    stmt = stmt.where(
-        CabinetPhoto.project_id == project_id if project_id is not None
-        else CabinetPhoto.cabinet_id == cabinet_id
-    )
-    photos = list((await session.execute(stmt)).scalars().all())
+    photos = await _load_photos(session, cabinet_id, project_id)
     if not photos:
         return photos
 
-    # Была ли папка уже на месте ДО этого прогона — критично для решения "файл
-    # пропал = удалили вручную" ниже. Если папку только что создали мы сами
-    # (relocate/переименование проекта не нашёл старую папку, NAS был временно
-    # недоступен и т.п.), все "пропавшие" файлы в ней — ложные, не реальное
-    # удаление, и трогать фото в БД в этом прогоне нельзя.
     dest_dir_existed = await asyncio.to_thread(dest_dir.is_dir)
     await asyncio.to_thread(dest_dir.mkdir, parents=True, exist_ok=True)
 
@@ -416,71 +492,12 @@ async def export_photos(
     changed = False
     for index, photo in enumerate(photos, start=1):
         if photo.nas_filename:
-            dest = dest_dir / photo.nas_filename
-            if not await asyncio.to_thread(dest.exists):
-                if not dest_dir_existed:
-                    logger.warning(
-                        "Фото %s: файл %s не найден, но подпапка «Фото» только что "
-                        "создана этим прогоном — не удаляю, похоже на проблему с "
-                        "переездом/доступностью папки, а не на реальное удаление",
-                        photo.id, dest,
-                    )
-                    remaining.append(photo)
-                    continue
-                await session.delete(photo)
-                changed = True
-                logger.info("Фото %s удалено вручную с NAS (%s) — убрано и в приложении", photo.id, dest)
-                continue
-
-            mtime = (await asyncio.to_thread(dest.stat)).st_mtime
-            if photo.nas_mtime is None:
-                # Первая сверка с этим полем в схеме — фиксируем базовую точку,
-                # само по себе это не значит, что файл только что заменили
-                photo.nas_mtime = mtime
-                changed = True
-            elif mtime - photo.nas_mtime > _MTIME_EPSILON_SECONDS:
-                try:
-                    info = await asyncio.to_thread(save_local_file, dest)
-                    if info.mime_type.startswith("image/"):
-                        photo.url = info.url
-                        photo.nas_mtime = mtime
-                        changed = True
-                        logger.info("Фото %s заменено на NAS (%s) — обновлено в приложении", photo.id, dest)
-                    else:
-                        logger.warning(
-                            "Файл %s заменён на не-изображение (%s) — фото %s не обновлено",
-                            dest, info.mime_type, photo.id,
-                        )
-                except OSError:
-                    logger.exception("Не удалось перезалить изменённое фото %s из %s", photo.id, dest)
+            keep, photo_changed = await _check_exported_photo(session, photo, dest_dir, dest_dir_existed)
+        else:
+            keep, photo_changed = True, await _export_new_photo(photo, index, dest_dir)
+        changed = changed or photo_changed
+        if keep:
             remaining.append(photo)
-            continue
-
-        src = UPLOAD_ROOT / (photo.url or "").removeprefix("/static/")
-        if not await asyncio.to_thread(src.is_file):
-            remaining.append(photo)
-            continue
-
-        # Номер в начале удерживает порядок сортировки в проводнике
-        stem = sanitize_folder_name(photo.caption) if photo.caption else f"Фото {index}"
-        dest = dest_dir / f"{index:03d} {stem}{src.suffix}"
-        if await asyncio.to_thread(dest.exists):
-            # Файл с таким именем уже на месте — почти наверняка наша же
-            # прошлая выгрузка, просто ещё не привязанная к записи (nas_filename
-            # пуст). Привязываем, не перезаписывая содержимое.
-            photo.nas_filename = dest.name
-            photo.nas_mtime = (await asyncio.to_thread(dest.stat)).st_mtime
-            changed = True
-            remaining.append(photo)
-            continue
-        try:
-            await asyncio.to_thread(shutil.copyfile, src, dest)
-            photo.nas_filename = dest.name
-            photo.nas_mtime = (await asyncio.to_thread(dest.stat)).st_mtime
-            changed = True
-        except OSError:
-            logger.exception("Не удалось скопировать фото %s в %s", photo.id, dest)
-        remaining.append(photo)
 
     if changed:
         await session.commit()
@@ -488,7 +505,7 @@ async def export_photos(
 
 
 async def import_new_photos_from_nas(
-    session: AsyncSession, dest_dir: Path, known_photos: list["CabinetPhoto"], *,
+    session: AsyncSession, dest_dir: Path, known_photos: list[CabinetPhoto], *,
     cabinet_id: int | None = None, project_id: int | None = None,
 ) -> int:
     """Обратное направление для фото — тот же принцип, что у import_new_files_from_nas,
@@ -558,6 +575,63 @@ def _format_message(msg, sender_name: str | None, attachments: list) -> str:
     return "\n".join(lines)
 
 
+async def _chat_transcript_target(session: AsyncSession, dest_dir: Path, chat) -> tuple[Path, str, str]:
+    """(файл стенограммы, заголовок, имя владельца) — имя файла считается до
+    чтения сообщений: по нему решаем, можно ли вообще пропустить чат."""
+    from app.models.user import User
+
+    owner = await session.get(User, chat.user_id)
+    owner_name = (owner.full_name or owner.phone or f"id{chat.user_id}") if owner else f"id{chat.user_id}"
+    title = _CHAT_TITLES.get(chat.chat_type, "Чат")
+    if chat.chat_type == "service_request" and chat.service_request_id:
+        title = f"Заявка {chat.service_request_id}"
+    dest = dest_dir / f"{sanitize_folder_name(f'{title} — {owner_name}')}.txt"
+    return dest, title, owner_name
+
+
+async def _chat_messages(session: AsyncSession, chat_id: int) -> tuple[list, dict[int, list]]:
+    """Сообщения чата с отправителями и их вложения по id сообщения."""
+    from app.models.message import Message
+    from app.models.message_attchment import MessageAttachment
+    from app.models.user import User
+    from sqlalchemy import select
+
+    rows = (await session.execute(
+        select(Message, User)
+        .outerjoin(User, User.id == Message.sender_id)
+        .where(Message.chat_id == chat_id)
+        .order_by(Message.id)
+    )).all()
+    atts_by_msg: dict[int, list] = {m.id: [] for m, _ in rows}
+    if rows:
+        for att in (await session.execute(
+            select(MessageAttachment).where(MessageAttachment.message_id.in_(atts_by_msg))
+        )).scalars().all():
+            atts_by_msg[att.message_id].append(att)
+    return rows, atts_by_msg
+
+
+async def _copy_chat_attachments(att_dir: Path, atts_by_msg: dict[int, list]) -> None:
+    """Вложения кладём рядом со стенограммой, с id сообщения в имени — иначе
+    одноимённые файлы из разных сообщений затирали бы друг друга. Копируются один
+    раз: вложения неизменны."""
+    for message_id, attachments in atts_by_msg.items():
+        for att in attachments:
+            if not att.file_url:
+                continue
+            src = UPLOAD_ROOT / att.file_url.removeprefix("/static/")
+            if not await asyncio.to_thread(src.is_file):
+                continue
+            att_dest = att_dir / f"{message_id}_{sanitize_folder_name(att.file_name or src.name)}"
+            if await asyncio.to_thread(att_dest.exists):
+                continue
+            await asyncio.to_thread(att_dir.mkdir, parents=True, exist_ok=True)
+            try:
+                await asyncio.to_thread(shutil.copyfile, src, att_dest)
+            except OSError:
+                logger.exception("Не удалось скопировать вложение %s", att.id)
+
+
 async def export_chats(
     session: AsyncSession, dest_dir: Path, *,
     cabinet_id: int | None = None, project_id: int | None = None,
@@ -578,9 +652,6 @@ async def export_chats(
     only_chat_id — выгрузить один конкретный чат (закрытие заявки), не трогая
     соседние стенограммы."""
     from app.models.chat import Chat
-    from app.models.message import Message
-    from app.models.message_attchment import MessageAttachment
-    from app.models.user import User
     from sqlalchemy import select
 
     stmt = select(Chat).where(
@@ -598,14 +669,7 @@ async def export_chats(
 
     exported = 0
     for chat in chats:
-        # Имя файла считаем до чтения сообщений: по нему решаем, можно ли
-        # вообще пропустить чат
-        owner = await session.get(User, chat.user_id)
-        owner_name = (owner.full_name or owner.phone or f"id{chat.user_id}") if owner else f"id{chat.user_id}"
-        title = _CHAT_TITLES.get(chat.chat_type, "Чат")
-        if chat.chat_type == "service_request" and chat.service_request_id:
-            title = f"Заявка {chat.service_request_id}"
-        dest = dest_dir / f"{sanitize_folder_name(f'{title} — {owner_name}')}.txt"
+        dest, title, owner_name = await _chat_transcript_target(session, dest_dir, chat)
 
         # Ничего не писали с прошлой сверки и файл уже есть — перечитывать
         # переписку незачем. На больших проектах это основная экономия.
@@ -617,21 +681,9 @@ async def export_chats(
         ):
             continue
 
-        rows = (await session.execute(
-            select(Message, User)
-            .outerjoin(User, User.id == Message.sender_id)
-            .where(Message.chat_id == chat.id)
-            .order_by(Message.id)
-        )).all()
+        rows, atts_by_msg = await _chat_messages(session, chat.id)
         if not rows:
             continue
-
-        msg_ids = [m.id for m, _ in rows]
-        atts_by_msg: dict[int, list] = {mid: [] for mid in msg_ids}
-        for att in (await session.execute(
-            select(MessageAttachment).where(MessageAttachment.message_id.in_(msg_ids))
-        )).scalars().all():
-            atts_by_msg[att.message_id].append(att)
 
         header = [
             f"{title} — {owner_name}",
@@ -647,24 +699,7 @@ async def export_chats(
             logger.exception("Не удалось записать стенограмму чата %s", chat.id)
             continue
 
-        # Вложения кладём рядом, с id сообщения в имени — иначе одноимённые
-        # файлы из разных сообщений затирали бы друг друга
-        for mid in msg_ids:
-            for att in atts_by_msg[mid]:
-                if not att.file_url:
-                    continue
-                src = UPLOAD_ROOT / att.file_url.removeprefix("/static/")
-                if not await asyncio.to_thread(src.is_file):
-                    continue
-                name = sanitize_folder_name(att.file_name or src.name)
-                att_dest = att_dir / f"{mid}_{name}"
-                if await asyncio.to_thread(att_dest.exists):
-                    continue
-                await asyncio.to_thread(att_dir.mkdir, parents=True, exist_ok=True)
-                try:
-                    await asyncio.to_thread(shutil.copyfile, src, att_dest)
-                except OSError:
-                    logger.exception("Не удалось скопировать вложение %s", att.id)
+        await _copy_chat_attachments(att_dir, atts_by_msg)
     return exported
 
 

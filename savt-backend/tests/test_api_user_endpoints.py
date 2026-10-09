@@ -334,7 +334,8 @@ async def test_knowledge_base_and_faq_reading(api, person, db_session):
     await KbArticleService(db_session).update(draft.id, KbArticleUpdateIn(is_published=False))
     faq_cat = await FaqCategoryService(db_session).create(FaqCategoryCreateIn(name="Гарантия"))
     entry = await FaqEntryService(db_session).create(FaqEntryCreateIn(category_id=faq_cat.id, question="Как продлить?", answer="Через сервис"))
-    await FaqEntryService(db_session).update(entry.id, FaqEntryUpdateIn(is_published=True))
+    hidden = await FaqEntryService(db_session).create(FaqEntryCreateIn(category_id=faq_cat.id, question="Скрытый вопрос тут", answer="Ответ"))
+    await FaqEntryService(db_session).update(hidden.id, FaqEntryUpdateIn(is_published=False))
 
     assert [c["name"] for c in (await api.get("/kb/categories", headers=person.headers)).json()] == ["Насосы"]
     listed = (await api.get("/kb/articles", headers=person.headers)).json()
@@ -342,7 +343,8 @@ async def test_knowledge_base_and_faq_reading(api, person, db_session):
     assert (await api.get(f"/kb/articles/{article.id}", headers=person.headers)).json()["description"] == "Шаг 1"
     assert (await api.get(f"/kb/articles/{draft.id}", headers=person.headers)).status_code == 404
     assert [c["name"] for c in (await api.get("/faq/categories", headers=person.headers)).json()] == ["Гарантия"]
-    assert (await api.get("/faq/entries", headers=person.headers)).json()["items"][0]["question"] == "Как продлить?"
+    faq = (await api.get("/faq/entries", headers=person.headers)).json()
+    assert [e["question"] for e in faq["items"]] == ["Как продлить?"]       # снятый с публикации клиенту не виден
     assert (await api.get("/tags", headers=person.headers)).status_code == 200
 
 

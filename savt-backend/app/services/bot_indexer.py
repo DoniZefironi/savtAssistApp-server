@@ -493,6 +493,31 @@ async def _resolve_project_document_scope(session: AsyncSession, project_id: int
     return project_ids, set(cabinet_rows)
 
 
+async def _reindex_model(
+    session: AsyncSession, model, source_type: str, index, already: set, stats: dict, label: str,
+    scope_filter=None,
+) -> None:
+    """Индексирует все записи модели, кроме уже проиндексированных. Сначала
+    читаются только id, а сама запись загружается внутри try: после rollback()
+    после сбоя ранее прочитанные объекты протухают, и обращение к ним (даже к
+    id) уронило бы весь прогон вместо одной записи."""
+    stmt = select(model.id)
+    if scope_filter is not None:
+        stmt = stmt.where(scope_filter)
+    for source_id in (await session.execute(stmt)).scalars().all():
+        if (source_type, source_id) in already:
+            stats["skipped"] += 1
+            continue
+        try:
+            await index(session, await session.get(model, source_id))
+            await session.commit()
+            stats[source_type] += 1
+        except Exception:
+            await session.rollback()
+            stats["failed"] += 1
+            logger.exception("Индексация %s %s не удалась", label, source_id)
+
+
 async def reindex_all(
     session: AsyncSession, force: bool = False,
     scope: str = "all", project_id: int | None = None,
@@ -527,56 +552,19 @@ async def reindex_all(
         already = set()
 
     if scope in ("all", "faq"):
-        entries = (await session.execute(select(FaqEntry))).scalars().all()
-        for e in entries:
-            if ("faq", e.id) in already:
-                stats["skipped"] += 1
-                continue
-            try:
-                await index_faq_entry(session, e)
-                await session.commit()
-                stats["faq"] += 1
-            except Exception:
-                await session.rollback()
-                stats["failed"] += 1
-                logger.exception("Индексация FAQ %s не удалась", e.id)
+        await _reindex_model(session, FaqEntry, "faq", index_faq_entry, already, stats, "FAQ")
 
     if scope in ("all", "kb_article"):
-        articles = (await session.execute(select(KbArticle))).scalars().all()
-        for a in articles:
-            if ("kb_article", a.id) in already:
-                stats["skipped"] += 1
-                continue
-            try:
-                await index_kb_article(session, a)
-                await session.commit()
-                stats["kb_article"] += 1
-            except Exception:
-                await session.rollback()
-                stats["failed"] += 1
-                logger.exception("Индексация статьи КБ %s не удалась", a.id)
+        await _reindex_model(session, KbArticle, "kb_article", index_kb_article, already, stats, "статьи КБ")
 
     if scope in ("all", "document"):
+        scope_filter = None
         if project_id is not None:
             project_ids, cabinet_ids = await _resolve_project_document_scope(session, project_id)
-            doc_stmt = select(Document).where(
-                or_(Document.project_id.in_(project_ids), Document.cabinet_id.in_(cabinet_ids))
-            )
-        else:
-            doc_stmt = select(Document)
-        docs = (await session.execute(doc_stmt)).scalars().all()
-        for d in docs:
-            if ("document", d.id) in already:
-                stats["skipped"] += 1
-                continue
-            try:
-                await index_document(session, d)
-                await session.commit()
-                stats["document"] += 1
-            except Exception:
-                await session.rollback()
-                stats["failed"] += 1
-                logger.exception("Индексация документа %s не удалась", d.id)
+            scope_filter = or_(Document.project_id.in_(project_ids), Document.cabinet_id.in_(cabinet_ids))
+        await _reindex_model(
+            session, Document, "document", index_document, already, stats, "документа", scope_filter,
+        )
 
     return stats
 
