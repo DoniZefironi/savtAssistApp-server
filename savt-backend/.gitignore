@@ -15,3 +15,4 @@ certbot-www/
 mobile-web/
 telemetry-proxy/bin/
 telemetry-proxy/obj/
+.coverage
