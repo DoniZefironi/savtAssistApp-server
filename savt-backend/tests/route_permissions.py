@@ -8,6 +8,11 @@ import inspect
 
 from fastapi.routing import APIRoute
 
+try:
+    from fastapi.routing import iter_route_contexts
+except ImportError:
+    iter_route_contexts = None
+
 ROLES = ["user", "operator", "admin", "superadmin"]
 
 # уровни: public — вход не нужен; user_or_guest — подойдёт и гостевой токен;
@@ -50,11 +55,21 @@ def classify(route: APIRoute) -> str:
     return PUBLIC
 
 
+def _api_routes(app):
+    """Маршруты с итоговыми путями и зависимостями. Новая FastAPI подключает роутеры
+    лениво и отдаёт плоский список через iter_route_contexts; старая держит готовые
+    APIRoute прямо в app.routes."""
+    if iter_route_contexts is None:
+        yield from (route for route in app.routes if isinstance(route, APIRoute))
+        return
+    for context in iter_route_contexts(app.routes):
+        if isinstance(context.original_route, APIRoute):
+            yield context
+
+
 def compute(app) -> dict[tuple[str, str], str]:
     result = {}
-    for route in app.routes:
-        if not isinstance(route, APIRoute):
-            continue
+    for route in _api_routes(app):
         for method in sorted(route.methods - {"HEAD", "OPTIONS"}):
             result[(method, route.path)] = classify(route)
     return result

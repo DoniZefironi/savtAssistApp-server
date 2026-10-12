@@ -76,7 +76,7 @@ FastAPI-бэкенда (PostgreSQL, Docker). Ядро — шкафы управ�
 | `PROJECT_FOLDERS_ROOT` | Путь внутри контейнера к смонтированной шаре NAS с папками проектов (по умолч. `/mnt/projects`). Пусто — папки проектов не создаются вовсе |
 | `NAS_SHARE_DEVICE` | UNC-путь шары NAS (`//host/share/...`) — нужен только `docker-compose.yml` для CIFS-монтирования, самому приложению не передаётся |
 | `NAS_SHARE_USER` / `NAS_SHARE_PASSWORD` | Учётные данные для монтирования шары NAS — тоже только для `docker-compose.yml` |
-| `APP_ENV` | Окружение (`dev`/`prod`), в `dev` включает SQL-логирование |
+| `APP_ENV` | Окружение (`dev`/`prod`). В `prod` отключены `/docs`, `/redoc` и `/openapi.json`; в `dev` они открыты и включено SQL-логирование |
 | `TELEGRAM_BOT_TOKEN` | Токен бота от @BotFather — доставка кода подтверждения телефона (SMS отключено полностью) |
 | `TELEGRAM_BOT_USERNAME` | Юзернейм бота без `@` — для сборки deep-link `t.me/<username>?start=...` |
 | `TELEGRAM_WEBHOOK_SECRET` | Свой случайный секрет (НЕ от Telegram) — сверяется с заголовком `X-Telegram-Bot-Api-Secret-Token` при вызове `setWebhook` |
@@ -210,6 +210,20 @@ openssl rand -hex 48   # генератор секретов
 > ```bash
 > docker exec savt-backend-nginx-1 grep secure_link_md5 /etc/nginx/nginx.conf
 > ```
+
+> **Проверка настроек безопасности.** Перед выкаткой на сервер (и после любой правки `.env`)
+> выполните:
+> ```bash
+> docker exec savt-backend-api-1 python -m app.cli check-config
+> ```
+> Команда перечисляет слабые места: `JWT_SECRET_KEY` и `STATIC_LINK_SECRET` короче 32
+> символов или оставлены значением по умолчанию, `CORS_ORIGINS=*`, `APP_ENV` не `prod`. Код
+> возврата `1`, если что-то найдено. Те же предупреждения приложение пишет в лог при каждом
+> запуске, но работу не останавливает.
+>
+> Файлы из `/static/` приложение отдаёт только с действующей подписью (так же, как nginx),
+> поэтому ссылка без подписи или с просроченной не работает ни через nginx, ни при обращении
+> к `api` напрямую.
 
 > Если меняете `POSTGRES_PASSWORD` на уже работающей БД, одного .env мало — пароль хранится в самой БД:
 > ```bash

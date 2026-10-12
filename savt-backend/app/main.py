@@ -10,7 +10,6 @@ from fastapi.middleware.cors import CORSMiddleware
 # для получения json ответов
 from fastapi.responses import JSONResponse
 # для статических файлов
-from fastapi.staticfiles import StaticFiles
 # для лимитов скорости запросов
 from slowapi.errors import RateLimitExceeded
 # для ограничения кол-во запросов
@@ -75,6 +74,8 @@ from app.services.service_request_service import sync_statuses_from_bitrix
 from app.services.reclamation_service import retry_bitrix_outbox
 from app.services import promo_service
 from app.core.limiter import limiter
+from app.core.startup_checks import config_problems, docs_enabled
+from app.core.static_files import SignedStaticFiles
 from app.database import AsyncSessionLocal
 
 # настройки логгера, применяется один раз при старте приложения и определяет, как выглядит и куда идут все логи, у которых нет своего 
@@ -117,7 +118,10 @@ async def lifespan(app: FastAPI):
     # не дает приложению подняться, если бд недоступно
     async with engine.connect() as conn:
         await conn.execute(text("SELECT 1"))
-    # пуш-уведомление, инициализируется один раз на процесс    
+    # слабые места настроек безопасности попадают в лог при каждом запуске
+    for problem in config_problems(settings):
+        logger.warning("Настройки безопасности: %s", problem)
+    # пуш-уведомление, инициализируется один раз на процесс
     init_firebase(settings.firebase_credentials_path)
 
     # Создаём системного пользователя Ася
@@ -157,7 +161,13 @@ async def lifespan(app: FastAPI):
     await engine.dispose()
 
 # Создание приложения с названием SAVT Assist API и привязка к lifespan
-app = FastAPI(title="SAVT Assist API", lifespan=lifespan)
+_docs = docs_enabled(settings.app_env)
+app = FastAPI(
+    title="SAVT Assist API", lifespan=lifespan,
+    docs_url="/docs" if _docs else None,
+    redoc_url="/redoc" if _docs else None,
+    openapi_url="/openapi.json" if _docs else None,
+)
 
 # для того, чтобы видеть настоящий ip клиента, от этого зависит рэйт лимит и логи
 # ProxyHeadersMiddleware - переписывает request.client.host на значение из заголовка, который приоставляет nginx.
@@ -279,7 +289,7 @@ app.include_router(admin_sim_router.router)
 app.include_router(admin_registration_requests_router.router)
 app.include_router(admin_password_reset_requests_router.router)
 app.include_router(reclamations_router.router)
-app.mount("/static", StaticFiles(directory="/code/uploads"), name="static")
+app.mount("/static", SignedStaticFiles(directory="/code/uploads"), name="static")
 
 # Бэзик эндпоинты
 @app.get("/")

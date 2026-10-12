@@ -1,0 +1,121 @@
+"""Защита сервера: проверка слабых настроек, отключение документации API в проде,
+раздача /static приложением только по действующей подписи. Сами подписи и их
+проверку (verify_signature) проверяют test_uploads.py и test_api_odds_and_ends.py."""
+import httpx
+import pytest
+from starlette.applications import Starlette
+from starlette.routing import Mount
+
+from app import cli
+from app.config import Settings, settings
+from app.core.signed_urls import sign_url
+from app.core.startup_checks import config_problems, docs_enabled, is_production
+from app.core.static_files import SignedStaticFiles
+
+STRONG = "k" * 40
+
+
+def _settings(**overrides) -> Settings:
+    base = dict(
+        database_url="postgresql+asyncpg://u:p@db/x", jwt_secret_key=STRONG, static_link_secret=STRONG,
+        cors_origins="https://helper.savt.by,http://10.1.0.208:8080", app_env="prod",
+    )
+    base.update(overrides)
+    return Settings(_env_file=None, **base)
+
+
+# --- настройки ---
+
+def test_a_sound_production_configuration_has_no_problems():
+    assert config_problems(_settings()) == []
+
+
+@pytest.mark.parametrize("overrides,fragment", [
+    ({"jwt_secret_key": "short"}, "JWT_SECRET_KEY"),
+    ({"jwt_secret_key": "change_me_to_a_long_random_secret_xxxxxxxxxxxxxxxx"}, "JWT_SECRET_KEY"),
+    ({"static_link_secret": ""}, "STATIC_LINK_SECRET не задан"),
+    ({"static_link_secret": "change_me_to_a_long_random_secret"}, "STATIC_LINK_SECRET не задан"),
+    ({"static_link_secret": "k" * 12}, "STATIC_LINK_SECRET короче"),
+    ({"cors_origins": "*"}, "CORS_ORIGINS"),
+    ({"cors_origins": "https://a.by, *"}, "CORS_ORIGINS"),
+    ({"app_env": "dev"}, "APP_ENV"),
+])
+def test_each_weak_setting_is_reported(overrides, fragment):
+    problems = config_problems(_settings(**overrides))
+
+    assert len(problems) == 1 and fragment in problems[0]
+
+
+def test_all_problems_are_listed_at_once():
+    assert len(config_problems(_settings(jwt_secret_key="x", static_link_secret="", cors_origins="*", app_env="dev"))) == 4
+
+
+def test_environment_names():
+    assert is_production("prod") and is_production(" Production ") and not is_production("dev") and not is_production("")
+    assert docs_enabled("dev") is True and docs_enabled("prod") is False and docs_enabled("production") is False
+
+
+def test_check_config_command(monkeypatch, capsys):
+    monkeypatch.setattr("app.config.settings", _settings())
+    cli._check_config()
+    assert "в порядке" in capsys.readouterr().out
+
+    monkeypatch.setattr("app.config.settings", _settings(cors_origins="*"))
+    with pytest.raises(SystemExit) as exit_info:
+        cli._check_config()
+    assert exit_info.value.code == 1 and "CORS_ORIGINS" in capsys.readouterr().out
+
+
+# --- документация API ---
+
+def test_the_application_follows_the_environment_for_its_docs():
+    from app.main import app
+
+    assert (app.docs_url, app.redoc_url, app.openapi_url) == (
+        ("/docs", "/redoc", "/openapi.json") if docs_enabled(settings.app_env) else (None, None, None)
+    )
+
+
+# --- раздача /static ---
+
+@pytest.fixture
+def static_client(tmp_path, monkeypatch):
+    (tmp_path / "photos").mkdir()
+    (tmp_path / "photos" / "a.txt").write_text("секретное содержимое", encoding="utf-8")
+    monkeypatch.setattr(settings, "static_link_secret", STRONG)
+    app = Starlette(routes=[Mount("/static", SignedStaticFiles(directory=str(tmp_path)), name="static")])
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test")
+
+
+async def test_file_is_served_only_with_a_valid_signature(static_client):
+    async with static_client as client:
+        valid = await client.get(sign_url("/static/photos/a.txt"))
+        unsigned = await client.get("/static/photos/a.txt")
+        other_file = await client.get(sign_url("/static/photos/a.txt").replace("a.txt", "b.txt"))
+        expired = await client.get(sign_url("/static/photos/a.txt", ttl_seconds=-5))
+        missing_signed = await client.get(sign_url("/static/photos/gone.txt"))
+
+    assert valid.status_code == 200 and valid.text == "секретное содержимое"
+    assert unsigned.status_code == other_file.status_code == expired.status_code == 403
+    assert missing_signed.status_code == 404               # подпись верна, файла нет
+
+
+async def test_without_a_secret_files_stay_open_for_local_runs(static_client, monkeypatch):
+    monkeypatch.setattr(settings, "static_link_secret", "")
+
+    async with static_client as client:
+        assert (await client.get("/static/photos/a.txt")).status_code == 200
+
+
+async def test_the_real_application_checks_signatures_on_static(api, monkeypatch):
+    monkeypatch.setattr(settings, "static_link_secret", STRONG)
+
+    assert (await api.get("/static/photos/anything.jpg")).status_code == 403
+    assert (await api.get(sign_url("/static/photos/anything.jpg"))).status_code == 404
+
+
+def test_the_application_mounts_the_signed_variant():
+    from app.main import app
+
+    mounts = [route for route in app.routes if getattr(route, "name", None) == "static"]
+    assert len(mounts) == 1 and isinstance(mounts[0].app, SignedStaticFiles)

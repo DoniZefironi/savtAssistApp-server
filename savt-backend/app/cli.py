@@ -64,13 +64,28 @@ async def _import_bitrix_deals() -> None:
         )
 
 
+def _check_config() -> None:
+    from app.config import settings
+    from app.core.startup_checks import config_problems
+
+    problems = config_problems(settings)
+    if not problems:
+        print("Настройки безопасности в порядке")
+        return
+    print("Найдены слабые места настроек:")
+    for problem in problems:
+        print(f"  - {problem}")
+    sys.exit(1)
+
+
 def main():
     usage = (
         "Использование:\n"
         "  python -m app.cli create-superadmin <login> <password> [full_name]\n"
         "  python -m app.cli create-admin <login> <password> [full_name]\n"
         "  python -m app.cli create-operator <login> <password> [full_name]\n"
-        "  python -m app.cli import-bitrix-deals"
+        "  python -m app.cli import-bitrix-deals\n"
+        "  python -m app.cli check-config"
     )
 
     if len(sys.argv) < 2:
@@ -78,6 +93,10 @@ def main():
         sys.exit(1)
 
     command = sys.argv[1]
+
+    if command == "check-config":
+        _check_config()
+        return
 
     if command == "import-bitrix-deals":
         asyncio.run(_import_bitrix_deals())
