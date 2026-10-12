@@ -1,14 +1,22 @@
 import asyncio
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from app.core.dependencies import get_current_user
+from app.core.limiter import limiter
 from app.core.signed_urls import SignedUrl, strip_signature, verify_signature
 from app.models.user import User
-from app.services.upload_service import UPLOAD_ROOT, save_attachment, save_voice, transcode_to_ogg_opus
+from app.services.upload_service import (
+    MAX_VOICE_SIZE,
+    UPLOAD_ROOT,
+    exceeds_recognition_limit,
+    save_attachment,
+    save_voice,
+    transcode_to_ogg_opus,
+)
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
@@ -53,9 +61,16 @@ class TranscribeIn(BaseModel):
 class TranscribeOut(BaseModel):
     text: str
 
+# Размер одного файла ограничен (upload_service), число загрузок в минуту — этим:
+# иначе любой вошедший пользователь за минуту заливает десятки файлов по 500 МБ
+# и забивает диск. Лимит на IP, как и остальные (в офисе за общим NAT — на всех).
+_UPLOADS_PER_MINUTE = "60/minute"
+
 # Загрузить вложения
 @router.post("/attachment", response_model=UploadOut)
+@limiter.limit(_UPLOADS_PER_MINUTE)
 async def upload_attachment(
+    request: Request,
     file: UploadFile = File(...),
     _: User = Depends(get_current_user),
 ):
@@ -63,7 +78,9 @@ async def upload_attachment(
 
 # Загрузить ГС
 @router.post("/voice", response_model=UploadOut)
+@limiter.limit(_UPLOADS_PER_MINUTE)
 async def upload_voice(
+    request: Request,
     file: UploadFile = File(...),
     _: User = Depends(get_current_user),
 ):
@@ -77,6 +94,11 @@ async def transcribe_voice(
 ):
     from app.services import yandex_service
     file_path = _resolve_static_path(payload.file_url)
+    if exceeds_recognition_limit(file_path):
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Файл слишком большой для распознавания. Максимум: {MAX_VOICE_SIZE // (1024 * 1024)} МБ",
+        )
 
     raw_bytes = file_path.read_bytes()
     audio_bytes = await asyncio.to_thread(transcode_to_ogg_opus, raw_bytes)

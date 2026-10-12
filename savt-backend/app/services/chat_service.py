@@ -982,12 +982,15 @@ async def _transcribe_voice_attachment(file_url: str) -> str | None:
     """Распознаёт голосовое вложение в текст — та же логика (транскодирование
     + STT/LRR по размеру), что и ручной POST /upload/transcribe, только
     вызывается автоматически, когда боту прислали голосовое без текста (см.
-    send_message._bot_reply). None — файла на диске нет или он пуст."""
+    send_message._bot_reply). None — файла на диске нет или он слишком большой
+    для голосового."""
     from app.services import yandex_service
-    from app.services.upload_service import UPLOAD_ROOT, transcode_to_ogg_opus
+    from app.services.upload_service import UPLOAD_ROOT, exceeds_recognition_limit, transcode_to_ogg_opus
 
     path = (UPLOAD_ROOT / file_url.removeprefix("/static/")).resolve()
     if not path.is_relative_to(UPLOAD_ROOT.resolve()) or not await asyncio.to_thread(path.is_file):
+        return None
+    if await asyncio.to_thread(exceeds_recognition_limit, path):
         return None
 
     raw_bytes = await asyncio.to_thread(path.read_bytes)

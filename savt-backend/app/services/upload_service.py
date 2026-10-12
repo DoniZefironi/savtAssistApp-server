@@ -87,6 +87,13 @@ MAX_ATTACHMENT_SIZE = 500 * 1024 * 1024  # 500 МБ
 MAX_VOICE_SIZE = 25 * 1024 * 1024        # 25 МБ
 
 
+def exceeds_recognition_limit(path: Path) -> bool:
+    """Распознавание целиком читает файл в память и гонит его через ffmpeg, а
+    ссылку можно дать на любой файл из /uploads (вложения до 500 МБ), поэтому
+    длиннее голосового, которое вообще можно загрузить, не обрабатываем."""
+    return path.stat().st_size > MAX_VOICE_SIZE
+
+
 @dataclass
 class FileInfo:
     url: str

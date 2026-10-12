@@ -264,6 +264,44 @@ async def test_long_recordings_use_the_long_recognition(api, make_user, speech, 
     assert response.json() == {"text": "Длинная запись"} and speech.short == []
 
 
+async def test_files_too_big_for_a_voice_message_are_not_recognized(api, make_user, speech, monkeypatch):
+    monkeypatch.setattr(upload_service, "MAX_VOICE_SIZE", 2)       # файл в хранилище — 3 байта
+    user = await make_user()
+
+    response = await api.post("/upload/transcribe", headers=_auth(user), json={"file_url": sign_url("/static/voices/v.ogg")})
+
+    assert response.status_code == 413 and "Максимум" in response.json()["detail"]
+    assert speech.short == [] and speech.long == []
+
+
+async def test_the_bot_skips_voice_files_too_big_for_recognition(speech, monkeypatch):
+    from app.services import chat_service
+
+    monkeypatch.setattr(upload_service, "transcode_to_ogg_opus", lambda raw: b"opus:" + raw)
+    monkeypatch.setattr(yandex_service, "MAX_SYNC_STT_BYTES", 1000)
+    assert await chat_service._transcribe_voice_attachment("/static/voices/v.ogg") == "Не работает насос"
+
+    monkeypatch.setattr(upload_service, "MAX_VOICE_SIZE", 2)
+    assert await chat_service._transcribe_voice_attachment("/static/voices/v.ogg") is None
+    assert await chat_service._transcribe_voice_attachment("/static/voices/missing.ogg") is None
+
+
+async def test_uploads_are_rate_limited_per_client(api, make_user, monkeypatch):
+    from app.core.limiter import limiter
+
+    monkeypatch.setattr(limiter, "enabled", True)
+    limiter.reset()
+    user = await make_user()
+    pdf = lambda: {"file": ("a.pdf", io.BytesIO(b"x"), "application/pdf")}
+
+    try:
+        statuses = [(await api.post("/upload/attachment", headers=_auth(user), files=pdf())).status_code for _ in range(61)]
+    finally:
+        limiter.reset()
+
+    assert statuses[:60] == [200] * 60 and statuses[60] == 429
+
+
 async def test_recognition_failure_is_a_503_and_bad_links_are_refused(api, make_user, speech):
     user = await make_user()
     speech.error = RuntimeError("SpeechKit недоступен")
