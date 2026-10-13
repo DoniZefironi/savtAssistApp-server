@@ -1,6 +1,8 @@
 """Проверка настроек безопасности: что остаётся слабым или выключенным. Проблемы
 пишутся в лог при старте и выводятся командой `python -m app.cli check-config`
 (её удобно запускать перед выкаткой на сервер, не поднимая приложение)."""
+from urllib.parse import urlsplit
+
 from app.config import Settings
 
 _PLACEHOLDER_PREFIX = "change_me"
@@ -44,6 +46,15 @@ def config_problems(settings: Settings) -> list[str]:
         problems.append(
             "CORS_ORIGINS=*: любой сайт может обращаться к API из браузера пользователя; "
             "перечислите адреса панели и веб-версии приложения"
+        )
+
+    # Браузер присылает origin без пути (https://host:порт), а CORS сравнивает строки
+    # точно, поэтому запись с путём или завершающим слэшем не совпадёт никогда
+    with_path = [o for o in origins if o != "*" and urlsplit(o).path]
+    if with_path:
+        problems.append(
+            f"CORS_ORIGINS: {', '.join(with_path)} — адрес с путём никогда не совпадёт с origin браузера, "
+            "нужен вид https://домен или http://домен:порт"
         )
 
     if not is_production(settings.app_env):

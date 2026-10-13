@@ -38,6 +38,8 @@ def test_a_sound_production_configuration_has_no_problems():
     ({"static_link_secret": "k" * 12}, "STATIC_LINK_SECRET короче"),
     ({"cors_origins": "*"}, "CORS_ORIGINS"),
     ({"cors_origins": "https://a.by, *"}, "CORS_ORIGINS"),
+    ({"cors_origins": "https://helper.savt.by/app/"}, "https://helper.savt.by/app/ — адрес с путём"),
+    ({"cors_origins": "https://helper.savt.by/"}, "https://helper.savt.by/ — адрес с путём"),
     ({"app_env": "dev"}, "APP_ENV"),
 ])
 def test_each_weak_setting_is_reported(overrides, fragment):

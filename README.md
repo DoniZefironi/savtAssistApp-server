@@ -217,7 +217,8 @@ openssl rand -hex 48   # генератор секретов
 > docker exec savt-backend-api-1 python -m app.cli check-config
 > ```
 > Команда перечисляет слабые места: `JWT_SECRET_KEY` и `STATIC_LINK_SECRET` короче 32
-> символов или оставлены значением по умолчанию, `CORS_ORIGINS=*`, `APP_ENV` не `prod`. Код
+> символов или оставлены значением по умолчанию, `CORS_ORIGINS=*` или адрес с путём
+> (`https://домен/app/` не совпадёт с origin браузера никогда), `APP_ENV` не `prod`. Код
 > возврата `1`, если что-то найдено. Те же предупреждения приложение пишет в лог при каждом
 > запуске, но работу не останавливает.
 >
@@ -243,11 +244,28 @@ docker compose up -d                # nginx стартует уже с серт�
 
 ### 3. Автопродление сертификата
 
-`crontab -e`, добавить:
+Сертификат продлевает системный таймер пакета certbot (`systemctl list-timers | grep certbot`),
+отдельный cron не нужен. Файлы на диске обновляются сами, а nginx держит старый сертификат в
+памяти, поэтому после каждого продления его нужно перезагрузить — для этого certbot запускает
+скрипты из `/etc/letsencrypt/renewal-hooks/deploy/`:
 
+```bash
+sudo tee /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh >/dev/null <<'EOF'
+#!/bin/sh
+docker exec savt-backend-nginx-1 nginx -s reload
+EOF
+sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+sudo certbot renew --dry-run        # → all simulated renewals succeeded
 ```
-0 4 * * 1 certbot renew --webroot -w /path/to/savt-backend/certbot-www --deploy-hook "docker exec savt-backend-nginx-1 nginx -s reload" >> /var/log/certbot-renew.log 2>&1
-```
+
+Срок действия того, что сейчас отдаёт nginx:
+`echo | openssl s_client -connect localhost:443 -servername helper.savt.by 2>/dev/null | openssl x509 -noout -dates`.
+
+nginx отдаёт на 443 заголовок `Strict-Transport-Security` (HSTS): браузер после первого захода
+ходит на `helper.savt.by` только по https. Заголовок привязан к имени хоста, а не к порту, на
+панель по `IP:8080` он не влияет. Просроченный сертификат при включённом HSTS браузер блокирует
+полностью, без кнопки «всё равно продолжить», поэтому продление и перезагрузка nginx должны
+работать (см. выше).
 
 ### 4. Проверка
 
