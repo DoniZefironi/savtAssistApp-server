@@ -5240,6 +5240,25 @@ crontab -e
 > после `git pull` флаг «исполняемый» у файла может слететь, и cron молча перестанет делать копии.
 > Для выгрузки в Object Storage добавьте `BACKUP_S3_UPLOAD=1`; если бакет не настроен — не добавляйте.
 
+### Оповещение, если бэкап не сделан
+
+`backup-check.sh` запускается отдельной строкой cron через час после бэкапа. Проверяет, что
+самому свежему локальному бэкапу не больше `BACKUP_MAX_AGE_HOURS` часов (умолч. `26`), что то же
+верно для копии на NAS (если `BACKUP_NAS_COPY=1`) и что на диске свободно не меньше
+`BACKUP_MIN_FREE_PERCENT` процентов (умолч. `15`). При проблеме отправляет сообщение в Telegram
+от имени бота (`TELEGRAM_BOT_TOKEN` берётся из `.env`) тому, чей chat_id указан в
+`BACKUP_ALERT_CHAT_ID`, и завершается с кодом `1`. Проверка отдельная от `backup.sh` намеренно:
+она сработает и тогда, когда сам `backup.sh` не запустился.
+
+chat_id узнаётся у бота `@userinfobot`; у самого бота SAVT (`TELEGRAM_BOT_USERNAME` из `.env`)
+получатель должен нажать «Старт», иначе Telegram не даст боту писать первым.
+
+```
+0 4 * * * cd /path/to/savt-backend && BACKUP_ALERT_CHAT_ID=ваш_chat_id BACKUP_NAS_COPY=1 bash backup-check.sh >> /path/to/savt-backend/backup.log 2>&1
+```
+
+Проверка связи без реальной проблемы: `BACKUP_ALERT_CHAT_ID=ваш_chat_id bash backup-check.sh --test`.
+
 ### Проверить, что бэкапы реально делаются
 
 ```bash
