@@ -384,6 +384,13 @@ class ChatService:
             if existing is not None:
                 return existing
 
+        # Ответить можно только на сообщение этого же чата: иначе сообщение привязывалось бы
+        # к чужой переписке, а по ответу можно было бы перебирать существующие номера
+        if data.reply_to_message_id:
+            target = await self.msg_repo.get_by_id(data.reply_to_message_id)
+            if target is None or target.chat_id != chat_id:
+                raise NotFoundError("Сообщение, на которое вы отвечаете, не найдено в этом чате")
+
         try:
             msg = await self.msg_repo.create(
                 chat_id=chat_id,

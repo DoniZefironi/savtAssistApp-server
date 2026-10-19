@@ -1,9 +1,12 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AlreadyExistsError, NotFoundError
+from app.models.faq_entry import FaqEntry
+from app.models.kbarticle import KbArticle
 from app.repositories.favorite import FavoriteRepository
 from app.schemas.favorites import FavoriteIn, FavoriteOut
 from app.schemas.pagination import PageOut, make_page
+from app.services.document_service import UserDocumentService
 
 
 class FavoriteService:
@@ -11,7 +14,19 @@ class FavoriteService:
         self.session = session
         self.repo = FavoriteRepository(session)
 
+    async def _ensure_exists_and_visible(self, user_id: int, entity_type: str, entity_id: int) -> None:
+        """Без этой проверки по ответу на добавление можно перебирать номера и узнавать, какие
+        документы, черновики статей и вопросов существуют."""
+        if entity_type == "document":
+            await UserDocumentService(self.session).ensure_visible_by_id(user_id, entity_id)
+            return
+        model = KbArticle if entity_type == "kb_article" else FaqEntry
+        entity = await self.session.get(model, entity_id)
+        if entity is None or not entity.is_published:
+            raise NotFoundError("Не найдено")
+
     async def add(self, user_id: int, data: FavoriteIn) -> FavoriteOut:
+        await self._ensure_exists_and_visible(user_id, data.entity_type, data.entity_id)
         existing = await self.repo.find(user_id, data.entity_type, data.entity_id)
         if existing is not None:
             raise AlreadyExistsError("Уже в избранном")

@@ -290,6 +290,14 @@ class UserDocumentService:
         self.favorite_repo = FavoriteRepository(session)
         self.user_repo = UserRepository(session)
 
+    async def ensure_visible_by_id(self, user_id: int, doc_id: int) -> None:
+        """Для тех, кто работает с документом по одному номеру (избранное): нет такого, служебный
+        или не виден пользователю — один и тот же NotFoundError."""
+        doc = await self.doc_repo.get_by_id(doc_id)
+        if doc is None or doc.is_internal:
+            raise NotFoundError("Документ не найден")
+        await self._ensure_visible(user_id, doc)
+
     async def _ensure_visible(self, user_id: int, doc: Document) -> None:
         """Документ виден тому, у кого есть доступ к его ШУ или проекту (та же модель, что у
         списков выше), и сотрудникам: админ-панель скачивает документы этой же ручкой. Остальным

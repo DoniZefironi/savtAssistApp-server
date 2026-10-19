@@ -71,6 +71,7 @@ async def world(db_session, make_user, make_project, make_cabinet, link_user_pro
     cabinet_chat = await make_chat(owner, "cabinet", cabinet_id=cabinet.id)
     project_chat = await make_chat(owner, "project", project_id=project.id)
     support_chat = await make_chat(owner, "support")
+    outsider_chat = await make_chat(outsider, "support")
 
     message = Message(chat_id=cabinet_chat.id, sender_id=owner.id, text=f"{SECRET} сообщение")
     notification = Notification(user_id=owner.id, type="chat_message", title=SECRET, body=SECRET)
@@ -88,6 +89,7 @@ async def world(db_session, make_user, make_project, make_cabinet, link_user_pro
     # Только числа и строки: после первого запроса объекты сессии «устаревают», и обращение
     # к их полям вне асинхронного контекста падает
     return SimpleNamespace(
+        owner_id=owner.id, outsider_chat_id=outsider_chat.id,
         owner_phone=owner.phone, project_id=project.id, cabinet_id=cabinet.id,
         cabinet_code=cabinet.unique_code, message_id=message.id, notification_id=notification.id,
         favorite_id=favorite.id, device_id=device.id, open_doc_id=open_doc.id, locked_doc_id=locked_doc.id,
@@ -174,6 +176,70 @@ async def test_lists_of_an_outsider_contain_nothing_of_the_owner(api, world, pat
 
     assert SECRET not in response.text and OWNER_FCM_TOKEN not in response.text
     assert world.owner_phone not in response.text
+
+
+@pytest.mark.parametrize("path", LIST_ROUTES)
+async def test_lists_ignore_foreign_ids_and_search_for_foreign_text(api, world, path):
+    # те же списки, но с идентификаторами и поисковой строкой, нацеленными на чужое
+    params = {
+        "search": SECRET, "q": SECRET, "query": SECRET, "cabinet_id": world.cabinet_id,
+        "project_id": world.project_id, "chat_id": world.chat_ids[0], "user_id": world.owner_id,
+    }
+    response = await api.get(path, params=params, headers=world.headers)
+
+    assert response.status_code != 500
+    assert SECRET not in response.text and world.owner_phone not in response.text
+
+
+# --- идентификаторы чужих объектов в теле запроса ---
+
+_REQUEST_TEXT = "Не включается шкаф, нужен ремонт"
+
+
+async def test_outsider_cannot_open_a_service_request_on_foreign_objects(api, db_session, world):
+    from app.models.service_request import ServiceRequest
+
+    for target in ({"cabinet_id": world.cabinet_id}, {"project_id": world.project_id}):
+        response = await api.post(
+            "/service-requests", headers=world.headers,
+            json={**target, "request_type": "repair", "description": _REQUEST_TEXT},
+        )
+        assert 400 <= response.status_code < 500 and response.status_code != 422, (target, response.text)
+
+    count = (await db_session.execute(select(func.count()).select_from(ServiceRequest))).scalar_one()
+    assert count == 0
+
+
+async def test_outsider_cannot_ask_to_add_a_cabinet_to_a_foreign_project(api, db_session, world):
+    from app.models.cabinet_addition_request import CabinetAdditionRequest
+
+    response = await api.post(
+        "/cabinets/add-by-photo", headers=world.headers,
+        json={"project_id": world.project_id, "photo_url": "/static/photos/x.jpg", "user_comment": "нет шкафа"},
+    )
+
+    assert 400 <= response.status_code < 500 and response.status_code != 422, response.text
+    count = (await db_session.execute(select(func.count()).select_from(CabinetAdditionRequest))).scalar_one()
+    assert count == 0
+
+
+async def test_outsider_cannot_favorite_a_document_he_cannot_see(api, db_session, world):
+    # без этого по ответу можно перебирать номера документов и узнавать, какие существуют
+    for doc_id in (world.open_doc_id, world.locked_doc_id):
+        response = await api.post(
+            "/favorites", headers=world.headers, json={"entity_type": "document", "entity_id": doc_id},
+        )
+        assert response.status_code == 404, (doc_id, response.status_code, response.text)
+
+
+async def test_outsider_cannot_reply_to_a_message_of_a_foreign_chat(api, db_session, world):
+    response = await api.post(
+        f"/chats/{world.outsider_chat_id}/messages", headers=world.headers,
+        json={"text": "привет", "reply_to_message_id": world.message_id},
+    )
+
+    assert 400 <= response.status_code < 500 and response.status_code != 422, (response.status_code, response.text)
+    assert SECRET not in response.text
 
 
 @pytest.mark.parametrize("method,path", USER_ROUTES, ids=lambda value: str(value))

@@ -26,37 +26,87 @@ from app.services.tag_service import TagService
 
 # --- избранное ---
 
-async def test_favorites_add_list_remove(db_session, make_user):
+@pytest.fixture
+async def shared_project(make_user, make_project, link_user_project):
+    """Проект с двумя участниками: избранным можно сделать только то, что человеку видно."""
     user, other = await make_user(), await make_user()
+    project = await make_project()
+    await link_user_project(user, project)
+    await link_user_project(other, project)
+    return SimpleNamespace(user=user, other=other, project=project)
+
+
+@pytest.fixture
+async def published_faq_entry(db_session):
+    from app.models.faq_category import FaqCategory
+    from app.models.faq_entry import FaqEntry
+
+    category = FaqCategory(name="Общие")
+    db_session.add(category)
+    await db_session.flush()
+    entry = FaqEntry(category_id=category.id, question="Как включить?", answer="Кнопкой", is_published=True)
+    db_session.add(entry)
+    await db_session.flush()
+    return entry
+
+
+async def test_favorites_add_list_remove(db_session, shared_project, make_document, published_faq_entry):
+    user, other = shared_project.user, shared_project.other
+    document = await make_document(project_id=shared_project.project.id)
     svc = FavoriteService(db_session)
 
-    doc = await svc.add(user.id, FavoriteIn(entity_type="document", entity_id=5))
-    await svc.add(user.id, FavoriteIn(entity_type="faq_entry", entity_id=5))  # тот же id, другой тип
-    await svc.add(other.id, FavoriteIn(entity_type="document", entity_id=5))  # у другого человека своё
+    doc = await svc.add(user.id, FavoriteIn(entity_type="document", entity_id=document.id))
+    await svc.add(user.id, FavoriteIn(entity_type="faq_entry", entity_id=published_faq_entry.id))
+    await svc.add(other.id, FavoriteIn(entity_type="document", entity_id=document.id))  # у другого человека своё
 
-    assert (doc.entity_type, doc.entity_id) == ("document", 5)
+    assert (doc.entity_type, doc.entity_id) == ("document", document.id)
     assert (await svc.list_favorites(user.id)).total == 2
     only_docs = await svc.list_favorites(user.id, entity_type="document")
     assert [f.entity_type for f in only_docs.items] == ["document"]
     with pytest.raises(AlreadyExistsError):
-        await svc.add(user.id, FavoriteIn(entity_type="document", entity_id=5))
+        await svc.add(user.id, FavoriteIn(entity_type="document", entity_id=document.id))
 
-    await svc.remove(user.id, "document", 5)
+    await svc.remove(user.id, "document", document.id)
     assert (await svc.list_favorites(user.id)).total == 1
     assert (await svc.list_favorites(other.id)).total == 1
     with pytest.raises(NotFoundError):
-        await svc.remove(user.id, "document", 5)
+        await svc.remove(user.id, "document", document.id)
 
 
-async def test_favorites_are_paginated(db_session, make_user):
-    user = await make_user()
+async def test_favorites_are_paginated(db_session, shared_project, make_document):
     svc = FavoriteService(db_session)
-    for n in range(1, 6):
-        await svc.add(user.id, FavoriteIn(entity_type="document", entity_id=n))
+    for _ in range(5):
+        document = await make_document(project_id=shared_project.project.id)
+        await svc.add(shared_project.user.id, FavoriteIn(entity_type="document", entity_id=document.id))
 
-    page = await svc.list_favorites(user.id, page=2, size=2)
+    page = await svc.list_favorites(shared_project.user.id, page=2, size=2)
 
     assert page.total == 5 and len(page.items) == 2
+
+
+async def test_only_visible_and_existing_things_can_be_favorited(db_session, make_user, make_document):
+    from app.models.faq_category import FaqCategory
+    from app.models.faq_entry import FaqEntry
+
+    outsider = await make_user()
+    foreign_doc = await make_document()                       # проект, в котором человека нет
+    internal_doc = await make_document(is_internal=True)
+    category = FaqCategory(name="Общие")
+    db_session.add(category)
+    await db_session.flush()
+    draft = FaqEntry(category_id=category.id, question="Черновик", answer="…", is_published=False)
+    db_session.add(draft)
+    await db_session.flush()
+    svc = FavoriteService(db_session)
+
+    for entity_type, entity_id in (
+        ("document", foreign_doc.id), ("document", internal_doc.id), ("document", 999999),
+        ("faq_entry", draft.id), ("faq_entry", 999999), ("kb_article", 999999),
+    ):
+        with pytest.raises(NotFoundError):
+            await svc.add(outsider.id, FavoriteIn(entity_type=entity_type, entity_id=entity_id))
+
+    assert (await svc.list_favorites(outsider.id)).total == 0
 
 
 @pytest.mark.parametrize("kwargs", [

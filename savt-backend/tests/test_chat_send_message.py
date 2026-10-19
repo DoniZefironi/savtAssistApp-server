@@ -234,6 +234,20 @@ async def test_reply_to_is_stored(db_session, make_user, make_chat, env):
     assert reply.reply_to_message_id == first.id
 
 
+async def test_reply_only_to_a_message_of_the_same_chat(db_session, make_user, make_chat, env):
+    from app.core.exceptions import NotFoundError
+
+    owner, other = await make_user(), await make_user()
+    chat = await make_chat(owner, chat_type="support", bot_active=False)
+    foreign_chat = await make_chat(other, chat_type="support", bot_active=False)
+    foreign = await send(db_session, foreign_chat, other, text_msg("Чужая переписка"))
+
+    with pytest.raises(NotFoundError):
+        await send(db_session, chat, owner, text_msg("Ответ", reply_to_message_id=foreign.id))
+    with pytest.raises(NotFoundError):
+        await send(db_session, chat, owner, text_msg("Ответ", reply_to_message_id=999999))
+
+
 # --- realtime ---
 
 async def test_events_are_published_after_save(db_session, make_user, make_chat, env):

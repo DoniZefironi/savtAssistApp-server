@@ -311,14 +311,21 @@ async def test_documents_and_access_request_over_http(api, person, make_project,
     assert (await api.get(f"/projects/{project.id}/photos", headers=person.headers)).status_code == 403  # фото только сотрудникам
 
 
-async def test_favorites_over_http(api, person):
-    added = await api.post("/favorites", headers=person.headers, json={"entity_type": "document", "entity_id": 5})
+async def test_favorites_over_http(api, person, make_project, link_user_project, make_document):
+    project = await make_project()
+    await link_user_project(person.user, project)
+    doc_id = (await make_document(project_id=project.id)).id
+    foreign_id = (await make_document()).id               # проект, в котором человека нет
+
+    added = await api.post("/favorites", headers=person.headers, json={"entity_type": "document", "entity_id": doc_id})
     assert added.status_code == 201
-    assert (await api.post("/favorites", headers=person.headers, json={"entity_type": "document", "entity_id": 5})).status_code == 409
+    assert (await api.post("/favorites", headers=person.headers, json={"entity_type": "document", "entity_id": doc_id})).status_code == 409
     assert (await api.post("/favorites", headers=person.headers, json={"entity_type": "cabinet", "entity_id": 5})).status_code == 422
+    assert (await api.post("/favorites", headers=person.headers, json={"entity_type": "document", "entity_id": foreign_id})).status_code == 404
+    assert (await api.post("/favorites", headers=person.headers, json={"entity_type": "document", "entity_id": 999999})).status_code == 404
     assert (await api.get("/favorites?entity_type=document", headers=person.headers)).json()["total"] == 1
-    assert (await api.delete("/favorites/document/5", headers=person.headers)).status_code == 204
-    assert (await api.delete("/favorites/document/5", headers=person.headers)).status_code == 404
+    assert (await api.delete(f"/favorites/document/{doc_id}", headers=person.headers)).status_code == 204
+    assert (await api.delete(f"/favorites/document/{doc_id}", headers=person.headers)).status_code == 404
 
 
 async def test_knowledge_base_and_faq_reading(api, person, db_session):
