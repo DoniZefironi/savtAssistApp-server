@@ -40,6 +40,12 @@ def strip_signature(url: str | None) -> str | None:
     return urlsplit(url).path or url
 
 
+def _expected_signature(expires: int, path: str, secret: str) -> str:
+    digest = hashlib.md5(f"{expires}{path} {secret}".encode("utf-8")).digest()
+    # nginx secure_link ждёт base64url без "=" (см. secure_link_md5)
+    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+
 def sign_url(url: str | None, ttl_seconds: int | None = None) -> str | None:
     """Добавляет к /static/-ссылке подпись и срок годности.
 
@@ -65,10 +71,7 @@ def sign_url(url: str | None, ttl_seconds: int | None = None) -> str | None:
     # "$uri" + первые буквы секрета как одно имя переменной ($uritest...) и
     # не запустится вовсе. Секрет — в конце строки, иначе конструкция была бы
     # уязвима к length-extension.
-    digest = hashlib.md5(f"{expires}{path} {secret}".encode("utf-8")).digest()
-    # nginx secure_link ждёт base64url без "=" (см. secure_link_md5)
-    signature = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
-    return f"{path}?md5={signature}&expires={expires}"
+    return f"{path}?md5={_expected_signature(expires, path, secret)}&expires={expires}"
 
 
 def verify_signature(url: str | None) -> bool:
@@ -100,9 +103,38 @@ def verify_signature(url: str | None) -> bool:
     if expires < int(time.time()):
         return False
 
-    digest = hashlib.md5(f"{expires}{parsed.path} {secret}".encode("utf-8")).digest()
-    expected = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
-    return hmac.compare_digest(md5_param, expected)
+    return hmac.compare_digest(md5_param, _expected_signature(expires, parsed.path, secret))
+
+
+def was_issued(url: str | None) -> bool:
+    """Подпись настоящая, то есть эту ссылку выдали мы. Срок действия не смотрится: клиент
+    вправе вернуть ссылку позже, например отправить сообщение из оффлайн-очереди через несколько
+    суток после загрузки файла. Нужна на входе: подпись снимается (strip_signature), и без этой
+    проверки в сообщение можно было бы вписать любой /static/-путь, а сервер подписал бы его в
+    ответе, выдав ссылку на чужой файл тому, кто знает или угадал его имя."""
+    secret = settings.static_link_secret
+    if not secret:
+        return True
+    parsed = urlsplit(url or "")
+    params = parse_qs(parsed.query)
+    md5_param = (params.get("md5") or [None])[0]
+    expires_param = (params.get("expires") or [None])[0]
+    if not md5_param or not expires_param:
+        return False
+    try:
+        expires = int(expires_param)
+    except ValueError:
+        return False
+    return hmac.compare_digest(md5_param, _expected_signature(expires, parsed.path, secret))
+
+
+def accept_issued_url(url: str | None) -> str | None:
+    """Для полей схем, куда клиент присылает ссылку на файл: путь в /static/ принимается только
+    с настоящей подписью (см. was_issued) и сохраняется голым; всё остальное (цвет обоев, внешняя
+    ссылка, пусто) проходит как раньше."""
+    if url and urlsplit(url).path.startswith(STATIC_PREFIX) and not was_issued(url):
+        raise ValueError("Ссылка на файл недействительна: загрузите файл заново")
+    return strip_signature(url)
 
 
 def sign_url_long(url: str | None) -> str | None:

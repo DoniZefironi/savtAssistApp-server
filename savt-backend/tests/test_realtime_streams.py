@@ -21,6 +21,21 @@ def _auth(user, role):
     return {"Authorization": f"Bearer {create_access_token(user_id=user.id, role=role)}"}
 
 
+@pytest.fixture(autouse=True)
+def streaming_allowed(monkeypatch):
+    """Тикеты тут выдаются несуществующим пользователям, а настоящая проверка прав по базе
+    проверяется отдельно (см. конец файла); по умолчанию поток разрешён."""
+    state = SimpleNamespace(allowed=True, calls=[])
+
+    async def may_stream(user_id, scope):
+        state.calls.append((user_id, scope))
+        return state.allowed
+
+    monkeypatch.setattr(operator_events, "may_stream", may_stream)
+    monkeypatch.setattr(user_events, "may_stream", may_stream)
+    return state
+
+
 async def _until(predicate, timeout=1.0):
     deadline = asyncio.get_running_loop().time() + timeout
     while not predicate():
@@ -131,7 +146,7 @@ def test_sse_event_format():
 async def test_sse_stream_greets_delivers_pings_and_unsubscribes(monkeypatch):
     monkeypatch.setattr(operator_events, "_HEARTBEAT_SECONDS", 0.02)
     request = _Request()
-    stream = operator_events._sse_stream(request, "sse-test")
+    stream = operator_events._sse_stream(request, "sse-test", 5)
 
     assert "event: connected" in await stream.__anext__()
     assert _subscribers("sse-test") == 1
@@ -305,3 +320,80 @@ async def test_telemetry_socket_checks_access_to_the_cabinet(monkeypatch):
     ws.hang_up()
     await asyncio.wait_for(task, 1)
     assert _subscribers("cabinet_telemetry:8") == 0
+
+
+# --- права на поток проверяются по базе, а не только по билету ---
+
+async def test_streams_refuse_a_user_who_may_no_longer_stream(streaming_allowed):
+    streaming_allowed.allowed = False
+    request = _Request()
+
+    for open_stream in (
+        lambda ticket: operator_events.stream_operator_chats(request, ticket=ticket),
+        lambda ticket: operator_events.stream_cabinet_telemetry(request, 8, ticket=ticket),
+    ):
+        with pytest.raises(AuthenticationError):
+            await open_stream(issue_ticket(5, SCOPE_OPERATOR))
+
+    ws = _FakeWebSocket()
+    await user_events.ws_chats(ws, ticket=issue_ticket(21, SCOPE_USER))
+    assert ws.closed_with == 4401 and not ws.accepted
+
+
+async def test_a_running_sse_stream_ends_when_the_operator_loses_the_right(monkeypatch, streaming_allowed):
+    monkeypatch.setattr(operator_events, "_HEARTBEAT_SECONDS", 0.01)
+    monkeypatch.setattr(operator_events, "RECHECK_SECONDS", 0.03)
+    stream = operator_events._sse_stream(_Request(), "sse-revoked", 5)
+
+    assert "event: connected" in await stream.__anext__()
+    await asyncio.sleep(0.05)                       # прошла минута проверки
+    streaming_allowed.allowed = False                # оператора разжаловали
+
+    with pytest.raises(StopAsyncIteration):
+        for _ in range(20):
+            await stream.__anext__()
+    assert _subscribers("sse-revoked") == 0
+    assert (5, SCOPE_OPERATOR) in streaming_allowed.calls
+
+
+async def test_a_running_socket_is_closed_when_the_user_is_blocked(monkeypatch, streaming_allowed):
+    monkeypatch.setattr(user_events, "_HEARTBEAT_SECONDS", 0.01)
+    monkeypatch.setattr(user_events, "RECHECK_SECONDS", 0.03)
+    ws = _FakeWebSocket()
+    task = await _run(user_events.ws_chats, ws, ticket=issue_ticket(21, SCOPE_USER))
+
+    await _until(lambda: ws.sent)
+    streaming_allowed.allowed = False                # пользователя заблокировали
+
+    await _until(lambda: ws.closed_with == 4403)
+    ws.hang_up()
+    await asyncio.wait_for(task, 1)
+    assert _subscribers("user_chats:21") == 0
+
+
+@pytest.fixture
+def own_session(db_session, monkeypatch):
+    class Ctx:
+        async def __aenter__(self):
+            return db_session
+
+        async def __aexit__(self, *exc):
+            return False
+
+    monkeypatch.setattr("app.database.AsyncSessionLocal", lambda: Ctx())
+
+
+async def test_streaming_right_is_read_from_the_database(own_session, make_user):
+    from app.core.stream_access import may_stream
+
+    client = await make_user()
+    blocked_client = await make_user(is_active=False)
+    staff = {role: await make_user(role) for role in ("operator", "admin", "superadmin")}
+    blocked_operator = await make_user("operator", is_active=False)
+
+    assert await may_stream(client.id, SCOPE_USER) and not await may_stream(blocked_client.id, SCOPE_USER)
+    assert not await may_stream(999999, SCOPE_USER)
+    assert not await may_stream(client.id, SCOPE_OPERATOR)            # обычному пользователю операторский поток закрыт
+    for user in staff.values():
+        assert await may_stream(user.id, SCOPE_OPERATOR) and await may_stream(user.id, SCOPE_USER)
+    assert not await may_stream(blocked_operator.id, SCOPE_OPERATOR)

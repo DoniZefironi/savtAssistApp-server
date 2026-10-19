@@ -8,7 +8,8 @@ from starlette.routing import Mount
 
 from app import cli
 from app.config import Settings, settings
-from app.core.signed_urls import sign_url
+from app.core.security import create_access_token
+from app.core.signed_urls import accept_issued_url, sign_url, strip_signature, was_issued
 from app.core.startup_checks import config_problems, docs_enabled, is_production
 from app.core.static_files import SignedStaticFiles
 
@@ -121,3 +122,85 @@ def test_the_application_mounts_the_signed_variant():
 
     mounts = [route for route in app.routes if getattr(route, "name", None) == "static"]
     assert len(mounts) == 1 and isinstance(mounts[0].app, SignedStaticFiles)
+
+
+# --- ссылки на файлы, которые присылает клиент ---
+
+def test_only_signatures_issued_by_us_are_genuine(monkeypatch):
+    monkeypatch.setattr(settings, "static_link_secret", STRONG)
+    path = "/static/documents/a.pdf"
+
+    assert was_issued(sign_url(path))
+    assert was_issued(sign_url(path, ttl_seconds=-3600))             # срок вышел, но ссылку выдали мы
+    assert not was_issued(path)                                      # без подписи
+    assert not was_issued(None) and not was_issued("")
+    assert not was_issued(sign_url("/static/documents/b.pdf").replace("b.pdf", "a.pdf"))   # подпись от другого файла
+    assert not was_issued(f"{path}?md5=AAAA&expires=1")
+    assert not was_issued(f"{path}?md5=AAAA&expires=не-число")
+
+
+def test_without_a_secret_any_link_counts_as_issued(monkeypatch):
+    monkeypatch.setattr(settings, "static_link_secret", "")
+
+    assert was_issued("/static/documents/a.pdf") and accept_issued_url("/static/documents/a.pdf")
+
+
+def test_input_links_are_stripped_and_only_static_paths_need_a_signature(monkeypatch):
+    monkeypatch.setattr(settings, "static_link_secret", STRONG)
+    path = "/static/documents/a.pdf"
+
+    assert accept_issued_url(sign_url(path)) == path
+    for value in (None, "", "color:#112233", "https://example.com/a.png"):
+        assert accept_issued_url(value) == strip_signature(value)     # не наши ссылки проходят как раньше
+    with pytest.raises(ValueError, match="недействительна"):
+        accept_issued_url(path)
+
+
+@pytest.fixture
+def quiet_chat(monkeypatch):
+    from app.services import chat_service, push_service
+
+    async def noop(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(chat_service, "spawn", lambda coro, **kw: coro.close())
+    monkeypatch.setattr(push_service, "send_push", noop)
+    monkeypatch.setattr(settings, "static_link_secret", STRONG)
+
+
+def _attachment(url):
+    return {"attachments": [{"file_url": url, "file_name": "a.pdf", "file_size_bytes": 10, "mime_type": "application/pdf"}]}
+
+
+async def test_a_message_accepts_only_file_links_that_we_issued(api, make_user, make_chat, quiet_chat):
+    user = await make_user()
+    chat = await make_chat(user, "support", bot_active=False)
+    headers = {"Authorization": f"Bearer {create_access_token(user_id=user.id, role='user')}"}
+    url = f"/chats/{chat.id}/messages"
+    path = "/static/documents/0123456789abcdef.pdf"
+
+    unsigned = await api.post(url, headers=headers, json=_attachment(path))
+    forged = await api.post(url, headers=headers, json=_attachment(f"{path}?md5=AAAA&expires=9999999999"))
+    ours = await api.post(url, headers=headers, json=_attachment(sign_url(path)))
+    expired = await api.post(url, headers=headers, json=_attachment(sign_url(path, ttl_seconds=-3600)))
+
+    assert unsigned.status_code == forged.status_code == 422
+    assert ours.status_code == expired.status_code == 201           # оффлайн-очередь с просроченной ссылкой работает
+    assert ours.json()["attachments"][0]["file_url"].startswith(path)
+
+
+async def test_wallpaper_accepts_colors_and_links_we_issued_but_not_foreign_static_paths(
+    api, make_user, make_chat, quiet_chat,
+):
+    user = await make_user()
+    chat = await make_chat(user, "support", bot_active=False)
+    headers = {"Authorization": f"Bearer {create_access_token(user_id=user.id, role='user')}"}
+    url = f"/chats/{chat.id}/wallpaper"
+
+    colour = await api.patch(url, headers=headers, json={"wallpaper_url": "color:#112233"})
+    ours = await api.patch(url, headers=headers, json={"wallpaper_url": sign_url("/static/photos/ab12.jpg")})
+    foreign = await api.patch(url, headers=headers, json={"wallpaper_url": "/static/photos/other-users-file.jpg"})
+    reset = await api.patch(url, headers=headers, json={"wallpaper_url": None})
+
+    assert colour.status_code == ours.status_code == reset.status_code == 200
+    assert foreign.status_code == 422

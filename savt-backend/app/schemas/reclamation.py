@@ -2,7 +2,7 @@ from datetime import date, datetime
 from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
-from app.core.signed_urls import SignedUrl, SignedUrlOpt, strip_signature
+from app.core.signed_urls import SignedUrl, SignedUrlOpt, accept_issued_url
 
 
 class ReclamationAttachmentIn(BaseModel):
@@ -21,7 +21,7 @@ class ReclamationAttachmentIn(BaseModel):
     @field_validator("file_url")
     @classmethod
     def strip_url_signature(cls, v: str) -> str:
-        return strip_signature(v) or v
+        return accept_issued_url(v) or v
 
 
 class ReclamationAttachmentOut(BaseModel):

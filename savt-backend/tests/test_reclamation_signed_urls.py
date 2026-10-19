@@ -15,8 +15,18 @@ README). Иначе подпись, выданная В МОМЕНТ ЗАГРУ�
 """
 from datetime import datetime
 
+import pytest
+from pydantic import ValidationError
+
+from app.config import settings
 from app.core.signed_urls import sign_url, verify_signature
 from app.schemas.reclamation import ReclamationAttachmentIn, ReclamationAttachmentOut, ReclamationDetailOut
+
+
+@pytest.fixture(autouse=True)
+def link_secret(monkeypatch):
+    """Подпись проверяется по-настоящему, а не зависит от того, какой .env лежит рядом."""
+    monkeypatch.setattr(settings, "static_link_secret", "test-secret")
 
 
 def _minimal_detail(**overrides) -> dict:
@@ -39,11 +49,18 @@ def test_attachment_in_strips_signature_on_input():
     # клиент присылает ровно то, что получил от POST /upload/attachment —
     # уже подписанную ссылку; в БД должен попасть голый путь
     signed = sign_url("/static/attachments/uuid.jpg")
-    assert "?md5=" in signed  # убедились, что подпись вообще стоит (секрет в .env задан)
+    assert "?md5=" in signed  # убедились, что подпись вообще стоит
 
     parsed = ReclamationAttachmentIn(file_url=signed)
     assert parsed.file_url == "/static/attachments/uuid.jpg"
     assert "?" not in parsed.file_url
+
+
+def test_attachment_in_refuses_a_link_that_we_did_not_issue():
+    with pytest.raises(ValidationError, match="недействительна"):
+        ReclamationAttachmentIn(file_url="/static/attachments/uuid.jpg")             # без подписи
+    with pytest.raises(ValidationError, match="недействительна"):
+        ReclamationAttachmentIn(file_url="/static/attachments/uuid.jpg?md5=deadbeef&expires=9999999999")
 
 
 def test_attachment_out_resigns_bare_url_on_output():

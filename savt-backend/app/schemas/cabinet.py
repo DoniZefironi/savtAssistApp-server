@@ -1,7 +1,7 @@
 from datetime import datetime
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.core.signed_urls import strip_signature
+from app.core.signed_urls import accept_issued_url
 from app.schemas.tags import TagOut
 from app.utils.qr_code import clean_code
 
@@ -185,7 +185,7 @@ class AddByPhotoIn(BaseModel):
     @field_validator("photo_url")
     @classmethod
     def strip_url_signature(cls, v: str) -> str:
-        return strip_signature(v) or v
+        return accept_issued_url(v) or v
 
 
 class AddByPhotoOut(BaseModel):

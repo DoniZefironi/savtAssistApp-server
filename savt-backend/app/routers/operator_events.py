@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
@@ -9,6 +10,7 @@ from app.core.constants import RoleName
 from app.core.dependencies import require_role
 from app.core.event_bus import event_bus
 from app.core.exceptions import AuthenticationError, PermissionDeniedError
+from app.core.stream_access import RECHECK_SECONDS, may_stream
 from app.core.stream_tickets import (
     SCOPE_OPERATOR,
     TICKET_TTL_SECONDS,
@@ -49,9 +51,11 @@ async def create_stream_ticket(
     return StreamTicketOut(ticket=ticket, expires_in=TICKET_TTL_SECONDS)
 
 
-def _authenticate(ticket: str) -> int:
+async def _authenticate(ticket: str) -> int:
     user_id = consume_ticket(ticket, SCOPE_OPERATOR)
-    if user_id is None:
+    # Тикет — это «кто был оператором пять минут назад»: разжалованный или заблокированный
+    # не должен открывать поток, пока тикет не истёк
+    if user_id is None or not await may_stream(user_id, SCOPE_OPERATOR):
         raise AuthenticationError("Тикет недействителен или истёк")
     return user_id
 
@@ -60,13 +64,19 @@ def _format_event(event: dict) -> str:
     return f"event: {event.get('type', 'message')}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
 
 
-async def _sse_stream(request: Request, channel: str):
+async def _sse_stream(request: Request, channel: str, user_id: int):
     queue = await event_bus.subscribe(channel)
+    last_check = time.monotonic()
     try:
         yield _format_event({"type": "connected"})
         while True:
             if await request.is_disconnected():
                 break
+            # Соединение живёт часами, а права могли отозвать: раз в минуту сверяемся с базой
+            if time.monotonic() - last_check >= RECHECK_SECONDS:
+                last_check = time.monotonic()
+                if not await may_stream(user_id, SCOPE_OPERATOR):
+                    break
             try:
                 event = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_SECONDS)
                 yield _format_event(event)
@@ -79,9 +89,9 @@ async def _sse_stream(request: Request, channel: str):
 # Список чатов оператора — замена поллинга GET /operator/chats
 @router.get("/chats")
 async def stream_operator_chats(request: Request, ticket: str = Query(...)):
-    _authenticate(ticket)
+    user_id = await _authenticate(ticket)
     return StreamingResponse(
-        _sse_stream(request, "operator_chats"),
+        _sse_stream(request, "operator_chats", user_id),
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )
@@ -90,15 +100,14 @@ async def stream_operator_chats(request: Request, ticket: str = Query(...)):
 # Открытый чат — замена поллинга GET /operator/chats/{chat_id}/messages
 @router.get("/chats/{chat_id}")
 async def stream_chat(request: Request, chat_id: int, ticket: str = Query(...)):
-    user_id = _authenticate(ticket)
+    user_id = await _authenticate(ticket)
     # Тикет говорит только "кто", но не "к какому чату" — доступ проверяем на
-    # каждое подключение. Роль перечитывается из БД, поэтому разжалованный
-    # оператор не досидит на старом тикете до конца его TTL. Личные заметки
-    # ("notes") закрыты и от операторов — см. ChatService._get_chat_or_403.
+    # каждое подключение. Личные заметки ("notes") закрыты и от операторов —
+    # см. ChatService._get_chat_or_403.
     if not await check_chat_access(chat_id, user_id):
         raise PermissionDeniedError("Нет доступа к этому чату")
     return StreamingResponse(
-        _sse_stream(request, f"chat:{chat_id}"),
+        _sse_stream(request, f"chat:{chat_id}", user_id),
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )
@@ -110,9 +119,9 @@ async def stream_chat(request: Request, chat_id: int, ticket: str = Query(...)):
 # что и у самого REST-эндпоинта, см. UserTelemetryService.get_current_state_admin)
 @router.get("/cabinets/{cabinet_id}/telemetry")
 async def stream_cabinet_telemetry(request: Request, cabinet_id: int, ticket: str = Query(...)):
-    _authenticate(ticket)
+    user_id = await _authenticate(ticket)
     return StreamingResponse(
-        _sse_stream(request, f"cabinet_telemetry:{cabinet_id}"),
+        _sse_stream(request, f"cabinet_telemetry:{cabinet_id}", user_id),
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )

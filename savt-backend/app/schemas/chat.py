@@ -2,7 +2,7 @@ import re
 from datetime import datetime
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.core.signed_urls import SignedUrlOpt, strip_signature
+from app.core.signed_urls import SignedUrlOpt, accept_issued_url
 
 _HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
@@ -84,10 +84,12 @@ class AttachmentIn(BaseModel):
 
     # Клиент присылает обратно тот URL, который получил от нас, то есть уже
     # подписанный. В БД подпись попасть не должна — она протухнет вместе с записью.
+    # Подпись при этом должна быть настоящей (accept_issued_url), иначе принимался бы
+    # любой /static/-путь, а сервер подписал бы его в ответе.
     @field_validator("file_url")
     @classmethod
     def strip_url_signature(cls, v: str | None) -> str | None:
-        return strip_signature(v)
+        return accept_issued_url(v)
 
     @model_validator(mode="after")
     def validate_file_xor_location(self) -> "AttachmentIn":
@@ -163,7 +165,7 @@ class WallpaperIn(BaseModel):
     @field_validator("wallpaper_url")
     @classmethod
     def strip_url_signature(cls, v: str | None) -> str | None:
-        return strip_signature(v)
+        return accept_issued_url(v)
 
 
 class ChatOut(BaseModel):
@@ -211,7 +213,7 @@ class ChatSettingsIn(BaseModel):
     @field_validator("wallpaper_url")
     @classmethod
     def strip_url_signature(cls, v: str | None) -> str | None:
-        return strip_signature(v)
+        return accept_issued_url(v)
 
 
 class ChatSettingsOut(BaseModel):

@@ -14,6 +14,10 @@ import os
 # техническое — его явно попросил пользователь, см. память по проекту.
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost:5433/savt_test")
 os.environ.setdefault("BITRIX_WEBHOOK_URL", "")
+# STATIC_LINK_SECRET — пустой нарочно и безусловно: иначе результат тестов зависел бы от того,
+# какой .env лежит рядом (при заданном секрете сервер требует подписи на всех присланных
+# клиентом ссылках на файлы). Тесты, которым подпись нужна, задают секрет сами.
+os.environ["STATIC_LINK_SECRET"] = ""
 
 import pytest
 import pytest_asyncio
