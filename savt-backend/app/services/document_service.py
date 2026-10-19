@@ -4,6 +4,8 @@ from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AlreadyExistsError, NotFoundError, PermissionDeniedError
+from app.models.document import Document
+from app.models.role import Role
 from app.repositories.document import DocumentRepository, DocumentRequestRepository, PhotoRepository
 from app.repositories.favorite import FavoriteRepository
 from app.repositories.tag import TagRepository
@@ -276,6 +278,9 @@ class AdminDocumentService:
                            data.admin_response, {"type": "document_request"})
 
 
+_STAFF_ROLES = ("operator", "admin", "superadmin")
+
+
 class UserDocumentService:
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -283,6 +288,24 @@ class UserDocumentService:
         self.request_repo = DocumentRequestRepository(session)
         self.tag_repo = TagRepository(session)
         self.favorite_repo = FavoriteRepository(session)
+        self.user_repo = UserRepository(session)
+
+    async def _ensure_visible(self, user_id: int, doc: Document) -> None:
+        """Документ виден тому, у кого есть доступ к его ШУ или проекту (та же модель, что у
+        списков выше), и сотрудникам: админ-панель скачивает документы этой же ручкой. Остальным
+        отвечаем как на несуществующий — по коду ответа нельзя узнать, что документ есть."""
+        user = await self.user_repo.get_by_id(user_id)
+        role = await self.session.get(Role, user.role_id) if user is not None else None
+        if role is not None and role.name in _STAFF_ROLES:
+            return
+        if doc.cabinet_id is not None:
+            from app.repositories.cabinet import CabinetRepository
+            visible = await CabinetRepository(self.session).user_has_access(user_id, doc.cabinet_id)
+        else:
+            from app.repositories.project import UserProjectRepository
+            visible = await UserProjectRepository(self.session).find_active(user_id, doc.project_id) is not None
+        if not visible:
+            raise NotFoundError("Документ не найден")
 
     async def list_documents(
         self,
@@ -389,9 +412,12 @@ class UserDocumentService:
         # несуществующий, чтобы по коду ответа нельзя было узнать, что он есть
         if doc is None or doc.is_internal:
             raise NotFoundError("Документ не найден")
+        await self._ensure_visible(user_id, doc)
         if doc.requires_approval and not await self.doc_repo.has_access(user_id, doc_id):
             raise PermissionDeniedError("Нет доступа к этому документу")
         file_path = UPLOAD_ROOT / doc.file_url.removeprefix("/static/")
+        if not file_path.is_file():
+            raise NotFoundError("Файл документа не найден")
         return file_path, doc.mime_type, doc.title
 
     # Фото пользователю не показываются вообще — см. AdminDocumentService.list_photos,
@@ -405,6 +431,7 @@ class UserDocumentService:
         # Служебный документ пользователю не виден, запрашивать к нему доступ нельзя
         if doc is None or doc.is_internal:
             raise NotFoundError("Документ не найден")
+        await self._ensure_visible(user_id, doc)
         if not doc.requires_approval:
             raise AlreadyExistsError("Документ доступен без запроса")
         if await self.doc_repo.has_access(user_id, doc_id):

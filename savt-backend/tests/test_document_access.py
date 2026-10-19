@@ -14,6 +14,7 @@ import pytest
 
 from app.core.exceptions import AlreadyExistsError, NotFoundError, PermissionDeniedError
 from app.schemas.documents import ApproveDocumentRequestIn, RejectDocumentRequestIn
+from app.services import document_service
 from app.services.document_service import AdminDocumentService, UserDocumentService
 
 
@@ -25,6 +26,27 @@ def user_docs(db_session):
 @pytest.fixture
 def admin_docs(db_session):
     return AdminDocumentService(db_session)
+
+
+@pytest.fixture(autouse=True)
+def uploads(tmp_path, monkeypatch):
+    monkeypatch.setattr(document_service, "UPLOAD_ROOT", tmp_path)
+    (tmp_path / "documents").mkdir()
+    return tmp_path
+
+
+@pytest.fixture
+def member_document(make_project, link_user_project, make_document, uploads):
+    """Документ проекта, в котором пользователь состоит, с файлом на диске: скачать документ
+    и запросить к нему доступ можно, только имея доступ к его проекту или ШУ."""
+    async def _make(user, **overrides):
+        project = await make_project()
+        await link_user_project(user, project)
+        doc = await make_document(project_id=project.id, **overrides)
+        (uploads / doc.file_url.removeprefix("/static/")).write_bytes(b"%PDF")
+        return doc
+
+    return _make
 
 
 # --- list_documents: file_url виден только для свободных документов ---
@@ -93,24 +115,24 @@ async def test_list_project_documents_requires_membership(user_docs, make_user, 
 
 # --- get_file_path: граница на скачивание ---
 
-async def test_get_file_path_internal_document_is_not_found(user_docs, make_user, make_document):
+async def test_get_file_path_internal_document_is_not_found(user_docs, make_user, member_document):
     user = await make_user()
-    doc = await make_document(is_internal=True)
+    doc = await member_document(user, is_internal=True)
     with pytest.raises(NotFoundError):
         await user_docs.get_file_path(user.id, doc.id)
 
 
-async def test_get_file_path_restricted_without_access_denied(user_docs, make_user, make_document):
+async def test_get_file_path_restricted_without_access_denied(user_docs, make_user, member_document):
     user = await make_user()
-    doc = await make_document(requires_approval=True)
+    doc = await member_document(user, requires_approval=True)
     with pytest.raises(PermissionDeniedError):
         await user_docs.get_file_path(user.id, doc.id)
 
 
-async def test_get_file_path_restricted_with_granted_access_succeeds(user_docs, admin_docs, make_user, make_document):
+async def test_get_file_path_restricted_with_granted_access_succeeds(user_docs, admin_docs, make_user, member_document):
     user = await make_user()
     admin = await make_user(role_name="admin")
-    doc = await make_document(requires_approval=True)
+    doc = await member_document(user, requires_approval=True)
     await admin_docs.doc_repo.grant_access(user.id, doc.id, admin.id)
     await admin_docs.session.commit()
 
@@ -119,33 +141,98 @@ async def test_get_file_path_restricted_with_granted_access_succeeds(user_docs, 
     assert title == doc.title
 
 
-async def test_get_file_path_free_document_needs_no_access_grant(user_docs, make_user, make_document):
+async def test_get_file_path_free_document_needs_no_access_grant(user_docs, make_user, member_document):
     user = await make_user()
-    doc = await make_document(requires_approval=False)
+    doc = await member_document(user, requires_approval=False)
     path, mime_type, title = await user_docs.get_file_path(user.id, doc.id)
     assert title == doc.title
 
 
+# --- документ виден только тому, у кого есть доступ к его ШУ или проекту ---
+
+async def test_free_document_of_a_foreign_project_is_not_found(user_docs, make_user, make_document):
+    outsider = await make_user()
+    doc = await make_document(requires_approval=False)      # проект, в котором outsider не состоит
+
+    with pytest.raises(NotFoundError):
+        await user_docs.get_file_path(outsider.id, doc.id)
+
+
+async def test_free_document_of_a_foreign_cabinet_is_not_found(user_docs, make_user, make_cabinet, make_document):
+    outsider = await make_user()
+    doc = await make_document(cabinet_id=(await make_cabinet()).id, requires_approval=False)
+
+    with pytest.raises(NotFoundError):
+        await user_docs.get_file_path(outsider.id, doc.id)
+
+
+async def test_document_of_a_cabinet_is_available_to_its_owner(
+    user_docs, make_user, make_cabinet, link_user_cabinet, make_document, tmp_path,
+):
+    owner = await make_user()
+    cabinet = await make_cabinet()
+    await link_user_cabinet(owner, cabinet)
+    doc = await make_document(cabinet_id=cabinet.id, requires_approval=False)
+    (tmp_path / "documents").mkdir(exist_ok=True)
+    (tmp_path / doc.file_url.removeprefix("/static/")).write_bytes(b"%PDF")
+
+    path, _, _ = await user_docs.get_file_path(owner.id, doc.id)
+
+    assert path.read_bytes() == b"%PDF"
+
+
+@pytest.mark.parametrize("role", ["operator", "admin", "superadmin"])
+async def test_staff_download_any_document(user_docs, make_user, make_document, tmp_path, role):
+    # админ-панель скачивает документы этой же ручкой, не будучи участником проектов
+    staff = await make_user(role_name=role)
+    doc = await make_document(requires_approval=False)
+    (tmp_path / "documents").mkdir(exist_ok=True)
+    (tmp_path / doc.file_url.removeprefix("/static/")).write_bytes(b"%PDF")
+
+    path, _, title = await user_docs.get_file_path(staff.id, doc.id)
+
+    assert path.exists() and title == doc.title
+
+
+async def test_a_document_whose_file_is_gone_is_not_found_not_a_server_error(user_docs, make_user, make_project,
+                                                                            link_user_project, make_document):
+    user = await make_user()
+    project = await make_project()
+    await link_user_project(user, project)
+    doc = await make_document(project_id=project.id, requires_approval=False)   # файла на диске нет
+
+    with pytest.raises(NotFoundError, match="Файл документа"):
+        await user_docs.get_file_path(user.id, doc.id)
+
+
 # --- request_access ---
 
-async def test_request_access_on_internal_document_not_found(user_docs, make_user, make_document):
+async def test_request_access_on_internal_document_not_found(user_docs, make_user, member_document):
     user = await make_user()
-    doc = await make_document(is_internal=True)
+    doc = await member_document(user, is_internal=True)
     with pytest.raises(NotFoundError):
         await user_docs.request_access(user.id, doc.id, None)
 
 
-async def test_request_access_on_free_document_rejected(user_docs, make_user, make_document):
+async def test_request_access_to_a_foreign_document_is_not_found(user_docs, make_user, make_document):
+    outsider = await make_user()
+    doc = await make_document(requires_approval=True)       # проект, в котором outsider не состоит
+
+    with pytest.raises(NotFoundError):
+        await user_docs.request_access(outsider.id, doc.id, "хочу")
+
+
+async def test_request_access_on_free_document_rejected(user_docs, make_user, member_document):
     user = await make_user()
-    doc = await make_document(requires_approval=False)
+    doc = await member_document(user, requires_approval=False)
     with pytest.raises(AlreadyExistsError, match="доступен без запроса"):
         await user_docs.request_access(user.id, doc.id, None)
 
 
-async def test_request_access_when_already_granted_rejected(user_docs, admin_docs, make_user, make_document):
+async def test_request_access_when_already_granted_rejected(user_docs, admin_docs, make_user, member_document):
     user = await make_user()
     admin = await make_user(role_name="admin")
-    doc = await make_document(requires_approval=True)
+    doc = await member_document(user, requires_approval=True)
     await admin_docs.doc_repo.grant_access(user.id, doc.id, admin.id)
     await admin_docs.session.commit()
 
@@ -153,9 +240,9 @@ async def test_request_access_when_already_granted_rejected(user_docs, admin_doc
         await user_docs.request_access(user.id, doc.id, None)
 
 
-async def test_request_access_twice_rejected(user_docs, make_user, make_document):
+async def test_request_access_twice_rejected(user_docs, make_user, member_document):
     user = await make_user()
-    doc = await make_document(requires_approval=True)
+    doc = await member_document(user, requires_approval=True)
     await user_docs.request_access(user.id, doc.id, "нужен для проверки")
 
     with pytest.raises(AlreadyExistsError, match="уже отправлена"):
@@ -164,10 +251,10 @@ async def test_request_access_twice_rejected(user_docs, make_user, make_document
 
 # --- approve/reject: заявка на доступ ---
 
-async def test_approve_request_grants_access(user_docs, admin_docs, make_user, make_document):
+async def test_approve_request_grants_access(user_docs, admin_docs, make_user, member_document):
     user = await make_user()
     admin = await make_user(role_name="admin")
-    doc = await make_document(requires_approval=True)
+    doc = await member_document(user, requires_approval=True)
     req_id = await user_docs.request_access(user.id, doc.id, None)
 
     await admin_docs.approve_request(req_id, ApproveDocumentRequestIn(admin_response="ок"), admin.id)
@@ -175,10 +262,10 @@ async def test_approve_request_grants_access(user_docs, admin_docs, make_user, m
     assert await admin_docs.doc_repo.has_access(user.id, doc.id) is True
 
 
-async def test_reject_request_does_not_grant_access(user_docs, admin_docs, make_user, make_document):
+async def test_reject_request_does_not_grant_access(user_docs, admin_docs, make_user, member_document):
     user = await make_user()
     admin = await make_user(role_name="admin")
-    doc = await make_document(requires_approval=True)
+    doc = await member_document(user, requires_approval=True)
     req_id = await user_docs.request_access(user.id, doc.id, None)
 
     await admin_docs.reject_request(req_id, RejectDocumentRequestIn(admin_response="не обосновано"), admin.id)
@@ -186,10 +273,10 @@ async def test_reject_request_does_not_grant_access(user_docs, admin_docs, make_
     assert await admin_docs.doc_repo.has_access(user.id, doc.id) is False
 
 
-async def test_approve_already_resolved_request_rejected(user_docs, admin_docs, make_user, make_document):
+async def test_approve_already_resolved_request_rejected(user_docs, admin_docs, make_user, member_document):
     user = await make_user()
     admin = await make_user(role_name="admin")
-    doc = await make_document(requires_approval=True)
+    doc = await member_document(user, requires_approval=True)
     req_id = await user_docs.request_access(user.id, doc.id, None)
     await admin_docs.approve_request(req_id, ApproveDocumentRequestIn(), admin.id)
 

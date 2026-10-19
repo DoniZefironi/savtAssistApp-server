@@ -207,10 +207,13 @@ async def test_project_photos_are_separate_from_cabinet_photos(db_session, env, 
 
 # --- заявки на доступ: сотрудник ---
 
-async def test_request_list_search_and_resolver_name(db_session, env, make_user, make_document):
+async def test_request_list_search_and_resolver_name(db_session, env, make_user, make_project, link_user_project,
+                                                     make_document):
     admin = await make_user("admin", full_name="Админ Анна")
     client = await make_user(full_name="Клиент Клиентов")
-    doc = await make_document(requires_approval=True)
+    project = await make_project()
+    await link_user_project(client, project)
+    doc = await make_document(project_id=project.id, requires_approval=True)
     users = UserDocumentService(db_session)
     req_id = await users.request_access(client.id, doc.id, "Нужен для монтажа")
     admins = AdminDocumentService(db_session)
@@ -226,9 +229,12 @@ async def test_request_list_search_and_resolver_name(db_session, env, make_user,
     assert note.title == "Доступ к документу открыт" and note.body == "Документ доступен для скачивания"
 
 
-async def test_reject_request_notifies_with_reason(db_session, env, make_user, make_document):
+async def test_reject_request_notifies_with_reason(db_session, env, make_user, make_project, link_user_project,
+                                                   make_document):
     admin, client = await make_user("admin"), await make_user()
-    doc = await make_document(requires_approval=True)
+    project = await make_project()
+    await link_user_project(client, project)
+    doc = await make_document(project_id=project.id, requires_approval=True)
     req_id = await UserDocumentService(db_session).request_access(client.id, doc.id, None)
 
     await AdminDocumentService(db_session).reject_request(

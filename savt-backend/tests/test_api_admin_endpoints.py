@@ -211,9 +211,12 @@ async def test_photo_administration_over_http(api, staff, make_cabinet):
     assert (await api.delete(f"/admin/photos/{photo_id}", headers=staff.a)).status_code == 404
 
 
-async def test_document_requests_are_decided_by_operators_too(api, staff, make_user, make_document):
+async def test_document_requests_are_decided_by_operators_too(api, staff, make_user, make_project, link_user_project,
+                                                              make_document):
     client = await make_user()
-    doc = await make_document(requires_approval=True)
+    project = await make_project()
+    await link_user_project(client, project)
+    doc = await make_document(project_id=project.id, requires_approval=True)
     from app.services.document_service import UserDocumentService
     db = api._transport.app.dependency_overrides  # сессия теста общая для клиента и сервиса
     req = await api.post(f"/documents/{doc.id}/request-access", headers=_auth(client, "user"), json={"user_message": "Нужен"})

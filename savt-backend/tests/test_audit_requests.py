@@ -35,9 +35,11 @@ async def test_registration_request_creation_is_logged(db_session):
     assert entry.payload == {"phone": "+375291234567", "user_type": "individual"}
 
 
-async def test_document_access_request_is_logged(db_session, make_user, make_document):
+async def test_document_access_request_is_logged(db_session, make_user, make_project, link_user_project, make_document):
     user = await make_user()
-    doc = await make_document(requires_approval=True)
+    project = await make_project()
+    await link_user_project(user, project)
+    doc = await make_document(project_id=project.id, requires_approval=True)
 
     request_id = await UserDocumentService(db_session).request_access(user.id, doc.id, "Нужен для проверки")
 
