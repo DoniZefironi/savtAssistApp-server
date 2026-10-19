@@ -1,5 +1,9 @@
 set -euo pipefail
 
+# В дампе вся база (телефоны, имена, хеши паролей): файлы и папка читаются
+# только владельцем
+umask 077
+
 CONTAINER="${BACKUP_DB_CONTAINER:-savt-backend-db-1}"
 API_CONTAINER="${BACKUP_API_CONTAINER:-savt-backend-api-1}"
 DB_NAME="${POSTGRES_DB:-savt}"
@@ -7,6 +11,12 @@ DB_USER="${POSTGRES_USER:-postgres}"
 BACKUP_DIR="$(dirname "$0")/backups"
 KEEP_COUNT="${BACKUP_KEEP_COUNT:-5}"
 S3_UPLOAD="${BACKUP_S3_UPLOAD:-0}"
+NAS_COPY="${BACKUP_NAS_COPY:-0}"
+# Путь внутри api-контейнера: шара NAS с проектами смонтирована в /mnt/projects
+NAS_DIR="${BACKUP_NAS_DIR:-/mnt/projects/_db-backups}"
+NAS_KEEP_COUNT="${BACKUP_NAS_KEEP_COUNT:-30}"
+# Файл с паролем шифрования копии на NAS (пусто — копия кладётся без шифрования)
+NAS_PASSPHRASE_FILE="${BACKUP_NAS_PASSPHRASE_FILE:-}"
 
 TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 FILENAME="savt_backup_${TIMESTAMP}.sql.gz"
@@ -14,6 +24,7 @@ FILEPATH="${BACKUP_DIR}/${FILENAME}"
 TMPPATH="${FILEPATH}.part"
 
 mkdir -p "$BACKUP_DIR"
+chmod 700 "$BACKUP_DIR"
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Запуск бэкапа → ${FILENAME}"
 
@@ -49,6 +60,33 @@ s3.upload_fileobj(sys.stdin.buffer, bucket, 'db-backups/${FILENAME}')
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] Копия выгружена в Object Storage: db-backups/${FILENAME}"
     else
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] ВНИМАНИЕ: выгрузка в Object Storage не удалась (локальный бэкап сохранён)" >&2
+    fi
+fi
+
+# Копия на шару NAS через api-контейнер (шара уже смонтирована там для папок
+# проектов). К шаре есть доступ у сотрудников, а в дампе вся база, поэтому
+# при заданном NAS_PASSPHRASE_FILE копия шифруется. Расшифровка:
+#   openssl enc -d -aes-256-cbc -pbkdf2 -pass file:ФАЙЛ_ПАРОЛЯ -in savt_backup_….sql.gz.enc | gunzip
+if [ "$NAS_COPY" = "1" ]; then
+    NAS_NAME="$FILENAME"
+    [ -n "$NAS_PASSPHRASE_FILE" ] && NAS_NAME="${FILENAME}.enc"
+
+    send_to_nas() {
+        if [ -n "$NAS_PASSPHRASE_FILE" ]; then
+            openssl enc -aes-256-cbc -pbkdf2 -salt -pass "file:${NAS_PASSPHRASE_FILE}" < "$FILEPATH"
+        else
+            cat "$FILEPATH"
+        fi
+    }
+
+    if send_to_nas | docker exec -i "$API_CONTAINER" sh -c \
+        "mkdir -p '${NAS_DIR}' && cat > '${NAS_DIR}/${NAS_NAME}.part' && mv '${NAS_DIR}/${NAS_NAME}.part' '${NAS_DIR}/${NAS_NAME}'"; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Копия выложена на NAS: ${NAS_DIR}/${NAS_NAME}"
+        docker exec "$API_CONTAINER" sh -c \
+            "ls -1t '${NAS_DIR}'/savt_backup_* 2>/dev/null | tail -n +$((NAS_KEEP_COUNT + 1)) | xargs -r rm -f" || true
+    else
+        docker exec "$API_CONTAINER" rm -f "${NAS_DIR}/${NAS_NAME}.part" || true
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ВНИМАНИЕ: копия на NAS не удалась (локальный бэкап сохранён)" >&2
     fi
 fi
 

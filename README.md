@@ -5203,18 +5203,23 @@ Data:      { "cabinet_id": 5, "days_left": 30 }
 - Пустой дамп считается ошибкой.
 - Ротация: хранятся `BACKUP_KEEP_COUNT` (по умолчанию 5) последних файлов.
 - Опционально копия выгружается в Yandex Object Storage (`BACKUP_S3_UPLOAD=1`) — переживёт смерть диска сервера. Использует ключи `YANDEX_STORAGE_*` из контейнера api, кладёт в `db-backups/` бакета.
+- Опционально копия выкладывается на шару NAS с папками проектов (`BACKUP_NAS_COPY=1`) — тоже переживёт смерть диска сервера. Идёт через api-контейнер, где шара уже смонтирована (`/mnt/projects`), в папку `_db-backups` (меняется `BACKUP_NAS_DIR`), хранится `BACKUP_NAS_KEEP_COUNT` (умолч. `30`) файлов. Приложение не просматривает корень шары, оно строит пути к конкретным проектам, поэтому эта папка синхронизации папок проектов не мешает. К шаре есть доступ у сотрудников, а в дампе вся база, поэтому копию шифруют: `BACKUP_NAS_PASSPHRASE_FILE` — путь к файлу с паролем на сервере (права `600`), копия получает суффикс `.enc`. Пароль хранят отдельно от сервера (менеджер паролей): потеряв его вместе с сервером, копию не расшифровать.
+- Файлы бэкапов и папка `backups/` доступны только владельцу (`umask 077`, `chmod 700`).
 
-Переменные окружения скрипта: `POSTGRES_DB` (умолч. `savt`), `POSTGRES_USER` (умолч. `postgres`), `BACKUP_KEEP_COUNT` (умолч. `5`), `BACKUP_S3_UPLOAD` (умолч. `0`), `BACKUP_DB_CONTAINER` / `BACKUP_API_CONTAINER` (умолч. `savt-backend-db-1` / `savt-backend-api-1`). Пароль БД не нужен — `pg_dump` внутри контейнера ходит через локальный сокет.
+Расшифровка копии с NAS и восстановление:
+
+```bash
+openssl enc -d -aes-256-cbc -pbkdf2 -pass file:ФАЙЛ_ПАРОЛЯ -in savt_backup_ДАТА.sql.gz.enc | gunzip > restore.sql
+```
+
+Переменные окружения скрипта: `POSTGRES_DB` (умолч. `savt`), `POSTGRES_USER` (умолч. `postgres`), `BACKUP_KEEP_COUNT` (умолч. `5`), `BACKUP_S3_UPLOAD` (умолч. `0`), `BACKUP_NAS_COPY` (умолч. `0`), `BACKUP_NAS_DIR`, `BACKUP_NAS_KEEP_COUNT`, `BACKUP_NAS_PASSPHRASE_FILE`, `BACKUP_DB_CONTAINER` / `BACKUP_API_CONTAINER` (умолч. `savt-backend-db-1` / `savt-backend-api-1`). Пароль БД не нужен — `pg_dump` внутри контейнера ходит через локальный сокет.
 
 ### Первый запуск (на сервере)
 
 ```bash
-# Сделать скрипт исполняемым
-chmod +x savt-backend/backup.sh
-
-# Проверить вручную
+# Проверить вручную (через bash: после git pull флаг «исполняемый» у файла может слететь)
 cd savt-backend
-./backup.sh
+bash backup.sh
 ```
 
 Бэкапы сохраняются в `savt-backend/backups/` с именем `savt_backup_YYYY-MM-DD_HH-MM-SS.sql.gz`.
@@ -5225,14 +5230,15 @@ cd savt-backend
 crontab -e
 ```
 
-Добавить строку (запуск каждый день в 03:00, с выгрузкой в Object Storage):
+Добавить строку (запуск каждый день в 03:00, с копией на NAS):
 
 ```
-0 3 * * * cd /path/to/savt-backend && BACKUP_S3_UPLOAD=1 ./backup.sh >> /var/log/savt-backup.log 2>&1
+0 3 * * * cd /path/to/savt-backend && BACKUP_NAS_COPY=1 BACKUP_NAS_PASSPHRASE_FILE=/path/to/backup-passphrase bash backup.sh >> /path/to/savt-backend/backup.log 2>&1
 ```
 
-> Замените `/path/to/savt-backend` на реальный путь к директории на сервере.
-> Если бакет Object Storage не настроен — уберите `BACKUP_S3_UPLOAD=1`.
+> Замените `/path/to/...` на реальные пути на сервере. Запуск именно через `bash`, а не `./backup.sh`:
+> после `git pull` флаг «исполняемый» у файла может слететь, и cron молча перестанет делать копии.
+> Для выгрузки в Object Storage добавьте `BACKUP_S3_UPLOAD=1`; если бакет не настроен — не добавляйте.
 
 ### Проверить, что бэкапы реально делаются
 
