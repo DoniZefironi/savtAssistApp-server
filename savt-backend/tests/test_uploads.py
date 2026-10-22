@@ -71,6 +71,43 @@ async def test_unknown_types_keep_a_safe_extension(storage):
     assert (await upload_service.save_attachment(_upload())).startswith("/static/documents/")
 
 
+@pytest.mark.parametrize("mime,folder", [
+    ("image/html", "photos"), ("image/svg", "photos"), ("image/xhtml", "photos"), ("image/svg+xml", "photos"),
+    ("image/x-icon", "photos"), ("video/html", "videos"), ("audio/html", "voices"), ("audio/xml", "voices"),
+])
+async def test_a_page_disguised_as_media_never_keeps_its_extension(storage, mime, folder):
+    # тип присылает клиент, а «image/html» — тоже «image/…»: .html или .svg из этих папок
+    # открылись бы в браузере как страница со скриптами на нашем домене
+    info = await upload_service.save_attachment_with_meta(_upload("p.html", mime, b"<script>alert(1)</script>"))
+
+    assert info.url.startswith(f"/static/{folder}/") and info.url.endswith(".bin")
+
+
+@pytest.mark.parametrize("mime,name", [
+    ("application/x-msdownload", "setup.exe"), ("image/png", "photo.exe"), ("application/octet-stream", "RUN.BAT"),
+    ("text/plain", "a.ps1"), ("application/java-archive", "x.jar"), ("application/vnd.android.package-archive", "a.apk"),
+])
+async def test_executables_are_refused_and_leave_no_file(storage, mime, name):
+    with pytest.raises(HTTPException) as err:
+        await upload_service.save_attachment_with_meta(_upload(name, mime, b"MZ"))
+
+    assert err.value.status_code == 415 and "нельзя" in err.value.detail
+    assert [path for path in storage.rglob("*") if path.is_file()] == []
+
+
+async def test_html_as_a_plain_file_lands_in_the_download_only_folder(storage):
+    # папку files nginx отдаёт принудительно как скачиваемый файл, там .html безопасен
+    info = await upload_service.save_attachment_with_meta(_upload("page.html", "text/html", b"<p>"))
+
+    assert info.url.startswith("/static/files/") and info.url.endswith(".html")
+
+
+async def test_ordinary_media_keeps_its_extension(storage):
+    for mime, ext in (("image/heic", "heic"), ("video/webm", "webm"), ("audio/mp4", "mp4"), ("image/jpg", "jpg")):
+        info = await upload_service.save_attachment_with_meta(_upload("f", mime, b"x"))
+        assert info.url.endswith(f".{ext}"), (mime, info.url)
+
+
 async def test_oversized_attachment_is_refused_and_leaves_no_file(storage, monkeypatch):
     monkeypatch.setattr(upload_service, "MAX_ATTACHMENT_SIZE", 4)
 

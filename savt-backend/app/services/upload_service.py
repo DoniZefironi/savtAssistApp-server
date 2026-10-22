@@ -83,6 +83,29 @@ _MIME_TO_DOC_TYPE: dict[str, str] = {
     "video/quicktime": "video",
 }
 
+# Расширение файла определяет, как его отдаст nginx: .html или .svg из папок photos/videos/voices
+# открылись бы в браузере как страница со скриптами на нашем домене. Тип файла присылает клиент
+# (image/html — тоже «image/…»), поэтому подтип из MIME принимается только из этих списков,
+# всё остальное сохраняется как .bin и отдаётся браузером как скачиваемый файл.
+_SAFE_MEDIA_EXTS: dict[str, frozenset[str]] = {
+    "photos": frozenset({"jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "heif", "avif"}),
+    "videos": frozenset({"mp4", "mov", "webm", "mkv", "avi", "3gp", "mpeg", "m4v", "wmv"}),
+    "voices": frozenset({"ogg", "mp3", "m4a", "wav", "webm", "aac", "opus", "flac", "amr", "mp4", "mpeg", "3gp", "3gpp"}),
+}
+
+# Исполняемые файлы и сценарии: клиенту они в чате не нужны, а сотрудник может открыть такой
+# файл у себя на компьютере
+_BLOCKED_EXTS = frozenset({
+    "exe", "msi", "bat", "cmd", "com", "scr", "pif", "cpl", "dll", "sys", "lnk",
+    "js", "jse", "vbs", "vbe", "wsf", "wsh", "ps1", "psm1", "hta", "reg", "jar", "apk", "sh",
+})
+
+
+def _media_ext(folder: str, mime_subtype: str) -> str:
+    subtype = mime_subtype.split(";", 1)[0].strip().lower()
+    return subtype if subtype in _SAFE_MEDIA_EXTS[folder] else "bin"
+
+
 MAX_ATTACHMENT_SIZE = 500 * 1024 * 1024  # 500 МБ
 MAX_VOICE_SIZE = 25 * 1024 * 1024        # 25 МБ
 
@@ -111,19 +134,24 @@ async def save_attachment_with_meta(file: UploadFile) -> FileInfo:
     if mime in _ATTACHMENT_TYPES:
         folder, ext = _ATTACHMENT_TYPES[mime]
     elif mime.startswith("image/"):
-        sub = mime.split("/", 1)[1].split(";")[0].strip() or "bin"
-        folder, ext = "photos", sub
+        folder, ext = "photos", _media_ext("photos", mime.split("/", 1)[1])
     elif mime.startswith("video/"):
-        sub = mime.split("/", 1)[1].split(";")[0].strip() or "bin"
-        folder, ext = "videos", sub
+        folder, ext = "videos", _media_ext("videos", mime.split("/", 1)[1])
     elif mime.startswith("audio/"):
-        sub = mime.split("/", 1)[1].split(";")[0].strip() or "bin"
-        folder, ext = "voices", sub
+        folder, ext = "voices", _media_ext("voices", mime.split("/", 1)[1])
     else:
         folder = "files"
         ext = Path(file.filename).suffix.lstrip(".") if file.filename else ""
         if not ext:
             ext = "bin"
+    # Имя файла клиент пишет сам и может не совпасть с типом (photo.exe с типом image/png),
+    # поэтому смотрим и на него
+    filename_ext = Path(file.filename).suffix.lstrip(".").lower() if file.filename else ""
+    if ext.lower() in _BLOCKED_EXTS or filename_ext in _BLOCKED_EXTS:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Файлы этого типа загружать нельзя",
+        )
     url, size = await _save(file, folder, ext, MAX_ATTACHMENT_SIZE)
     doc_type = _MIME_TO_DOC_TYPE.get(mime, "other")
     return FileInfo(url=url, file_size_bytes=size, mime_type=mime, doc_type=doc_type)
@@ -156,11 +184,11 @@ def save_local_file(source: Path) -> FileInfo:
     if mime in _ATTACHMENT_TYPES:
         folder, ext = _ATTACHMENT_TYPES[mime]
     elif mime.startswith("image/"):
-        folder, ext = "photos", mime.split("/", 1)[1]
+        folder, ext = "photos", _media_ext("photos", mime.split("/", 1)[1])
     elif mime.startswith("video/"):
-        folder, ext = "videos", mime.split("/", 1)[1]
+        folder, ext = "videos", _media_ext("videos", mime.split("/", 1)[1])
     elif mime.startswith("audio/"):
-        folder, ext = "voices", mime.split("/", 1)[1]
+        folder, ext = "voices", _media_ext("voices", mime.split("/", 1)[1])
     else:
         folder = "files"
         ext = source.suffix.lstrip(".") or "bin"
