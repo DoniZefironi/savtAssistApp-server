@@ -1,5 +1,6 @@
 #!/bin/bash
-# Проверка, что ночные бэкапы свежие и на диске есть место. При проблеме шлёт
+# Проверка, что ночные бэкапы свежие, на диске есть место, а антивирус (если включён
+# BACKUP_CLAMAV_CHECK=1) работает и знает свежие базы. При проблеме шлёт
 # сообщение в Telegram и завершается с кодом 1. Запускается из cron уже после
 # backup.sh, поэтому ловит любой сбой, в том числе когда сам backup.sh не
 # запустился (слетел флаг «исполняемый», упал cron, выключен сервер).
@@ -20,6 +21,10 @@ API_CONTAINER="${BACKUP_API_CONTAINER:-savt-backend-api-1}"
 NAS_COPY="${BACKUP_NAS_COPY:-0}"
 NAS_DIR="${BACKUP_NAS_DIR:-/mnt/projects/_db-backups}"
 BACKUP_DIR="$(pwd)/backups"
+# Состояние антивируса: контейнер здоров и базы вирусов не старше CLAMAV_MAX_DB_AGE_HOURS
+CLAMAV_CHECK="${BACKUP_CLAMAV_CHECK:-0}"
+CLAMAV_CONTAINER="${BACKUP_CLAMAV_CONTAINER:-savt-backend-clamav-1}"
+CLAMAV_MAX_DB_AGE_HOURS="${BACKUP_CLAMAV_MAX_DB_AGE_HOURS:-72}"
 
 problems=()
 
@@ -49,6 +54,24 @@ if [ "$NAS_COPY" = "1" ]; then
     fi
 fi
 
+# Упавший антивирус не мешает работе (файлы принимаются без проверки), поэтому о нём
+# узнаём отсюда, а не по жалобам. Базы старше трёх суток — обновление не работает
+if [ "$CLAMAV_CHECK" = "1" ]; then
+    clamav_health=$(docker inspect --format '{{.State.Health.Status}}' "$CLAMAV_CONTAINER" 2>/dev/null)
+    if [ "$clamav_health" != "healthy" ]; then
+        problems+=("антивирус ClamAV не работает (состояние: ${clamav_health:-контейнер не найден})")
+    else
+        clamav_db_age=$(docker exec "$CLAMAV_CONTAINER" sh -c \
+            'f=$(ls -1t /var/lib/clamav/daily.c* 2>/dev/null | head -1); [ -n "$f" ] && echo $(( ($(date +%s) - $(stat -c %Y "$f")) / 3600 ))' \
+            2>/dev/null)
+        if [ -z "$clamav_db_age" ]; then
+            problems+=("не удалось узнать возраст баз вирусов ClamAV")
+        elif [ "$clamav_db_age" -ge "$CLAMAV_MAX_DB_AGE_HOURS" ]; then
+            problems+=("базы вирусов ClamAV не обновлялись ${clamav_db_age} ч")
+        fi
+    fi
+fi
+
 # Заполненный диск ломает и бэкапы, и загрузку файлов, и саму базу
 used_percent=$(df --output=pcent / | tail -1 | tr -dc '0-9')
 if [ -n "$used_percent" ] && [ $((100 - used_percent)) -lt "$MIN_FREE_PERCENT" ]; then
@@ -60,7 +83,7 @@ if [ "${#problems[@]}" -eq 0 ]; then
     exit 0
 fi
 
-message="SAVT Assist, сервер $(hostname): проблемы с бэкапами"$'\n'
+message="SAVT Assist, сервер $(hostname): есть проблемы"$'\n'
 for problem in "${problems[@]}"; do
     message+="- ${problem}"$'\n'
 done

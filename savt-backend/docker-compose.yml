@@ -45,6 +45,36 @@ services:
         max-size: "20m"
         max-file: "3"
 
+  # Антивирус для файлов, загруженных через API (app/services/antivirus_service.py): демон
+  # clamd по TCP 3310 только внутри docker-сети (наружу порт не публикуется), базы вирусов
+  # контейнер обновляет сам. Первый запуск скачивает базы (несколько минут), дальше они лежат
+  # в томе clamav_db. api начинает им пользоваться, когда в .env задано CLAMAV_ENABLED=true.
+  # Лимиты clamd подняты до размера самого большого вложения (500 МБ), иначе демон отвечал бы
+  # на крупные файлы ошибкой. ConcurrentDatabaseReload=no: при обновлении баз в памяти не
+  # держатся две копии (около 1,5 ГБ каждая), проверки на минуту-две ставятся в очередь.
+  clamav:
+    image: clamav/clamav:1.4
+    restart: unless-stopped
+    mem_limit: 2500m
+    environment:
+      CLAMD_CONF_StreamMaxLength: 512M
+      CLAMD_CONF_MaxFileSize: 512M
+      CLAMD_CONF_MaxScanSize: 1024M
+      CLAMD_CONF_ConcurrentDatabaseReload: "no"
+    volumes:
+      - clamav_db:/var/lib/clamav
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/clamdcheck.sh"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 6m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
   # Слушает MQTT-брокеры контроллеров ШУ (у каждого ШУ свой брокер — host/port
   # берутся не отсюда, а из GET /webhooks/telemetry/targets, см. README) и
   # пересылает сообщения на api обычным HTTP (POST /webhooks/telemetry) — по
@@ -111,6 +141,8 @@ services:
 # Учётные данные — из .env, не хранятся здесь. Если NAS_SHARE_DEVICE пуст/недоступен,
 # монтирование при старте упадёт — тогда временно уберите том и PROJECT_FOLDERS_ROOT из .env.
 volumes:
+  # Базы вирусов ClamAV: переживают пересоздание контейнера, чтобы не скачивать их заново
+  clamav_db:
   project_folders:
     driver_opts:
       type: cifs

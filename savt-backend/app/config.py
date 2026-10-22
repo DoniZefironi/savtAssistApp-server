@@ -31,6 +31,16 @@ class Settings(BaseSettings):
 
     cors_origins: str = "*"
 
+    # Антивирус ClamAV (контейнер clamav в docker-compose.yml) проверяет файлы, загруженные через
+    # API. По умолчанию выключен: локальный запуск и тесты обходятся без него
+    clamav_enabled: bool = False
+    clamav_host: str = "clamav"
+    clamav_port: int = 3310
+    clamav_timeout_seconds: int = 180
+    # Если антивирус недоступен: False — файл принимается, ошибка пишется в лог (чат с файлами
+    # не должен ломаться из-за упавшего антивируса); True — загрузка отклоняется (503)
+    clamav_fail_closed: bool = False
+
     yandex_folder_id: str = ""
     yandex_api_key: str = ""
     yandex_gpt_model: str = "yandexgpt-lite"

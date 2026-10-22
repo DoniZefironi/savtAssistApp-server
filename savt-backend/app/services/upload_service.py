@@ -6,6 +6,8 @@ from pathlib import Path
 
 from fastapi import HTTPException, UploadFile, status
 
+from app.services import antivirus_service
+
 UPLOAD_ROOT = Path("/code/uploads")
 
 # Расширение попадает в имя файла на диске и в публичный URL —
@@ -245,6 +247,8 @@ async def _save(file: UploadFile, folder: str, ext: str, max_size: int) -> tuple
                         detail=f"Файл слишком большой. Максимум: {max_size // (1024 * 1024)} МБ",
                     )
                 out.write(chunk)
+        # Заражённый файл (или отказ при недоступном антивирусе) стирается тем же except ниже
+        await antivirus_service.ensure_clean(path)
     except Exception:
         path.unlink(missing_ok=True)
         raise
