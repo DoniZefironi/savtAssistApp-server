@@ -6,6 +6,8 @@ from pathlib import Path
 
 from fastapi import HTTPException, UploadFile, status
 
+from app.config import settings
+from app.core.constants import STAFF_ROLE_NAMES
 from app.services import antivirus_service
 
 UPLOAD_ROOT = Path("/code/uploads")
@@ -127,11 +129,24 @@ class FileInfo:
     doc_type: str
 
 
-async def save_attachment(file: UploadFile) -> str:
-    return (await save_attachment_with_meta(file)).url
+def attachment_limit_for(role_name: str | None, mime_type: str | None = None) -> int:
+    """Сотрудникам (оператор, администратор, суперадмин) до 500 МБ: документация, схемы, видео
+    объектов. Остальным пользователям USER_UPLOAD_MAX_MB (по умолчанию 30 МБ), а видео, судя по
+    присланному типу, USER_VIDEO_UPLOAD_MAX_MB (по умолчанию 100 МБ); не больше общего потолка."""
+    if role_name in STAFF_ROLE_NAMES:
+        return MAX_ATTACHMENT_SIZE
+    is_video = (mime_type or "").startswith("video/")
+    limit_mb = settings.user_video_upload_max_mb if is_video else settings.user_upload_max_mb
+    return min(limit_mb * 1024 * 1024, MAX_ATTACHMENT_SIZE)
 
 
-async def save_attachment_with_meta(file: UploadFile) -> FileInfo:
+async def save_attachment(file: UploadFile, max_size: int | None = None) -> str:
+    return (await save_attachment_with_meta(file, max_size)).url
+
+
+async def save_attachment_with_meta(file: UploadFile, max_size: int | None = None) -> FileInfo:
+    """max_size — предел для этого файла (см. attachment_limit_for); без него действует общий
+    потолок MAX_ATTACHMENT_SIZE, так загружают документы и вложения базы знаний сотрудники."""
     mime = file.content_type or "application/octet-stream"
     if mime in _ATTACHMENT_TYPES:
         folder, ext = _ATTACHMENT_TYPES[mime]
@@ -154,7 +169,7 @@ async def save_attachment_with_meta(file: UploadFile) -> FileInfo:
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             detail="Файлы этого типа загружать нельзя",
         )
-    url, size = await _save(file, folder, ext, MAX_ATTACHMENT_SIZE)
+    url, size = await _save(file, folder, ext, min(max_size or MAX_ATTACHMENT_SIZE, MAX_ATTACHMENT_SIZE))
     doc_type = _MIME_TO_DOC_TYPE.get(mime, "other")
     return FileInfo(url=url, file_size_bytes=size, mime_type=mime, doc_type=doc_type)
 

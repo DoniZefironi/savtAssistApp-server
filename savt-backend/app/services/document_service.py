@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.constants import STAFF_ROLE_NAMES
 from app.core.exceptions import AlreadyExistsError, NotFoundError, PermissionDeniedError
 from app.models.document import Document
 from app.models.role import Role
@@ -278,9 +279,6 @@ class AdminDocumentService:
                            data.admin_response, {"type": "document_request"})
 
 
-_STAFF_ROLES = ("operator", "admin", "superadmin")
-
-
 class UserDocumentService:
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -304,7 +302,7 @@ class UserDocumentService:
         отвечаем как на несуществующий — по коду ответа нельзя узнать, что документ есть."""
         user = await self.user_repo.get_by_id(user_id)
         role = await self.session.get(Role, user.role_id) if user is not None else None
-        if role is not None and role.name in _STAFF_ROLES:
+        if role is not None and role.name in STAFF_ROLE_NAMES:
             return
         if doc.cabinet_id is not None:
             from app.repositories.cabinet import CabinetRepository

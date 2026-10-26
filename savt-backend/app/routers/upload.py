@@ -4,14 +4,17 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_current_user
+from app.core.dependencies import get_current_user, get_session
 from app.core.limiter import limiter
 from app.core.signed_urls import SignedUrl, strip_signature, verify_signature
+from app.models.role import Role
 from app.models.user import User
 from app.services.upload_service import (
     MAX_VOICE_SIZE,
     UPLOAD_ROOT,
+    attachment_limit_for,
     exceeds_recognition_limit,
     save_attachment,
     save_voice,
@@ -61,9 +64,9 @@ class TranscribeIn(BaseModel):
 class TranscribeOut(BaseModel):
     text: str
 
-# Размер одного файла ограничен (upload_service), число загрузок в минуту — этим:
-# иначе любой вошедший пользователь за минуту заливает десятки файлов по 500 МБ
-# и забивает диск. Лимит на IP, как и остальные (в офисе за общим NAT — на всех).
+# Размер одного файла ограничен (upload_service: пользователям USER_UPLOAD_MAX_MB, сотрудникам
+# 500 МБ), число загрузок в минуту — этим: иначе любой вошедший пользователь за минуту заливает
+# десятки файлов и забивает диск. Лимит на IP, как и остальные (в офисе за общим NAT — на всех).
 _UPLOADS_PER_MINUTE = "60/minute"
 
 # Загрузить вложения
@@ -72,9 +75,14 @@ _UPLOADS_PER_MINUTE = "60/minute"
 async def upload_attachment(
     request: Request,
     file: UploadFile = File(...),
-    _: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
 ):
-    return UploadOut(url=await save_attachment(file))
+    # Размер зависит от роли и вида файла: сотрудникам до 500 МБ, пользователям
+    # USER_UPLOAD_MAX_MB, а видео USER_VIDEO_UPLOAD_MAX_MB
+    role = await session.get(Role, user.role_id)
+    limit = attachment_limit_for(role.name if role else None, file.content_type)
+    return UploadOut(url=await save_attachment(file, limit))
 
 # Загрузить ГС
 @router.post("/voice", response_model=UploadOut)

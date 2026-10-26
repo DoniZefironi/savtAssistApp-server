@@ -136,6 +136,98 @@ async def test_oversized_voice_is_refused(monkeypatch):
     assert err.value.status_code == 413
 
 
+@pytest.mark.parametrize("role,expected_mb", [
+    ("user", 30), (None, 30), ("bot", 30), ("operator", 500), ("admin", 500), ("superadmin", 500),
+])
+def test_staff_may_upload_up_to_the_ceiling_and_everyone_else_up_to_the_user_limit(role, expected_mb):
+    assert upload_service.attachment_limit_for(role) == expected_mb * 1024 * 1024
+
+
+def test_the_user_limit_is_configurable_but_never_above_the_ceiling(monkeypatch):
+    monkeypatch.setattr(settings, "user_upload_max_mb", 10)
+    assert upload_service.attachment_limit_for("user") == 10 * 1024 * 1024
+
+    monkeypatch.setattr(settings, "user_upload_max_mb", 5000)
+    assert upload_service.attachment_limit_for("user") == upload_service.MAX_ATTACHMENT_SIZE
+
+
+@pytest.mark.parametrize("role,mime,expected_mb", [
+    ("user", "video/mp4", 100), ("user", "video/quicktime", 100), ("user", "image/jpeg", 30),
+    ("user", "application/pdf", 30), ("user", None, 30), ("operator", "video/mp4", 500),
+    ("admin", "application/pdf", 500),
+])
+def test_videos_get_their_own_larger_user_limit(role, mime, expected_mb):
+    assert upload_service.attachment_limit_for(role, mime) == expected_mb * 1024 * 1024
+
+
+def test_the_video_limit_is_configurable_and_capped_too(monkeypatch):
+    monkeypatch.setattr(settings, "user_video_upload_max_mb", 60)
+    assert upload_service.attachment_limit_for("user", "video/mp4") == 60 * 1024 * 1024
+    assert upload_service.attachment_limit_for("user", "image/png") == 30 * 1024 * 1024
+
+    monkeypatch.setattr(settings, "user_video_upload_max_mb", 9000)
+    assert upload_service.attachment_limit_for("user", "video/mp4") == upload_service.MAX_ATTACHMENT_SIZE
+
+
+async def test_a_per_call_limit_applies_but_cannot_exceed_the_ceiling(storage, monkeypatch):
+    with pytest.raises(HTTPException) as err:
+        await upload_service.save_attachment_with_meta(_upload("a.pdf", "application/pdf", b"123456"), max_size=5)
+    assert err.value.status_code == 413 and list(storage.rglob("*.pdf")) == []
+
+    monkeypatch.setattr(upload_service, "MAX_ATTACHMENT_SIZE", 4)
+    with pytest.raises(HTTPException):                      # просьба «до 1000» упирается в потолок 4
+        await upload_service.save_attachment_with_meta(_upload("a.pdf", "application/pdf", b"12345"), max_size=1000)
+
+
+async def test_users_are_limited_but_staff_is_not_over_http(api, make_user, storage, monkeypatch):
+    monkeypatch.setattr(settings, "user_upload_max_mb", 1)
+    limit = 1024 * 1024
+
+    def pdf(size):
+        return {"file": ("big.pdf", io.BytesIO(b"x" * size), "application/pdf")}
+
+    user, operator, admin = await make_user(), await make_user("operator"), await make_user("admin")
+
+    at_limit = await api.post("/upload/attachment", headers=_auth(user), files=pdf(limit))
+    too_big = await api.post("/upload/attachment", headers=_auth(user), files=pdf(limit + 1))
+    by_operator = await api.post("/upload/attachment", headers=_auth(operator, "operator"), files=pdf(limit + 1))
+    by_admin = await api.post("/upload/attachment", headers=_auth(admin, "admin"), files=pdf(2 * limit))
+
+    assert at_limit.status_code == 200
+    assert too_big.status_code == 413 and "Максимум: 1 МБ" in too_big.json()["detail"]
+    assert by_operator.status_code == by_admin.status_code == 200
+    assert len([path for path in storage.rglob("*.pdf")]) == 3        # у отказанного файла не осталось следа
+
+
+async def test_a_user_may_send_a_video_larger_than_an_ordinary_file(api, make_user, storage, monkeypatch):
+    monkeypatch.setattr(settings, "user_upload_max_mb", 1)
+    monkeypatch.setattr(settings, "user_video_upload_max_mb", 3)
+    user = await make_user()
+    two_mb = b"x" * (2 * 1024 * 1024)
+
+    video = await api.post("/upload/attachment", headers=_auth(user),
+                           files={"file": ("clip.mp4", io.BytesIO(two_mb), "video/mp4")})
+    document = await api.post("/upload/attachment", headers=_auth(user),
+                              files={"file": ("doc.pdf", io.BytesIO(two_mb), "application/pdf")})
+    huge_video = await api.post("/upload/attachment", headers=_auth(user),
+                                files={"file": ("clip.mp4", io.BytesIO(b"x" * (4 * 1024 * 1024)), "video/mp4")})
+
+    assert video.status_code == 200 and video.json()["url"].startswith("/static/videos/")
+    assert document.status_code == 413 and "Максимум: 1 МБ" in document.json()["detail"]
+    assert huge_video.status_code == 413 and "Максимум: 3 МБ" in huge_video.json()["detail"]
+
+
+async def test_voice_messages_keep_their_own_limit_for_everyone(api, make_user, storage, monkeypatch):
+    monkeypatch.setattr(upload_service, "MAX_VOICE_SIZE", 3)
+    admin = await make_user("admin")
+
+    response = await api.post(
+        "/upload/voice", headers=_auth(admin, "admin"), files={"file": ("v.ogg", io.BytesIO(b"12345"), "audio/ogg")},
+    )
+
+    assert response.status_code == 413
+
+
 # --- файлы с NAS и удаление ---
 
 def test_local_file_is_copied_with_the_same_metadata(storage, tmp_path):
