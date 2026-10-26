@@ -61,6 +61,12 @@ services:
       CLAMD_CONF_MaxFileSize: 512M
       CLAMD_CONF_MaxScanSize: 1024M
       CLAMD_CONF_ConcurrentDatabaseReload: "no"
+      # Сервер обновлений ClamAV закрыт для адресов из некоторых стран, поэтому встроенное
+      # автообновление отключено (иначе оно лишь пишет в лог ошибки 403 и уходит на «отдых»
+      # у сервера). Базы присылает рабочий компьютер: tools/update-clamav-db.ps1 и
+      # clamav-install-db.sh (README, «Антивирус для загруженных файлов»). Если сервер
+      # когда-нибудь станет доступен, поставьте в .env CLAMAV_NO_FRESHCLAMD=false.
+      CLAMAV_NO_FRESHCLAMD: ${CLAMAV_NO_FRESHCLAMD:-true}
     volumes:
       - clamav_db:/var/lib/clamav
     healthcheck:

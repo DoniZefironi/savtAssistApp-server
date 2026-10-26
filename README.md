@@ -5243,8 +5243,9 @@ Data:      { "cabinet_id": 5, "days_left": 30 }
 Файлы, загруженные через API (`POST /upload/attachment`, `POST /upload/voice`, а также документы и
 вложения базы знаний, которые загружают сотрудники), после сохранения проверяет антивирус ClamAV:
 отдельный контейнер `clamav` в `docker-compose.yml` держит демон clamd (порт 3310 только внутри
-docker-сети, наружу не публикуется) и сам обновляет базы вирусов. Файл передаётся демону по его
-протоколу (`app/services/antivirus_service.py`).
+docker-сети, наружу не публикуется). Файл передаётся демону по его протоколу
+(`app/services/antivirus_service.py`). Базы вирусов контейнер сам обновить не может, подробнее
+в разделе «Обновление баз вирусов» ниже.
 
 - **Заражённый файл:** загрузка отклоняется ответом `422` (`«Файл отклонён антивирусом: <название>…»`),
   файл с диска удаляется.
@@ -5258,8 +5259,8 @@ docker-сети, наружу не публикуется) и сам обнов�
 - Проверяет только известные угрозы по базе: совсем новые вирусы, архивы с паролем и файлы больше
   лимита демона он не распознает.
 
-**Включение на сервере.** Контейнер запускается вместе со всем остальным и при первом старте
-докачивает базы (несколько минут, пока состояние `starting`):
+**Включение на сервере.** Контейнер запускается вместе со всем остальным (базы на момент сборки
+образа в нём уже есть, поэтому он готов через минуту-две):
 
 ```bash
 cd /opt/savtAssistApp-server/savt-backend
@@ -5276,8 +5277,67 @@ docker exec savt-backend-clamav-1 sh -c "echo 'WDVPIVAlQEFQWzRcUFpYNTQoUF4pN0NDK
 ```
 
 В ответе должно быть `Eicar-Test-Signature FOUND`. Состояние антивируса (контейнер здоров,
-базы не старше трёх суток) проверяет `backup-check.sh` при `BACKUP_CLAMAV_CHECK=1`, при проблеме
-приходит сообщение в Telegram (см. «Оповещение, если бэкап не сделан»).
+базы установлены не больше пяти суток назад) проверяет `backup-check.sh` при `BACKUP_CLAMAV_CHECK=1`,
+при проблеме приходит сообщение в Telegram (см. «Оповещение, если бэкап не сделан»).
+
+### Обновление баз вирусов
+
+Сервер обновлений ClamAV (`database.clamav.net`) закрыт для адресов из некоторых стран, в том
+числе для нашего сервера: на любой запрос он отвечает `403 Blocked by CDN`, а встроенный `freshclam`
+в таком случае завершается. Поэтому автообновление в контейнере отключено
+(`CLAMAV_NO_FRESHCLAMD=true` в `docker-compose.yml`), а базы приносит рабочий компьютер, которому
+сервер обновлений открыт:
+
+1. `savt-backend/tools/update-clamav-db.ps1` запускается на компьютере по расписанию Windows
+   (каждый день в 10:00): через docker скачивает свежие базы (том `savt-clamav-db`, после первого
+   раза только небольшие обновления), упаковывает `main`, `daily` и `bytecode` (около 110 МБ) и
+   отправляет архив на сервер по SSH. Если базы не менялись с прошлой отправки, ничего не
+   отправляется. Журнал: `%LOCALAPPDATA%\savt-clamav\update.log`.
+2. `savt-backend/clamav-install-db.sh` на сервере принимает архив со стандартного ввода, проверяет
+   состав (только эти три файла, без путей), подпись каждой базы (`sigtool --info`, подделанную
+   или битую отклоняет), заменяет файлы в контейнере и перезагружает демон. При любой ошибке
+   рабочие базы остаются как были. SSH-ключ компьютера в `~/.ssh/authorized_keys` привязан к
+   этому скрипту (`command="bash …/clamav-install-db.sh"`), больше этим ключом на сервере ничего
+   сделать нельзя.
+
+Если компьютер выключен в выходные, базы на сервере просто стареют, но антивирус продолжает работать;
+сообщение в Telegram придёт, когда с последней установки пройдёт больше `BACKUP_CLAMAV_MAX_DB_AGE_HOURS`
+часов (умолч. `120`). Просроченное расписание Windows выполнит при первой возможности.
+
+**Первая настройка** (один раз). На компьютере (PowerShell), ключ без пароля, он годится только для
+этой одной команды на сервере:
+
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ssh" | Out-Null
+ssh-keygen -t ed25519 -f "$env:USERPROFILE\.ssh\savt_clamav" -N '""' -C "clamav-updater"
+$line = 'command="bash /opt/savtAssistApp-server/savt-backend/clamav-install-db.sh",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty ' + (Get-Content "$env:USERPROFILE\.ssh\savt_clamav.pub" -Raw).Trim()
+$tmp = Join-Path $env:TEMP "savt_clamav_authkey.txt"
+[IO.File]::WriteAllText($tmp, $line + "`n")
+scp $tmp admin101@10.1.0.208:/tmp/savt_clamav_authkey.txt
+ssh admin101@10.1.0.208 "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat /tmp/savt_clamav_authkey.txt >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && rm /tmp/savt_clamav_authkey.txt"
+Remove-Item $tmp
+```
+
+Первый запуск вручную (пока без расписания; `-Force` отправит базы, даже если они уже отправлялись):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\ShaboldaV\Documents\GitHub\savtAssistApp-server\savt-backend\tools\update-clamav-db.ps1" -Force
+```
+
+В конце журнала должна быть строка сервера `Базы установлены: ClamAV 1.4…/<версия>/<дата>` и «Готово».
+Проверка на сервере: `docker exec savt-backend-clamav-1 clamdscan --version`. Расписание Windows:
+
+```powershell
+$script = "C:\Users\ShaboldaV\Documents\GitHub\savtAssistApp-server\savt-backend\tools\update-clamav-db.ps1"
+$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$script`""
+$trigger = New-ScheduledTaskTrigger -Daily -At 10:00
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 1)
+Register-ScheduledTask -TaskName "SAVT обновление баз ClamAV" -Action $action -Trigger $trigger -Settings $settings
+```
+
+Работает, пока на компьютере запущен Docker Desktop и этот пользователь вошёл в систему. Если
+сервер ClamAV когда-нибудь станет доступен с сервера, поставьте в `.env` `CLAMAV_NO_FRESHCLAMD=false`
+и пересоздайте контейнер: тогда он обновится сам, а скрипт на компьютере больше не нужен.
 
 ---
 
@@ -5334,7 +5394,7 @@ crontab -e
 верно для копии на NAS (если `BACKUP_NAS_COPY=1`) и что на диске свободно не меньше
 `BACKUP_MIN_FREE_PERCENT` процентов (умолч. `15`). При `BACKUP_CLAMAV_CHECK=1` проверяет ещё и
 антивирус: контейнер `clamav` здоров, а базы вирусов не старше `BACKUP_CLAMAV_MAX_DB_AGE_HOURS`
-часов (умолч. `72`). При проблеме отправляет сообщение в Telegram
+часов (умолч. `120`). При проблеме отправляет сообщение в Telegram
 от имени бота (`TELEGRAM_BOT_TOKEN` берётся из `.env`) тому, чей chat_id указан в
 `BACKUP_ALERT_CHAT_ID`, и завершается с кодом `1`. Проверка отдельная от `backup.sh` намеренно:
 она сработает и тогда, когда сам `backup.sh` не запустился.

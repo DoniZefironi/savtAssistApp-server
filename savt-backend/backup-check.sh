@@ -24,7 +24,7 @@ BACKUP_DIR="$(pwd)/backups"
 # Состояние антивируса: контейнер здоров и базы вирусов не старше CLAMAV_MAX_DB_AGE_HOURS
 CLAMAV_CHECK="${BACKUP_CLAMAV_CHECK:-0}"
 CLAMAV_CONTAINER="${BACKUP_CLAMAV_CONTAINER:-savt-backend-clamav-1}"
-CLAMAV_MAX_DB_AGE_HOURS="${BACKUP_CLAMAV_MAX_DB_AGE_HOURS:-72}"
+CLAMAV_MAX_DB_AGE_HOURS="${BACKUP_CLAMAV_MAX_DB_AGE_HOURS:-120}"
 
 problems=()
 
@@ -55,7 +55,9 @@ if [ "$NAS_COPY" = "1" ]; then
 fi
 
 # Упавший антивирус не мешает работе (файлы принимаются без проверки), поэтому о нём
-# узнаём отсюда, а не по жалобам. Базы старше трёх суток — обновление не работает
+# узнаём отсюда, а не по жалобам. Возраст баз — это время их последней установки на сервер
+# скриптом tools/update-clamav-db.ps1 (рабочий компьютер присылает их ежедневно по рабочим дням);
+# пять суток запаса покрывают выходные и праздники
 if [ "$CLAMAV_CHECK" = "1" ]; then
     clamav_health=$(docker inspect --format '{{.State.Health.Status}}' "$CLAMAV_CONTAINER" 2>/dev/null)
     if [ "$clamav_health" != "healthy" ]; then
