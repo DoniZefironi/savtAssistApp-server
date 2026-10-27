@@ -63,8 +63,7 @@ async def send_contact_request(channel: str, external_chat_id: str) -> None:
     await _send_telegram(
         external_chat_id,
         "Остался один шаг — нажмите кнопку ниже, чтобы подтвердить номер телефона.\n\n"
-        "Этот номер станет вашим логином в SAVT Assist. Telegram отправит его сам, "
-        "вводить вручную не нужно.",
+        "Этот номер станет вашим логином в SAVT Assist.",
         reply_markup={
             "keyboard": [[{"text": "Отправить мой номер", "request_contact": True}]],
             "resize_keyboard": True,
