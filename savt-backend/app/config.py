@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     # Сколько последних сообщений чата (включая текущее) уходит в LLM как
     # история диалога — чем больше, тем дороже и медленнее каждый запрос
     bot_history_limit: int = 25
+    # Потолок сообщений одного пользователя, на которые бот отвечает: каждое — это
+    # запросы к Yandex (эмбеддинг, генерация, описание фото, распознавание голоса)
+    bot_user_messages_per_minute: int = 10
+    bot_user_messages_per_day: int = 300
 
     bitrix_webhook_url: str = ""
     bitrix_default_responsible_id: int = 0

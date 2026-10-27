@@ -501,12 +501,16 @@ class ChatService:
 
         async def _bot_reply():
             from app.database import AsyncSessionLocal
-            from app.services.bot_service import handle_message
+            from app.services.bot_service import check_rate_limit, handle_message
             try:
-                text_for_bot = await _bot_input_text(data)
-                if not text_for_bot:
-                    return
                 async with AsyncSessionLocal() as bot_session:
+                    # Лимит проверяется до описания фото и распознавания голоса: это
+                    # тоже платные обращения к Yandex
+                    if not await check_rate_limit(bot_session, chat_id, data.text):
+                        return
+                    text_for_bot = await _bot_input_text(data)
+                    if not text_for_bot:
+                        return
                     await handle_message(bot_session, chat_id, text_for_bot)
             except Exception:
                 logger.exception("Bot reply failed for chat %s", chat_id)
@@ -960,7 +964,11 @@ async def _bot_input_text(data: MessageCreateIn) -> str:
     анализируются независимо от наличия текста — подпись и само фото дополняют
     друг друга; их количество ограничено, чтобы не гонять vision-модель по всем
     сразу, если их прислали много."""
-    parts = [data.text] if data.text else []
+    from app.services.bot_service import sanitize_user_text
+
+    # Текст пользователя — недоверенный: служебные заголовки и «[Источник]» в нём
+    # обезвреживаются, чтобы его нельзя было выдать за контекст из базы знаний
+    parts = [sanitize_user_text(data.text)] if data.text else []
 
     if not data.text:
         voice_att = next(
@@ -971,7 +979,7 @@ async def _bot_input_text(data: MessageCreateIn) -> str:
         if voice_att is not None:
             transcript = await _transcribe_voice_attachment(voice_att.file_url)
             if transcript:
-                parts.append(transcript)
+                parts.append(sanitize_user_text(transcript))
 
     image_atts = [
         a for a in data.attachments
@@ -980,7 +988,8 @@ async def _bot_input_text(data: MessageCreateIn) -> str:
     for att in image_atts:
         description = await _analyze_image_attachment(att.file_url, att.mime_type)
         if description:
-            parts.append(f"[Фото: {description}]")
+            # Текст на фото тоже может содержать «инструкции» и скобки, закрывающие метку
+            parts.append(f"[Фото: {sanitize_user_text(description)}]")
 
     return "\n\n".join(parts)
 
