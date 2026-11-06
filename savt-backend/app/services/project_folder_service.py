@@ -63,11 +63,19 @@ _GRACE_DAYS = 7
 _MTIME_EPSILON_SECONDS = 2.0
 
 
+def year_allowed(project: Project) -> bool:
+    """Входит ли год проекта в PROJECT_FOLDERS_YEARS (пусто — любой год). Годы пишут двумя
+    цифрами (26) или четырьмя (2026)."""
+    years = {int(y) % 100 for y in settings.project_folders_years.split(",") if y.strip().isdigit()}
+    return not years or project_year(project) % 100 in years
+
+
 def sync_allowed(project: Project) -> bool:
-    """Синхронизировать ли папку этого проекта. В режиме full — любую. В create_only (и при
-    любом другом значении режима) — только ту, которую завёл сам сервер (folder_managed):
-    рабочие папки, созданные людьми, сервер не читает и не меняет."""
-    if not settings.project_folders_root:
+    """Синхронизировать ли папку этого проекта. Только проекты нужных лет (year_allowed).
+    В режиме full — любую их папку. В create_only (и при любом другом значении режима) —
+    только ту, которую завёл сам сервер (folder_managed): рабочие папки, созданные людьми,
+    сервер не читает и не меняет."""
+    if not settings.project_folders_root or not year_allowed(project):
         return False
     return settings.project_folders_mode == "full" or project.folder_managed
 
@@ -225,6 +233,9 @@ async def write_project_qr(root: Path, project: Project) -> None:
 async def create_project_folder_structure(project: Project, project_repo: ProjectRepository) -> None:
     if not settings.project_folders_root:
         logger.info("project_folders_root не настроен — пропускаю создание папки (project_id=%s)", project.id)
+        return
+    if not year_allowed(project):
+        logger.info("Год проекта %s не входит в PROJECT_FOLDERS_YEARS — папку не завожу", project.id)
         return
     root = await _project_root_path(project, project_repo)
     existed = await asyncio.to_thread(root.exists)

@@ -106,8 +106,9 @@ class ProjectService:
             raise NotFoundError("Проект не найден")
         if not project_folder_service.sync_allowed(project):
             raise NotFoundError(
-                "Синхронизация папки не включена: не настроен PROJECT_FOLDERS_ROOT, либо режим "
-                "PROJECT_FOLDERS_MODE=create_only, а папку этого проекта завели не мы"
+                "Синхронизация папки не включена: не настроен PROJECT_FOLDERS_ROOT, год проекта не входит "
+                "в PROJECT_FOLDERS_YEARS, либо режим PROJECT_FOLDERS_MODE=create_only, а папку этого "
+                "проекта завели не мы"
             )
 
         from app.repositories.document import DocumentRepository
@@ -155,7 +156,7 @@ class ProjectService:
         if stats["relocated"]:
             parts.append(f"перенесено без полной сверки (гарантия истекла): {stats['relocated']}")
         if stats.get("skipped"):
-            parts.append(f"пропущено (папку завели не мы, режим create_only): {stats['skipped']}")
+            parts.append(f"пропущено (PROJECT_FOLDERS_YEARS или create_only, папку завели не мы):{stats['skipped']}")
         if stats["failed"]:
             parts.append(f"с ошибкой: {stats['failed']}")
 

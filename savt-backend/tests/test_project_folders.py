@@ -229,6 +229,28 @@ async def test_create_only_looks_for_a_folder_with_the_same_leading_number(
     assert project.folder_managed is expected_new
 
 
+@pytest.mark.parametrize("years,works", [("26", True), ("2026", True), ("25, 26", True), ("", True), ("25", False), ("27", False)])
+async def test_folders_are_only_made_for_the_listed_years(db_session, nas, make_project, monkeypatch, years, works):
+    monkeypatch.setattr(settings, "project_folders_years", years)
+    project = await make_project(name="26_100 Космос", production_number="26_100", unique_code="code-1")
+
+    await pfs.create_project_folder_structure(project, ProjectRepository(db_session))
+
+    assert (nas.root / "!2026" / "100 Космос").is_dir() is works
+
+
+async def test_projects_of_other_years_are_not_synced(db_session, nas, make_project, monkeypatch):
+    monkeypatch.setattr(settings, "project_folders_years", "26")
+    old = await make_project(name="25_050 Старый", production_number="25_050", unique_code="code-1")
+    new = await make_project(name="26_100 Космос", production_number="26_100", unique_code="code-2")
+
+    stats = await pfs._sync_all_projects(db_session)
+
+    assert stats["synced"] == 1 and stats["skipped"] == 1
+    assert pfs.sync_allowed(new) and not pfs.sync_allowed(old)
+    assert [p.name for p in nas.root.iterdir()] == ["!2026"]
+
+
 async def test_full_mode_does_not_look_at_numbers(db_session, nas, make_project):
     project = await make_project(name="26_255 Новый объект", production_number="26_255", unique_code="code-1")
     (nas.root / "!2026" / "255 Другое окончание").mkdir(parents=True)
