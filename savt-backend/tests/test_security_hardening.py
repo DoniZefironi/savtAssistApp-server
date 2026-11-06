@@ -42,11 +42,17 @@ def test_a_sound_production_configuration_has_no_problems():
     ({"cors_origins": "https://helper.savt.by/app/"}, "https://helper.savt.by/app/ — адрес с путём"),
     ({"cors_origins": "https://helper.savt.by/"}, "https://helper.savt.by/ — адрес с путём"),
     ({"app_env": "dev"}, "APP_ENV"),
+    ({"project_folders_mode": "ful"}, "PROJECT_FOLDERS_MODE"),
 ])
 def test_each_weak_setting_is_reported(overrides, fragment):
     problems = config_problems(_settings(**overrides))
 
     assert len(problems) == 1 and fragment in problems[0]
+
+
+def test_both_folder_modes_are_accepted():
+    assert config_problems(_settings(project_folders_mode="full")) == []
+    assert config_problems(_settings(project_folders_mode="create_only")) == []
 
 
 def test_all_problems_are_listed_at_once():

@@ -99,14 +99,16 @@ class ProjectService:
     # выполняется синхронно (админ ждёт результат) и без отбора по гарантии —
     # явное действие человека всегда срабатывает.
     async def sync_folder_now(self, project_id: int) -> dict:
-        from app.config import settings
         from app.services import project_folder_service
 
         project = await self.repo.get_by_id(project_id)
         if project is None or project.deleted_at is not None:
             raise NotFoundError("Проект не найден")
-        if not settings.project_folders_root:
-            raise NotFoundError("Синхронизация папок не настроена (PROJECT_FOLDERS_ROOT)")
+        if not project_folder_service.sync_allowed(project):
+            raise NotFoundError(
+                "Синхронизация папки не включена: не настроен PROJECT_FOLDERS_ROOT, либо режим "
+                "PROJECT_FOLDERS_MODE=create_only, а папку этого проекта завели не мы"
+            )
 
         from app.repositories.document import DocumentRepository
         doc_repo = DocumentRepository(self.session)
@@ -152,6 +154,8 @@ class ProjectService:
         parts = [f"синхронизировано: {stats['synced']}"]
         if stats["relocated"]:
             parts.append(f"перенесено без полной сверки (гарантия истекла): {stats['relocated']}")
+        if stats.get("skipped"):
+            parts.append(f"пропущено (папку завели не мы, режим create_only): {stats['skipped']}")
         if stats["failed"]:
             parts.append(f"с ошибкой: {stats['failed']}")
 

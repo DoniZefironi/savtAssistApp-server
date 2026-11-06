@@ -93,6 +93,10 @@ class Settings(BaseSettings):
     telemetry_history_retention_days: int = 14
 
     project_folders_root: str = ""
+    # full — синхронизируются папки всех проектов. create_only — только папки, которые завёл
+    # сам сервер (projects.folder_managed): уже существующие папки он не читает и не меняет,
+    # а если папка с именем нового проекта уже есть, не трогает и её
+    project_folders_mode: str = "full"
 
     bitrix_project_code_key: str = ""
 

@@ -263,6 +263,16 @@ async def test_sync_folder_requires_configured_root(db_session, env, make_projec
         await ProjectService(db_session).sync_all_folders_now()
 
 
+async def test_sync_folder_button_refuses_a_foreign_folder_in_create_only_mode(db_session, env, make_project, monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "project_folders_root", "/nas")
+    monkeypatch.setattr(settings, "project_folders_mode", "create_only")
+    project = await make_project()
+
+    with pytest.raises(NotFoundError):
+        await ProjectService(db_session).sync_folder_now(project.id)
+
+
 async def test_sync_folder_reports_imported_documents(db_session, env, make_project, make_cabinet, make_document, monkeypatch):
     from app.config import settings
     monkeypatch.setattr(settings, "project_folders_root", "/nas")

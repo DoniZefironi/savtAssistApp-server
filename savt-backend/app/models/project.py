@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import String, DateTime, ForeignKey, func
+from sqlalchemy import Boolean, String, DateTime, ForeignKey, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -57,6 +57,9 @@ class Project(Base):
     folder_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
     # когда последний раз успешно прогонялась синхронизация папки с NAS
     folder_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # папку проекта на NAS завёл сам сервер, а не люди. В режиме PROJECT_FOLDERS_MODE=create_only
+    # синхронизируются только такие проекты (см. project_folder_service.sync_allowed)
+    folder_managed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     # дата создания
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

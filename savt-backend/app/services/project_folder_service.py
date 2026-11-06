@@ -50,7 +50,10 @@ _CHAT_TITLES = {
     "support": "Чат поддержки",
 }
 
-_QR_FILENAME = "QR.png"
+# Имя говорит людям в папке, откуда файл. QR.png — прежнее имя того же файла: при сверке
+# он переименовывается, а не дублируется
+_QR_FILENAME = "QR_SAVTASSIST.png"
+_LEGACY_QR_FILENAME = "QR.png"
 _INVALID_CHARS_RE = re.compile(r'[\\/:*?"<>|]')
 # Синхронизация продолжается ещё столько дней после истечения гарантии — если
 # гарантию продлят позже, синхронизация возобновится сама при следующем прогоне
@@ -58,6 +61,15 @@ _GRACE_DAYS = 7
 # Запас на грубость mtime у сетевых шар/старых ФС — разница меньше этого не
 # считается изменением содержимого фото на NAS
 _MTIME_EPSILON_SECONDS = 2.0
+
+
+def sync_allowed(project: Project) -> bool:
+    """Синхронизировать ли папку этого проекта. В режиме full — любую. В create_only (и при
+    любом другом значении режима) — только ту, которую завёл сам сервер (folder_managed):
+    рабочие папки, созданные людьми, сервер не читает и не меняет."""
+    if not settings.project_folders_root:
+        return False
+    return settings.project_folders_mode == "full" or project.folder_managed
 
 
 def sanitize_folder_name(name: str) -> str:
@@ -142,6 +154,30 @@ async def _project_root_path(project: Project, project_repo: ProjectRepository) 
     return parent_root / (project.folder_name or sanitize_folder_name(strip_year_prefix(project.name)))
 
 
+# Номер в начале названия папки ("240 Могилевский ДСК ..." → "240"): остальная часть названия
+# у рабочих папок пишется вручную и с названием проекта не совпадает
+_LEADING_NUMBER_RE = re.compile(r"^(\d+)(?=\s|$)")
+
+
+def _leading_number(name: str) -> str | None:
+    match = _LEADING_NUMBER_RE.match(name)
+    return match.group(1) if match else None
+
+
+async def _folders_with_same_number(root: Path) -> list[Path]:
+    """Папки рядом с root (в той же родительской), чьё название начинается с того же номера."""
+    number = _leading_number(root.name)
+    if number is None:
+        return []
+
+    def _scan() -> list[Path]:
+        if not root.parent.is_dir():
+            return []
+        return [p for p in root.parent.iterdir() if p.is_dir() and _leading_number(p.name) == number]
+
+    return await asyncio.to_thread(_scan)
+
+
 async def _ensure_structure(root: Path) -> None:
     await asyncio.to_thread(root.mkdir, parents=True, exist_ok=True)
     for sub in TEMPLATE_SUBFOLDERS:
@@ -191,8 +227,26 @@ async def create_project_folder_structure(project: Project, project_repo: Projec
         logger.info("project_folders_root не настроен — пропускаю создание папки (project_id=%s)", project.id)
         return
     root = await _project_root_path(project, project_repo)
+    existed = await asyncio.to_thread(root.exists)
+    if settings.project_folders_mode != "full":
+        # В create_only папка с тем же именем или с тем же начальным номером — чужая рабочая:
+        # в неё не дописываем ни подпапки шаблона, ни QR, рядом свою не заводим, и
+        # синхронизироваться она не будет
+        if existed:
+            logger.info("Папка проекта %s уже есть (%s), режим create_only — не трогаю", project.id, root)
+            return
+        same_number = await _folders_with_same_number(root)
+        if same_number:
+            logger.info(
+                "Для проекта %s в %s уже есть папка с тем же номером (%s), режим create_only — "
+                "свою не завожу", project.id, root.parent, ", ".join(p.name for p in same_number),
+            )
+            return
     await _ensure_structure(root)
     await write_project_qr(root, project)
+    if not existed:
+        project.folder_managed = True
+        await project_repo.session.commit()
 
 
 async def _relocate_folder(
@@ -247,7 +301,7 @@ async def relocate_project_folder(session: AsyncSession, project: Project) -> No
 
     Пустых папок не создаёт: если папки на диске нет, значит проект заводился
     без NAS, и незачем плодить пустышки на каждый архивный проект."""
-    if not settings.project_folders_root:
+    if not sync_allowed(project):
         return
     project_repo = ProjectRepository(session)
     new_name = sanitize_folder_name(strip_year_prefix(project.name))
@@ -269,7 +323,7 @@ async def sync_project_folder(session: AsyncSession, project: Project) -> None:
     (Document.project_id / Document.cabinet_id), а также заводит документы и
     фото на файлы, которые положили в папку проекта/ШУ напрямую, минуя
     приложение (см. import_new_files_from_nas, import_new_photos_from_nas)."""
-    if not settings.project_folders_root:
+    if not sync_allowed(project):
         return
 
     project_repo = ProjectRepository(session)
@@ -282,8 +336,12 @@ async def sync_project_folder(session: AsyncSession, project: Project) -> None:
     await _ensure_structure(root)
 
     qr_path = root / "_Маркировка" / _QR_FILENAME
+    legacy_qr_path = root / "_Маркировка" / _LEGACY_QR_FILENAME
     if not await asyncio.to_thread(qr_path.exists):
-        await write_project_qr(root, project)
+        if await asyncio.to_thread(legacy_qr_path.is_file):
+            await asyncio.to_thread(legacy_qr_path.rename, qr_path)
+        else:
+            await write_project_qr(root, project)
 
     doc_repo = DocumentRepository(session)
 
@@ -793,8 +851,12 @@ async def _sync_all_projects(session: AsyncSession) -> dict:
     project_repo = ProjectRepository(session)
     cabinet_repo = CabinetRepository(session)
     projects = await project_repo.list_all_active()
-    stats = {"total": len(projects), "synced": 0, "relocated": 0, "failed": 0}
+    stats = {"total": len(projects), "synced": 0, "relocated": 0, "failed": 0, "skipped": 0}
     for project in projects:
+        # В create_only папки, заведённые людьми, не трогаем
+        if not sync_allowed(project):
+            stats["skipped"] += 1
+            continue
         cabinets = await cabinet_repo.list_by_project(project.id)
         try:
             if is_sync_eligible(cabinets, project):
@@ -868,7 +930,7 @@ def schedule_cabinet_folder(cabinet_id: int) -> None:
             if cabinet is None or cabinet.project_id is None:
                 return
             project = await ProjectRepository(session).get_by_id(cabinet.project_id)
-            if project is None:
+            if project is None or not sync_allowed(project):
                 return
             try:
                 root = await _project_root_path(project, ProjectRepository(session))
@@ -904,7 +966,7 @@ def schedule_request_chat_export(chat_id: int) -> None:
             if project_id is None:
                 return
             project = await project_repo.get_by_id(project_id)
-            if project is None:
+            if project is None or not sync_allowed(project):
                 return
 
             try:
@@ -943,7 +1005,7 @@ def schedule_document_mirror(document_id: int) -> None:
                 cabinet = await CabinetRepository(session).get_by_id(doc.cabinet_id)
                 if cabinet is not None and cabinet.project_id is not None:
                     project = await project_repo.get_by_id(cabinet.project_id)
-            if project is None:
+            if project is None or not sync_allowed(project):
                 return
             try:
                 root = await _project_root_path(project, project_repo)
@@ -973,7 +1035,7 @@ def schedule_document_removal(
                 cabinet = await CabinetRepository(session).get_by_id(cabinet_id)
                 if cabinet is not None and cabinet.project_id is not None:
                     project = await project_repo.get_by_id(cabinet.project_id)
-            if project is None:
+            if project is None or not sync_allowed(project):
                 return
             try:
                 root = await _project_root_path(project, project_repo)
@@ -1011,7 +1073,7 @@ def schedule_photo_removal(
                 cabinet = await CabinetRepository(session).get_by_id(cabinet_id)
                 if cabinet is not None and cabinet.project_id is not None:
                     project = await project_repo.get_by_id(cabinet.project_id)
-            if project is None:
+            if project is None or not sync_allowed(project):
                 return
             try:
                 root = await _project_root_path(project, project_repo)

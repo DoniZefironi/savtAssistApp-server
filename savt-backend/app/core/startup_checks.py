@@ -57,6 +57,12 @@ def config_problems(settings: Settings) -> list[str]:
             "нужен вид https://домен или http://домен:порт"
         )
 
+    if settings.project_folders_mode not in ("full", "create_only"):
+        problems.append(
+            f"PROJECT_FOLDERS_MODE={settings.project_folders_mode!r}: допустимо full или create_only; "
+            "сейчас сервер работает как create_only и существующие папки не синхронизирует"
+        )
+
     if not is_production(settings.app_env):
         problems.append(
             f"APP_ENV={settings.app_env!r}: в боевом окружении должно быть prod "

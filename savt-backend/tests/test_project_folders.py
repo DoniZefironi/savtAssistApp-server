@@ -117,7 +117,7 @@ async def test_creating_a_project_folder_lays_out_the_template_and_qr(db_session
     root = nas.root / "!2026" / "100 Космос"
     for sub in pfs.TEMPLATE_SUBFOLDERS:
         assert (root / sub).is_dir()
-    assert (root / "_Маркировка" / "QR.png").read_bytes().startswith(b"\x89PNG")
+    assert (root / "_Маркировка" / "QR_SAVTASSIST.png").read_bytes().startswith(b"\x89PNG")
 
 
 async def test_nothing_is_created_without_a_configured_root(db_session, nas, make_project, monkeypatch):
@@ -131,6 +131,143 @@ async def test_nothing_is_created_without_a_configured_root(db_session, nas, mak
     await pfs.sync_all_project_folders()
 
     assert list(nas.root.iterdir()) == []
+
+
+# --- режим create_only ---
+
+def _tree(root: Path) -> dict:
+    return {p.relative_to(root).as_posix(): (p.read_bytes() if p.is_file() else None) for p in root.rglob("*")}
+
+
+async def test_create_only_still_creates_the_folder_of_a_new_project(db_session, nas, make_project, monkeypatch):
+    monkeypatch.setattr(settings, "project_folders_mode", "create_only")
+    project = await make_project(name="26_100 Космос", production_number="26_100", unique_code="code-1")
+
+    await pfs.create_project_folder_structure(project, ProjectRepository(db_session))
+
+    root = nas.root / "!2026" / "100 Космос"
+    for sub in pfs.TEMPLATE_SUBFOLDERS:
+        assert (root / sub).is_dir()
+    assert (root / "_Маркировка" / "QR_SAVTASSIST.png").is_file()
+    assert project.folder_managed is True
+
+
+async def test_create_only_keeps_syncing_the_folders_it_created(db_session, nas, make_project, make_cabinet, monkeypatch):
+    monkeypatch.setattr(settings, "project_folders_mode", "create_only")
+    project = await make_project(name="26_100 Космос", production_number="26_100", unique_code="code-1")
+    await pfs.create_project_folder_structure(project, ProjectRepository(db_session))
+    root = nas.root / "!2026" / "100 Космос"
+    (root / "_Руководство" / "инструкция.pdf").write_bytes(b"%PDF-1.4 manual")
+    cabinet = await make_cabinet(project_id=project.id, object_number="26_100", admin_internal_name="ШУ-1")
+
+    await pfs.sync_project_folder(db_session, project)
+    pfs.schedule_cabinet_folder(cabinet.id)
+    await _run_background(nas)
+
+    docs = (await db_session.execute(select(Document).where(Document.project_id == project.id))).scalars().all()
+    assert [(d.title, d.is_internal) for d in docs] == [("инструкция", True)]
+    assert (root / "Фото" / "26_100 ШУ-1").is_dir()
+
+
+async def test_create_only_syncs_only_the_projects_it_created(db_session, nas, make_project, monkeypatch):
+    monkeypatch.setattr(settings, "project_folders_mode", "create_only")
+    ours = await make_project(name="26_100 Космос", production_number="26_100", unique_code="code-1")
+    await pfs.create_project_folder_structure(ours, ProjectRepository(db_session))
+    theirs = await make_project(name="26_101 Рабочий", production_number="26_101", unique_code="code-2")
+    working = nas.root / "!2026" / "101 Рабочий"
+    working.mkdir(parents=True)
+
+    stats = await pfs._sync_all_projects(db_session)
+
+    assert stats["synced"] == 1 and stats["skipped"] == 1
+    assert theirs.folder_managed is False and list(working.iterdir()) == []
+
+
+async def test_a_legacy_qr_file_is_renamed_not_duplicated(db_session, nas, make_project):
+    project = await make_project(name="26_100 Космос", production_number="26_100", unique_code="code-1")
+    await pfs.create_project_folder_structure(project, ProjectRepository(db_session))
+    marking = nas.root / "!2026" / "100 Космос" / "_Маркировка"
+    (marking / "QR_SAVTASSIST.png").rename(marking / "QR.png")
+
+    await pfs.sync_project_folder(db_session, project)
+
+    assert sorted(p.name for p in marking.glob("*.png")) == ["QR_SAVTASSIST.png"]
+
+
+async def test_create_only_leaves_an_existing_folder_untouched(db_session, nas, make_project, monkeypatch):
+    monkeypatch.setattr(settings, "project_folders_mode", "create_only")
+    project = await make_project(name="26_100 Космос", production_number="26_100", unique_code="code-1")
+    existing = nas.root / "!2026" / "100 Космос"
+    (existing / "Чертежи").mkdir(parents=True)
+    (existing / "Чертежи" / "схема.pdf").write_bytes(b"work")
+    before = _tree(nas.root)
+
+    await pfs.create_project_folder_structure(project, ProjectRepository(db_session))
+
+    assert _tree(nas.root) == before
+    assert project.folder_managed is False
+
+
+@pytest.mark.parametrize("existing,expected_new", [
+    (["255 Другое окончание"], False),          # тот же номер — папка уже есть
+    (["255 Один", "255 Второй"], False),        # несколько с тем же номером — тоже не создаём
+    (["2550 Другой номер", "25 Ещё"], True),    # номер должен совпадать целиком
+    (["Без номера"], True),
+])
+async def test_create_only_looks_for_a_folder_with_the_same_leading_number(
+    db_session, nas, make_project, monkeypatch, existing, expected_new,
+):
+    monkeypatch.setattr(settings, "project_folders_mode", "create_only")
+    project = await make_project(name="26_255 Новый объект", production_number="26_255", unique_code="code-1")
+    year = nas.root / "!2026"
+    for name in existing:
+        (year / name).mkdir(parents=True)
+
+    await pfs.create_project_folder_structure(project, ProjectRepository(db_session))
+
+    assert (year / "255 Новый объект").is_dir() is expected_new
+    assert project.folder_managed is expected_new
+
+
+async def test_full_mode_does_not_look_at_numbers(db_session, nas, make_project):
+    project = await make_project(name="26_255 Новый объект", production_number="26_255", unique_code="code-1")
+    (nas.root / "!2026" / "255 Другое окончание").mkdir(parents=True)
+
+    await pfs.create_project_folder_structure(project, ProjectRepository(db_session))
+
+    assert (nas.root / "!2026" / "255 Новый объект").is_dir()
+
+
+async def test_create_only_skips_projects_with_folders_made_by_people(db_session, nas, make_project, monkeypatch):
+    monkeypatch.setattr(settings, "project_folders_mode", "create_only")
+    # проект со старой плоской папкой, которую полная синхронизация переселила бы в «!2026»
+    project = await make_project(name="26_100 Космос", production_number="26_100", folder_name="Космос")
+    flat = nas.root / "Космос" / "_Руководство"
+    flat.mkdir(parents=True)
+    (flat / "инструкция.pdf").write_bytes(b"manual")
+    before = _tree(nas.root)
+
+    await pfs.sync_project_folder(db_session, project)
+    await pfs.relocate_project_folder(db_session, project)
+    await pfs.sync_all_project_folders()
+    pfs.schedule_folder_sync(project.id)
+    pfs.schedule_document_removal(cabinet_id=None, project_id=project.id, title="инструкция", file_url="/static/documents/x.pdf")
+    pfs.schedule_photo_removal(cabinet_id=None, project_id=project.id, nas_filename="a.jpg")
+    await _run_background(nas)
+
+    assert _tree(nas.root) == before
+    assert project.folder_name == "Космос"
+
+
+async def test_an_unknown_mode_works_as_create_only(db_session, nas, make_project, monkeypatch):
+    monkeypatch.setattr(settings, "project_folders_mode", "ful")
+    project = await make_project(name="26_100 Космос", production_number="26_100", folder_name="Космос")
+    (nas.root / "Космос").mkdir()
+
+    await pfs.sync_project_folder(db_session, project)
+
+    assert [p.name for p in nas.root.iterdir()] == ["Космос"]
+    assert list((nas.root / "Космос").iterdir()) == []
 
 
 async def test_cabinet_subfolders_go_into_each_category(nas, make_cabinet):
@@ -444,7 +581,7 @@ async def test_full_sync_lays_out_everything_and_is_repeatable(db_session, nas, 
     assert (root / "Фото" / "001 Общий вид.png").exists() and (root / "Фото" / "29_001 Насосная" / "001 Шкаф.png").exists()
     assert "Вопрос по проекту" in (root / "Переписка" / "Чат проекта — Клиент.txt").read_text(encoding="utf-8")
     assert "Вопрос по шкафу" in (root / "Переписка" / "29_001 Насосная" / "Чат ШУ — Клиент.txt").read_text(encoding="utf-8")
-    assert (root / "_Маркировка" / "QR.png").exists() and project.folder_name == "100 Космос" and project.folder_synced_at
+    assert (root / "_Маркировка" / "QR_SAVTASSIST.png").exists() and project.folder_name == "100 Космос" and project.folder_synced_at
     imported = (await db_session.execute(select(Document).where(Document.title == "Подсунутый файл"))).scalars().all()
     assert len(imported) == 1 and imported[0].is_internal and cabinet.folder_name == "29_001 Насосная"
     assert project_doc.id and cabinet_doc.id
@@ -486,7 +623,7 @@ async def test_background_wrappers_do_their_part(db_session, nas, make_user, mak
     pfs.schedule_folder_creation(project.id)
     pfs.schedule_folder_creation(999999)
     await _run_background(nas)
-    assert (root / "_Маркировка" / "QR.png").exists()
+    assert (root / "_Маркировка" / "QR_SAVTASSIST.png").exists()
 
     pfs.schedule_cabinet_folder(cabinet.id)
     await _run_background(nas)
