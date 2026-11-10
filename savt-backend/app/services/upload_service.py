@@ -1,3 +1,4 @@
+import asyncio
 import re
 import subprocess
 import uuid
@@ -244,28 +245,34 @@ def delete_uploaded_file(file_url: str | None) -> None:
 _CHUNK_SIZE = 1024 * 1024  # 1 МБ
 
 
-async def _save(file: UploadFile, folder: str, ext: str, max_size: int) -> tuple[str, int]:
-    # Пишем на диск чанками: файл до 500 МБ не должен целиком висеть в памяти
-    filename = f"{uuid.uuid4().hex}.{_sanitize_ext(ext)}"
-    dest = UPLOAD_ROOT / folder
-    dest.mkdir(parents=True, exist_ok=True)
-    path = dest / filename
-
+def _copy_limited(source, path: Path, max_size: int) -> int:
+    """Копирует source на диск кусками и возвращает размер. Файл до 500 МБ не должен целиком
+    висеть в памяти. Синхронная: вызывается через asyncio.to_thread, чтобы запись на диск не
+    останавливала цикл событий, а вместе с ним и весь API."""
+    path.parent.mkdir(parents=True, exist_ok=True)
     size = 0
+    with path.open("wb") as out:
+        while chunk := source.read(_CHUNK_SIZE):
+            size += len(chunk)
+            if size > max_size:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail=f"Файл слишком большой. Максимум: {max_size // (1024 * 1024)} МБ",
+                )
+            out.write(chunk)
+    return size
+
+
+async def _save(file: UploadFile, folder: str, ext: str, max_size: int) -> tuple[str, int]:
+    filename = f"{uuid.uuid4().hex}.{_sanitize_ext(ext)}"
+    path = UPLOAD_ROOT / folder / filename
+
     try:
-        with path.open("wb") as out:
-            while chunk := await file.read(_CHUNK_SIZE):
-                size += len(chunk)
-                if size > max_size:
-                    raise HTTPException(
-                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                        detail=f"Файл слишком большой. Максимум: {max_size // (1024 * 1024)} МБ",
-                    )
-                out.write(chunk)
+        size = await asyncio.to_thread(_copy_limited, file.file, path, max_size)
         # Заражённый файл (или отказ при недоступном антивирусе) стирается тем же except ниже
         await antivirus_service.ensure_clean(path)
     except Exception:
-        path.unlink(missing_ok=True)
+        await asyncio.to_thread(path.unlink, True)
         raise
 
     return f"/static/{folder}/{filename}", size

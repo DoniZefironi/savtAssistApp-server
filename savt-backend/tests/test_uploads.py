@@ -2,8 +2,10 @@
 копирование файла с NAS, удаление, распознавание голоса и скачивание по подписанной
 ссылке с защитой от выхода за каталог загрузок. Файлы пишутся во временный каталог,
 ffmpeg и распознавание речи подменены."""
+import asyncio
 import io
 import subprocess
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -116,6 +118,37 @@ async def test_oversized_attachment_is_refused_and_leaves_no_file(storage, monke
 
     assert err.value.status_code == 413
     assert list(storage.rglob("*.pdf")) == []
+
+
+class _SlowSource(io.BytesIO):
+    """Источник, у которого каждое чтение занимает время, как у занятого диска."""
+
+    def read(self, size=-1):
+        time.sleep(0.1)
+        return super().read(size)
+
+
+async def test_saving_a_file_does_not_block_the_event_loop(storage, monkeypatch):
+    monkeypatch.setattr(upload_service, "_CHUNK_SIZE", 4)
+    ticks = 0
+
+    async def ticker():
+        nonlocal ticks
+        while True:
+            await asyncio.tasks.sleep(0.01)
+            ticks += 1
+
+    upload = UploadFile(
+        file=_SlowSource(b"0123456789abcdef"), filename="a.pdf", headers=Headers({"content-type": "application/pdf"}),
+    )
+    task = asyncio.create_task(ticker())
+    try:
+        info = await upload_service.save_attachment_with_meta(upload)
+    finally:
+        task.cancel()
+
+    assert info.file_size_bytes == 16 and _path_of(storage, info.url).read_bytes() == b"0123456789abcdef"
+    assert ticks >= 20
 
 
 async def test_voice_accepts_only_audio_formats(storage):
@@ -307,6 +340,29 @@ async def test_upload_endpoints_return_signed_urls(api, make_user, storage):
     assert _path_of(storage, attachment.json()["url"].split("?")[0]).exists()
     assert voice.status_code == 200 and voice.json()["url"].startswith("/static/voices/")
     assert bad_voice.status_code == 415 and anonymous.status_code in (401, 403)
+
+
+@pytest.mark.parametrize("path,file", [
+    ("/upload/attachment", ("a.pdf", b"%PDF", "application/pdf")),
+    ("/upload/voice", ("v.ogg", b"voice", "audio/ogg")),
+])
+async def test_database_connection_is_released_while_a_file_is_being_scanned(
+    api, db_session, make_user, storage, monkeypatch, path, file,
+):
+    """Проверка антивирусом идёт до 3 минут: всё это время соединение из пула занято быть не должно."""
+    user = await make_user()
+    states = []
+
+    async def scan(file_path):
+        states.append(db_session.in_transaction())
+
+    monkeypatch.setattr(upload_service.antivirus_service, "ensure_clean", scan)
+    name, data, content_type = file
+
+    response = await api.post(path, headers=_auth(user), files={"file": (name, io.BytesIO(data), content_type)})
+
+    assert response.status_code == 200
+    assert states == [False]
 
 
 async def test_download_returns_the_file_as_an_attachment(api, make_user, storage):

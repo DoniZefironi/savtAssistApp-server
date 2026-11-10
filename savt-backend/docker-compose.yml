@@ -30,6 +30,9 @@ services:
       context: .
       network: host
     restart: unless-stopped
+    # Лёгкий init-процесс (tini) вторым уровнем над uvicorn: подбирает завершившиеся дочерние
+    # процессы (LibreOffice, ffmpeg), иначе они остаются зомби — uvicorn их не подбирает
+    init: true
     env_file:
       - .env
     volumes:

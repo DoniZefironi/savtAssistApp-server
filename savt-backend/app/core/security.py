@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -25,6 +26,16 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         # Значение не является хешем (например, строка-заглушка у удалённых учёток) —
         # пароль не подходит, а не ошибка сервера
         return False
+
+# bcrypt считается около 0,2 с и целиком нагружает процессор: вызванный прямо в обработчике
+# запроса, он останавливает цикл событий, а с ним и весь API. В запросах используются эти
+# версии, синхронные остаются для консольных команд и системных пользователей при старте
+async def hash_password_async(plain_password: str) -> str:
+    return await asyncio.to_thread(hash_password, plain_password)
+
+
+async def verify_password_async(plain_password: str, hashed_password: str) -> bool:
+    return await asyncio.to_thread(verify_password, plain_password, hashed_password)
 
 # генерация рефреш токена
 def generate_refresh_token() -> str:

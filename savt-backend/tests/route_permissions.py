@@ -41,7 +41,7 @@ def classify(route: APIRoute) -> str:
         if name == "checker":
             roles = set(inspect.getclosurevars(call).nonlocals["expanded"])
             allowed = roles if allowed is None else allowed & roles
-        elif name == "get_current_user":
+        elif name in ("get_current_user", "get_current_user_released"):
             has_user = True
         elif name == "get_current_user_or_guest":
             has_guest = True

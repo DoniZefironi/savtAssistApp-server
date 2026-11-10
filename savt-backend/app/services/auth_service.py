@@ -17,9 +17,9 @@ from app.core.security import (
     create_access_token,
     generate_refresh_token,
     generate_sms_code,
-    hash_password,
+    hash_password_async,
     hash_token,
-    verify_password,
+    verify_password_async,
 )
 from app.models.user import User
 from app.repositories.auth import PhoneCodeRepository, RefreshTokenRepository
@@ -73,7 +73,7 @@ class AuthService:
         )
         await self.pending_repo.create(
             token=token,
-            hashed_password=hash_password(password),
+            hashed_password=await hash_password_async(password),
             full_name=full_name,
             user_type=user_type,
             organization_name=organization_name,
@@ -174,7 +174,7 @@ class AuthService:
     ) -> tuple[str, str]:
         user = await self.user_repo.find_by_login(login)
 
-        if user is None or not verify_password(password, user.hashed_password):
+        if user is None or not await verify_password_async(password, user.hashed_password):
             raise AuthenticationError("Неверный логин или пароль")
 
         if not user.is_active:
@@ -201,7 +201,7 @@ class AuthService:
         user = await self.user_repo.find_by_phone(phone)
 
         # Проверяем пароль, сравниваем хэши
-        if user is None or not verify_password(password, user.hashed_password):
+        if user is None or not await verify_password_async(password, user.hashed_password):
             raise AuthenticationError("Неверный телефон или пароль")
 
         # Проверяем актиивность аккаунта, может в бане школьник
@@ -392,7 +392,7 @@ class AuthService:
             raise InvalidCodeError("Неверный код")
 
         await self.code_repo.mark_used(active_code)
-        user.hashed_password = hash_password(new_password)
+        user.hashed_password = await hash_password_async(new_password)
 
         await self.token_repo.revoke_all_for_user(user.id)
 
@@ -445,7 +445,7 @@ class AuthService:
             new_password_confirm: str
             ) -> None:
 
-        if not verify_password(old_password, user.hashed_password):
+        if not await verify_password_async(old_password, user.hashed_password):
             raise AuthenticationError("Неверный текущий пароль")
 
         if old_password == new_password:
@@ -454,7 +454,7 @@ class AuthService:
         if new_password != new_password_confirm:
             raise InvalidCodeError("Новый пароль и подтверждение не совпадают")
 
-        user.hashed_password = hash_password(new_password)
+        user.hashed_password = await hash_password_async(new_password)
         await self.token_repo.revoke_all_for_user(user.id)
         await self.session.commit()
 

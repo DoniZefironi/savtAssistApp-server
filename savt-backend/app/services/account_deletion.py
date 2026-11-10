@@ -12,7 +12,7 @@ import secrets
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import hash_password
+from app.core.security import hash_password_async
 from app.models.cabinet_block import CabinetBlock
 from app.models.cabinet_user_settings import CabinetUserSettings
 from app.models.chat import Chat
@@ -46,10 +46,10 @@ _OWNED_BY_USER_ID = (
 )
 
 
-def unusable_password_hash() -> str:
+async def unusable_password_hash() -> str:
     """Настоящий bcrypt-хеш от случайной строки, которую никто не знает: вход
     невозможен, а проверка пароля не падает, как падала бы на строке-заглушке."""
-    return hash_password(secrets.token_urlsafe(32))
+    return await hash_password_async(secrets.token_urlsafe(32))
 
 
 async def anonymize_user(session: AsyncSession, user: User) -> None:
@@ -81,7 +81,7 @@ async def anonymize_user(session: AsyncSession, user: User) -> None:
     user.full_name = DELETED_USER_NAME
     user.user_type = None
     user.organization_name = None
-    user.hashed_password = unusable_password_hash()
+    user.hashed_password = await unusable_password_hash()
 
     await session.commit()
     _schedule_attachment_cleanup(attachment_urls)

@@ -69,25 +69,38 @@ def _doc_image_too_small(img) -> bool:
     return width < _MIN_DOC_IMAGE_DIMENSION and height < _MIN_DOC_IMAGE_DIMENSION
 
 
+def _pdf_page_text_and_images(reader, page_num: int, want_images: bool) -> tuple[str, list]:
+    """Текст и картинки одной страницы. Нагружает процессор, поэтому вызывается через
+    asyncio.to_thread: прямо в цикле событий большой PDF останавливал бы весь API."""
+    page = reader.pages[page_num]
+    text = (page.extract_text() or "").strip()
+    images: list = []
+    if want_images:
+        try:
+            images = list(page.images)
+        except Exception:
+            images = []
+    return text, images
+
+
 async def _parse_pdf(path: Path) -> str:
     try:
         from pypdf import PdfReader
-        reader = PdfReader(str(path))
+        reader = await asyncio.to_thread(PdfReader, str(path))
+        page_count = await asyncio.to_thread(len, reader.pages)
     except Exception:
         logger.exception("Не удалось открыть PDF: %s", path)
         return ""
 
     parts: list[str] = []
     images_analyzed = 0
-    for page_num, page in enumerate(reader.pages):
-        text = (page.extract_text() or "").strip()
+    for page_num in range(page_count):
+        # Картинки достаются, только пока лимит анализа не исчерпан
+        text, images = await asyncio.to_thread(
+            _pdf_page_text_and_images, reader, page_num, images_analyzed < _MAX_DOC_IMAGES_ANALYZED,
+        )
         if text:
             parts.append(text)
-
-        try:
-            images = list(page.images)
-        except Exception:
-            images = []
 
         for img in images:
             if images_analyzed >= _MAX_DOC_IMAGES_ANALYZED:
@@ -193,35 +206,42 @@ def _iter_docx_block_items(doc):
             yield Table(child, doc)
 
 
-async def _parse_docx(path: Path) -> str:
-    try:
-        from docx import Document as DocxDocument
-        from docx.table import Table
+def _read_docx(path: Path) -> tuple[list[str], list[tuple[bytes, str]]]:
+    """Текст документа по абзацам и строкам таблиц плюс встроенные картинки. Нагружает
+    процессор, поэтому вызывается через asyncio.to_thread."""
+    from docx import Document as DocxDocument
+    from docx.table import Table
 
-        doc = DocxDocument(str(path))
-        parts = []
-        for block in _iter_docx_block_items(doc):
-            if isinstance(block, Table):
-                for row in block.rows:
-                    row_text = " | ".join(cell.text for cell in row.cells)
-                    if row_text.strip():
-                        parts.append(row_text)
-            elif block.text.strip():
-                parts.append(block.text)
-    except Exception:
-        logger.exception("Не удалось разобрать Word-документ: %s", path)
-        return ""
+    doc = DocxDocument(str(path))
+    parts = []
+    for block in _iter_docx_block_items(doc):
+        if isinstance(block, Table):
+            for row in block.rows:
+                row_text = " | ".join(cell.text for cell in row.cells)
+                if row_text.strip():
+                    parts.append(row_text)
+        elif block.text.strip():
+            parts.append(block.text)
 
     try:
         images = _docx_image_blobs(doc)
     except Exception:
         images = []
+    return parts, images
+
+
+async def _parse_docx(path: Path) -> str:
+    try:
+        parts, images = await asyncio.to_thread(_read_docx, path)
+    except Exception:
+        logger.exception("Не удалось разобрать Word-документ: %s", path)
+        return ""
 
     analyzed = 0
     for data, ext in images:
         if analyzed >= _MAX_DOC_IMAGES_ANALYZED:
             break
-        width, height, mime_type = _probe_image_bytes(data)
+        width, height, mime_type = await asyncio.to_thread(_probe_image_bytes, data)
         if width == 0 and height == 0:
             # Pillow не смог открыть — скорее всего EMF/WMF. Пробуем
             # сконвертировать в PNG через LibreOffice прежде, чем сдаться.
@@ -232,7 +252,7 @@ async def _parse_docx(path: Path) -> str:
                 )
                 continue
             data = converted
-            width, height, mime_type = _probe_image_bytes(data)
+            width, height, mime_type = await asyncio.to_thread(_probe_image_bytes, data)
             if width == 0 and height == 0:
                 logger.warning("Картинка формата .%s в %s не открылась даже после конвертации", ext, path)
                 continue
@@ -268,7 +288,7 @@ def _parse_excel(path: Path) -> str:
 
 async def _ocr_image_file(path: Path) -> str:
     try:
-        return await yandex_service.ocr_image(path.read_bytes())
+        return await yandex_service.ocr_image(await asyncio.to_thread(path.read_bytes))
     except Exception:
         logger.exception("OCR не удался для изображения: %s", path)
         return ""
@@ -282,23 +302,34 @@ _IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
 # а дальше уже переиспользуем обычный _parse_docx/_parse_excel как есть.
 _LEGACY_OFFICE_TARGETS = {".doc": "docx", ".xls": "xlsx"}
 _LIBREOFFICE_TIMEOUT_SECONDS = 90
+# Коды выхода утилиты timeout: 124 — команда не уложилась во время, 137 — пришлось убивать (SIGKILL)
+_TIMEOUT_EXIT_CODES = (124, 137)
 
 
 def _run_libreoffice_convert(path: Path, target_ext: str, out_dir: str, profile_dir: str) -> bytes | None:
     """Синхронная часть (subprocess.run) — вызывается через asyncio.to_thread.
     -env:UserInstallation с отдельным профилем на каждый вызов — иначе
     параллельные конвертации (несколько документов проиндексированы почти
-    одновременно) конфликтуют за один и тот же профиль LibreOffice и падают."""
+    одновременно) конфликтуют за один и тот же профиль LibreOffice и падают.
+
+    Запускается через утилиту timeout: по истечении времени она убивает всё дерево
+    процессов (soffice запускает дочерний soffice.bin, и после убийства одного лишь
+    первого процесса тот продолжал бы работать и занимать память). Собственный
+    timeout у subprocess.run убивает только первый процесс и здесь запасной предел."""
     try:
         result = subprocess.run(
             [
+                "timeout", "--kill-after=5", str(_LIBREOFFICE_TIMEOUT_SECONDS),
                 "soffice", "--headless", "--norestore",
                 f"-env:UserInstallation=file://{profile_dir}",
                 "--convert-to", target_ext, "--outdir", out_dir, str(path),
             ],
-            capture_output=True, timeout=_LIBREOFFICE_TIMEOUT_SECONDS,
+            capture_output=True, timeout=_LIBREOFFICE_TIMEOUT_SECONDS + 15,
         )
     except subprocess.TimeoutExpired:
+        logger.warning("LibreOffice: превышено время конвертации %s", path)
+        return None
+    if result.returncode in _TIMEOUT_EXIT_CODES:
         logger.warning("LibreOffice: превышено время конвертации %s", path)
         return None
     if result.returncode != 0:
@@ -326,7 +357,7 @@ async def _convert_legacy_office(path: Path, target_ext: str) -> bytes | None:
 async def _extract_text(file_url: str) -> str:
     relative = file_url.removeprefix("/static/")
     path = UPLOAD_ROOT / relative
-    if not path.exists():
+    if not await asyncio.to_thread(path.exists):
         logger.warning("Файл для индексации не найден на диске: %s", path)
         return ""
 
@@ -341,7 +372,9 @@ async def _extract_text(file_url: str) -> str:
         tmp_path = Path(tempfile.mktemp(suffix=f".{target_ext}"))
         try:
             await asyncio.to_thread(tmp_path.write_bytes, converted)
-            return await _parse_docx(tmp_path) if target_ext == "docx" else _parse_excel(tmp_path)
+            if target_ext == "docx":
+                return await _parse_docx(tmp_path)
+            return await asyncio.to_thread(_parse_excel, tmp_path)
         finally:
             await asyncio.to_thread(tmp_path.unlink, True)
 
@@ -350,7 +383,7 @@ async def _extract_text(file_url: str) -> str:
     elif suffix == ".docx":
         text = await _parse_docx(path)
     elif suffix == ".xlsx":
-        text = _parse_excel(path)
+        text = await asyncio.to_thread(_parse_excel, path)
     elif suffix in _IMAGE_SUFFIXES:
         text = await _ocr_image_file(path)
     else:
@@ -363,6 +396,19 @@ async def _extract_text(file_url: str) -> str:
 
 
 
+# Лимит Yandex — 10 запросов в секунду на весь аккаунт. Часть нужна боту (поиск и ответы в чатах),
+# поэтому индексация берёт около 5 в секунду
+_EMBED_PAUSE_SECONDS = 0.2
+
+
+async def _release_connection(session: AsyncSession) -> None:
+    """Завершает транзакцию чтения, и соединение возвращается в пул. Вызывается перед долгой
+    работой (извлечение текста, запросы к Yandex), когда в сессии уже всё прочитано и ничего
+    не записано: иначе соединение простаивало бы занятым минуты. Объекты остаются доступными
+    (сессии создаются с expire_on_commit=False)."""
+    await session.commit()
+
+
 async def _upsert_chunks(
     session: AsyncSession,
     source_type: str,
@@ -370,14 +416,22 @@ async def _upsert_chunks(
     chunks: list[str],
     meta: dict,
 ) -> None:
+    # Сначала все векторы, потом одна короткая запись. Пока считаются эмбеддинги (минуты для
+    # большого файла), соединение с БД свободно, а старые записи не заблокированы и при сбое
+    # Yandex остаются на месте
+    await _release_connection(session)
+    vectors = []
+    for chunk in chunks:
+        vectors.append(await yandex_service.embed_document(chunk))
+        await asyncio.sleep(_EMBED_PAUSE_SECONDS)
+
     await session.execute(
         delete(Embedding).where(
             Embedding.source_type == source_type,
             Embedding.source_id == source_id,
         )
     )
-    for i, chunk in enumerate(chunks):
-        vector = await yandex_service.embed_document(chunk)
+    for i, (chunk, vector) in enumerate(zip(chunks, vectors)):
         session.add(Embedding(
             source_type=source_type,
             source_id=source_id,
@@ -386,8 +440,6 @@ async def _upsert_chunks(
             embedding=vector,
             meta=meta,
         ))
-        # Yandex лимит: 10 запросов/сек → 0.12с между запросами = ~8/сек
-        await asyncio.sleep(0.12)
     await session.flush()
 
 
@@ -407,8 +459,10 @@ async def index_kb_article(session: AsyncSession, article: KbArticle) -> None:
     attachments = (await session.execute(
         select(KbArticleAttachment).where(KbArticleAttachment.article_id == article.id)
     )).scalars().all()
-    for att in attachments:
-        parts.append(await _extract_text(att.file_url))
+    file_urls = [att.file_url for att in attachments]
+    await _release_connection(session)
+    for file_url in file_urls:
+        parts.append(await _extract_text(file_url))
 
     text = "\n\n".join(p for p in parts if p.strip())
     await _upsert_chunks(session, "kb_article", article.id, _chunks(text), {"title": article.title})
@@ -429,6 +483,7 @@ async def index_document(session: AsyncSession, doc: Document) -> None:
             )
         )
         return
+    await _release_connection(session)
     text = await _extract_text(doc.file_url)
     # Не удалось извлечь текст (нераспознанный формат, битый файл, документ без
     # текстового слоя и т.п.) — индексируем хотя бы заголовок, чтобы бот вообще

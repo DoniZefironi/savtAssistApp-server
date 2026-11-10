@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_current_user, get_session
+from app.core.dependencies import get_current_user, get_current_user_released, get_session
 from app.core.limiter import limiter
 from app.core.signed_urls import SignedUrl, strip_signature, verify_signature
 from app.models.role import Role
@@ -75,13 +75,16 @@ _UPLOADS_PER_MINUTE = "60/minute"
 async def upload_attachment(
     request: Request,
     file: UploadFile = File(...),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_released),
     session: AsyncSession = Depends(get_session),
 ):
     # Размер зависит от роли и вида файла: сотрудникам до 500 МБ, пользователям
     # USER_UPLOAD_MAX_MB, а видео USER_VIDEO_UPLOAD_MAX_MB
     role = await session.get(Role, user.role_id)
-    limit = attachment_limit_for(role.name if role else None, file.content_type)
+    role_name = role.name if role else None
+    # Дальше долгое копирование и проверка файла — соединение с БД не держим
+    await session.commit()
+    limit = attachment_limit_for(role_name, file.content_type)
     return UploadOut(url=await save_attachment(file, limit))
 
 # Загрузить ГС
@@ -90,7 +93,7 @@ async def upload_attachment(
 async def upload_voice(
     request: Request,
     file: UploadFile = File(...),
-    _: User = Depends(get_current_user),
+    _: User = Depends(get_current_user_released),
 ):
     return UploadOut(url=await save_voice(file))
 
@@ -98,7 +101,7 @@ async def upload_voice(
 @router.post("/transcribe", response_model=TranscribeOut)
 async def transcribe_voice(
     payload: TranscribeIn,
-    _: User = Depends(get_current_user),
+    _: User = Depends(get_current_user_released),
 ):
     from app.services import yandex_service
     file_path = _resolve_static_path(payload.file_url)

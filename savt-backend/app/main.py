@@ -88,6 +88,14 @@ logging.getLogger("sqlalchemy.engine.Engine").propagate = False
 # создание логгера
 logger = logging.getLogger(__name__)
 
+# Настройки всех фоновых задач. misfire_grace_time — сколько после назначенного времени задачу ещё
+# разрешено запускать: если в этот момент цикл событий был занят или стоял, а допуск по умолчанию
+# всего 1 секунда, срабатывание пропускается насовсем (ежедневная проверка гарантии, ночная
+# синхронизация папок). coalesce — несколько пропущенных срабатываний одной задачи подряд
+# выполняются как одно, а не очередью
+SCHEDULER_JOB_DEFAULTS = {"misfire_grace_time": 3600, "coalesce": True}
+
+
 # функция бота, ничего не возращает
 async def _bot_follow_up_job() -> None:
     # открывает ссесию БД на время задачи
@@ -130,7 +138,7 @@ async def lifespan(app: FastAPI):
         await ensure_bot_user(session)
 
     # планировщик задач
-    scheduler = AsyncIOScheduler()
+    scheduler = AsyncIOScheduler(job_defaults=SCHEDULER_JOB_DEFAULTS)
     # проверка истечения гарантии
     scheduler.add_job(check_warranty_expiry, "cron", hour=9, minute=0)
     # синхронизация папок проектов

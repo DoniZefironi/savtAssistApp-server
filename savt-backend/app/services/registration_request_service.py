@@ -26,7 +26,7 @@ class RegistrationRequestService:
     # как пользователя. Пароль уже хешируется здесь и переносится как есть при
     # одобрении, чтобы у заявителя сразу работал именно тот пароль, что он ввёл.
     async def submit(self, data: RegistrationRequestCreateIn) -> RegistrationRequestOut:
-        from app.core.security import hash_password
+        from app.core.security import hash_password_async
 
         if await self.user_repo.find_by_phone(data.phone) is not None:
             raise AlreadyExistsError("Пользователь с таким номером телефона уже зарегистрирован")
@@ -35,7 +35,7 @@ class RegistrationRequestService:
 
         req = await self.request_repo.create(
             phone=data.phone,
-            hashed_password=hash_password(data.password),
+            hashed_password=await hash_password_async(data.password),
             full_name=data.full_name,
             user_type=data.user_type,
             organization_name=data.organization_name,

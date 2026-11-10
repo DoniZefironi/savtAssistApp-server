@@ -47,9 +47,8 @@ def _decode_or_401(credentials: HTTPAuthorizationCredentials | None) -> dict:
         )
 
 
-async def get_current_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(_security),
-    session: AsyncSession = Depends(get_session),
+async def _active_user_from_token(
+    credentials: HTTPAuthorizationCredentials | None, session: AsyncSession,
 ) -> User:
     payload = _decode_or_401(credentials)
 
@@ -63,6 +62,26 @@ async def get_current_user(
     if user is None or not user.is_active:
         raise HTTPException(status_code=401, detail="Пользователь недоступен")
 
+    return user
+
+
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_security),
+    session: AsyncSession = Depends(get_session),
+) -> User:
+    return await _active_user_from_token(credentials, session)
+
+
+async def get_current_user_released(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_security),
+    session: AsyncSession = Depends(get_session),
+) -> User:
+    """То же, что get_current_user, но для долгих запросов (загрузка и проверка файлов,
+    распознавание речи). Транзакция чтения завершается сразу, и соединение возвращается в
+    пул: иначе оно было бы занято всё время копирования файла и проверки антивирусом, а
+    пул небольшой. Если обработчику снова понадобится БД, соединение берётся заново."""
+    user = await _active_user_from_token(credentials, session)
+    await session.commit()
     return user
 
 

@@ -1,6 +1,8 @@
 """Авторизация вокруг входа: регистрация по коду, сброс пароля, смена пароля,
 профиль, удаление аккаунта. Telegram не вызывается: отправка кода подменяется и
 записывается, чтобы тест мог «ввести» настоящий код."""
+import asyncio
+import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -519,3 +521,29 @@ async def test_deleted_operator_cannot_sign_in_either(auth, db_session, make_use
 
     with pytest.raises(AuthenticationError):
         await auth.admin_login(f"_deleted_{operator_id}", "anything-8-chars", None, None)
+
+
+async def test_password_check_does_not_block_the_event_loop(auth, make_user, monkeypatch):
+    """bcrypt считается ~0,2 с на процессоре: прямо в обработчике он останавливал бы весь API."""
+    user = await make_user(password="password8")
+
+    def slow_verify(plain, hashed):
+        time.sleep(0.3)
+        return True
+
+    monkeypatch.setattr("app.core.security.verify_password", slow_verify)
+    ticks = 0
+
+    async def ticker():
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.01)
+            ticks += 1
+
+    task = asyncio.create_task(ticker())
+    try:
+        await auth.login(user.phone, "password8", None, None)
+    finally:
+        task.cancel()
+
+    assert ticks >= 15

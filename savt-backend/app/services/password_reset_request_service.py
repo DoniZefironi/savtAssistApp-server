@@ -30,7 +30,7 @@ class PasswordResetRequestService:
     # --- Заявитель (без авторизации — он не может войти, в этом и проблема) ---
 
     async def submit(self, data: PasswordResetRequestCreateIn) -> PasswordResetRequestOut:
-        from app.core.security import hash_password
+        from app.core.security import hash_password_async
 
         user = await self.user_repo.find_by_phone(data.phone)
         if user is None or not user.is_active:
@@ -40,7 +40,7 @@ class PasswordResetRequestService:
 
         req = await self.repo.create(
             user_id=user.id,
-            hashed_password=hash_password(data.new_password),
+            hashed_password=await hash_password_async(data.new_password),
             user_comment=data.user_comment,
         )
         self.audit.log(

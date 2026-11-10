@@ -2,8 +2,12 @@
 LibreOffice), нарезка на куски, запись эмбеддингов, переиндексация и очистка
 осиротевших. Yandex (эмбеддинги, OCR, описание картинок) и LibreOffice подменены,
 файлы создаются настоящими во временном каталоге."""
+import asyncio
 import io
+import os
 import subprocess
+import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -240,6 +244,60 @@ async def test_excel_rows_become_text_lines(fakes):
     assert bot_indexer._parse_excel(fakes.root / "documents" / "missing.xlsx") == ""
 
 
+async def _ticks_while(coro):
+    """Сколько раз успел отработать соседний «тикающий» процесс, пока шла coro. Если coro
+    блокирует цикл событий, тиков почти не будет. Настоящий sleep берётся из asyncio.tasks:
+    фикстура выше подменяет asyncio.sleep на пустышку."""
+    ticks = 0
+
+    async def ticker():
+        nonlocal ticks
+        while True:
+            await asyncio.tasks.sleep(0.01)
+            ticks += 1
+
+    task = asyncio.create_task(ticker())
+    try:
+        result = await coro
+    finally:
+        task.cancel()
+    return result, ticks
+
+
+async def test_pdf_parsing_does_not_block_the_event_loop(fakes, monkeypatch):
+    def slow_page(reader, page_num, want_images):
+        time.sleep(0.15)
+        return "Текст", []
+
+    monkeypatch.setattr("pypdf.PdfReader", lambda path: SimpleNamespace(pages=[object()] * 3))
+    monkeypatch.setattr(bot_indexer, "_pdf_page_text_and_images", slow_page)
+
+    text, ticks = await _ticks_while(bot_indexer._parse_pdf(Path("slow.pdf")))
+
+    assert text == "Текст\n\nТекст\n\nТекст"
+    assert ticks >= 20
+
+
+async def test_docx_and_excel_parsing_do_not_block_the_event_loop(fakes, monkeypatch):
+    def slow_docx(path):
+        time.sleep(0.3)
+        return ["Абзац"], []
+
+    def slow_excel(path):
+        time.sleep(0.3)
+        return "Строка | Таблицы"
+
+    monkeypatch.setattr(bot_indexer, "_read_docx", slow_docx)
+    monkeypatch.setattr(bot_indexer, "_parse_excel", slow_excel)
+    (fakes.root / "documents" / "x.xlsx").write_bytes(b"x")
+
+    docx_text, docx_ticks = await _ticks_while(bot_indexer._parse_docx(fakes.root / "documents" / "x.docx"))
+    excel_text, excel_ticks = await _ticks_while(bot_indexer._extract_text("/static/documents/x.xlsx"))
+
+    assert docx_text == "Абзац" and excel_text == "Строка | Таблицы"
+    assert docx_ticks >= 15 and excel_ticks >= 15
+
+
 async def test_images_are_read_with_ocr_and_unknown_formats_are_skipped(fakes):
     (fakes.root / "documents" / "scan.jpg").write_bytes(_png())
     (fakes.root / "documents" / "archive.zip").write_bytes(b"zip")
@@ -277,6 +335,10 @@ def test_libreoffice_runner_handles_every_outcome(tmp_path, monkeypatch):
     monkeypatch.setattr(subprocess, "run", lambda *a, **kw: (_ for _ in ()).throw(subprocess.TimeoutExpired("soffice", 90)))
     assert bot_indexer._run_libreoffice_convert(source, "docx", out_dir, profile) is None
 
+    for exit_code in (124, 137):                    # timeout: не уложился во время / пришлось убивать
+        monkeypatch.setattr(subprocess, "run", lambda *a, code=exit_code, **kw: SimpleNamespace(returncode=code, stderr=b""))
+        assert bot_indexer._run_libreoffice_convert(source, "docx", out_dir, profile) is None
+
     monkeypatch.setattr(subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=1, stderr=b"boom"))
     assert bot_indexer._run_libreoffice_convert(source, "docx", out_dir, profile) is None
 
@@ -285,6 +347,42 @@ def test_libreoffice_runner_handles_every_outcome(tmp_path, monkeypatch):
 
     (Path(out_dir) / "report.docx").write_bytes(b"converted")
     assert bot_indexer._run_libreoffice_convert(source, "docx", out_dir, profile) == b"converted"
+
+
+def _process_alive(pid):
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+    except FileNotFoundError:
+        return False
+    return state != "Z"            # зомби — уже завершённый процесс, ждущий, пока его заберёт родитель
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="нужны /proc и утилита timeout")
+def test_libreoffice_child_processes_are_killed_on_timeout(tmp_path, monkeypatch):
+    """soffice запускает дочерний soffice.bin: по таймауту должен умереть не только первый
+    процесс, иначе второй продолжает занимать память и держит открытыми каналы вывода, так что
+    сам запуск (а с ним поток из пула) не возвращается."""
+    bin_dir, pid_file = tmp_path / "bin", tmp_path / "child.pid"
+    bin_dir.mkdir()
+    fake = bin_dir / "soffice"
+    fake.write_text(f"#!/bin/sh\nsleep 300 &\necho $! > {pid_file}\nwait\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setattr(bot_indexer, "_LIBREOFFICE_TIMEOUT_SECONDS", 1)
+    source = tmp_path / "report.doc"
+    source.write_bytes(b"x")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+
+    started = time.monotonic()
+    assert bot_indexer._run_libreoffice_convert(source, "docx", str(out_dir), str(tmp_path / "profile")) is None
+
+    assert time.monotonic() - started < 10
+    child = int(pid_file.read_text())
+    deadline = time.monotonic() + 3
+    while _process_alive(child) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not _process_alive(child)
 
 
 async def test_libreoffice_wrapper_survives_crashes(tmp_path, monkeypatch):
@@ -363,6 +461,42 @@ async def test_document_indexing_variants(db_session, fakes, make_document):
     [fallback] = await _embeddings(db_session, "document", empty.id)
     assert fallback.content == "Без файла" and fallback.meta["extraction_failed"] is True   # хотя бы заголовок
     assert await _embeddings(db_session, "document", internal.id) == []                   # служебный из поиска убран
+
+
+async def test_connection_is_released_during_extraction_and_embedding(db_session, fakes, make_document, monkeypatch):
+    doc = await make_document(file_url="/static/documents/manual.pdf", title="Руководство")
+    (fakes.root / "documents" / "manual.pdf").write_bytes(_pdf_with_text("Pump manual"))
+    in_transaction = {}
+    real_extract = bot_indexer._extract_text
+
+    async def extract(file_url):
+        in_transaction["extract"] = db_session.in_transaction()
+        return await real_extract(file_url)
+
+    async def embed(text):
+        in_transaction["embed"] = db_session.in_transaction()
+        return VECTOR
+
+    monkeypatch.setattr(bot_indexer, "_extract_text", extract)
+    monkeypatch.setattr(yandex_service, "embed_document", embed)
+
+    await bot_indexer.index_document(db_session, doc)
+
+    assert in_transaction == {"extract": False, "embed": False}
+    assert await _embeddings(db_session, "document", doc.id)
+
+
+async def test_old_embeddings_are_kept_when_new_ones_cannot_be_made(db_session, fakes, make_document):
+    doc = await make_document(file_url="/static/documents/manual.pdf", title="Руководство")
+    (fakes.root / "documents" / "manual.pdf").write_bytes(_pdf_with_text("Pump manual"))
+    db_session.add(Embedding(source_type="document", source_id=doc.id, content="старое", embedding=VECTOR, meta={}))
+    await db_session.flush()
+    fakes.fail_embedding_for = "Pump manual"
+
+    with pytest.raises(RuntimeError):
+        await bot_indexer.index_document(db_session, doc)
+
+    assert [row.content for row in await _embeddings(db_session, "document", doc.id)] == ["старое"]
 
 
 # --- переиндексация ---

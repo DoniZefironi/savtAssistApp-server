@@ -107,7 +107,7 @@ class AdminUserService:
     # Создание администратора (только суперадмин)
     async def create_admin(self, data: CreateAdminIn, actor_id: int, actor_role: str) -> AdminUserListOut:
         from app.core.exceptions import AlreadyExistsError
-        from app.core.security import hash_password
+        from app.core.security import hash_password_async
         from app.models.role import Role
         from sqlalchemy import select
 
@@ -125,7 +125,7 @@ class AdminUserService:
         user = await self.user_repo.create(
             login=data.login,
             full_name=data.full_name,
-            hashed_password=hash_password(data.password),
+            hashed_password=await hash_password_async(data.password),
             role_id=role.id,
             is_active=True,
             is_phone_verified=True,
@@ -152,7 +152,7 @@ class AdminUserService:
     # Создание оператора
     async def create_operator(self, data: CreateOperatorIn, actor_id: int, actor_role: str) -> AdminUserListOut:
         from app.core.exceptions import AlreadyExistsError
-        from app.core.security import hash_password
+        from app.core.security import hash_password_async
         from app.models.role import Role
         from sqlalchemy import select
 
@@ -170,7 +170,7 @@ class AdminUserService:
         user = await self.user_repo.create(
             login=data.login,
             full_name=data.full_name,
-            hashed_password=hash_password(data.password),
+            hashed_password=await hash_password_async(data.password),
             role_id=role.id,
             is_active=True,
             is_phone_verified=True,
@@ -203,7 +203,7 @@ class AdminUserService:
     # (support/notes), как при обычном завершении регистрации.
     async def create_user(self, data: CreateUserIn, actor_id: int, actor_role: str) -> AdminUserListOut:
         from app.core.exceptions import AlreadyExistsError
-        from app.core.security import hash_password
+        from app.core.security import hash_password_async
         from app.models.role import Role
         from sqlalchemy import select
 
@@ -224,7 +224,7 @@ class AdminUserService:
             full_name=data.full_name,
             user_type=data.user_type,
             organization_name=data.organization_name,
-            hashed_password=hash_password(data.password),
+            hashed_password=await hash_password_async(data.password),
             role_id=role.id,
             is_active=True,
             is_phone_verified=True,
@@ -287,7 +287,7 @@ class AdminUserService:
 
         user.is_active = False
         user.login = f"_deleted_{user_id}"
-        user.hashed_password = unusable_password_hash()
+        user.hashed_password = await unusable_password_hash()
         user.full_name = None
         user.email = None
 
@@ -328,7 +328,7 @@ class AdminUserService:
 
         user.is_active = False
         user.login = f"_deleted_{user_id}"
-        user.hashed_password = unusable_password_hash()
+        user.hashed_password = await unusable_password_hash()
         user.full_name = None
         user.email = None
 

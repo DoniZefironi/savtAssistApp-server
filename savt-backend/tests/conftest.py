@@ -18,6 +18,10 @@ os.environ.setdefault("BITRIX_WEBHOOK_URL", "")
 # какой .env лежит рядом (при заданном секрете сервер требует подписи на всех присланных
 # клиентом ссылках на файлы). Тесты, которым подпись нужна, задают секрет сами.
 os.environ["STATIC_LINK_SECRET"] = ""
+# Режим и годы синхронизации папок — тоже безусловно: на сервере и у разработчика в .env стоит
+# своё (create_only, 26), а тесты проверяют оба режима и сами их выставляют
+os.environ["PROJECT_FOLDERS_MODE"] = "full"
+os.environ["PROJECT_FOLDERS_YEARS"] = ""
 
 import pytest
 import pytest_asyncio
