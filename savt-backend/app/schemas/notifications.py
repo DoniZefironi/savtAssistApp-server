@@ -1,7 +1,9 @@
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
+
+from app.schemas.limits import json_size_limit
 
 
 class NotificationOut(BaseModel):
@@ -81,13 +83,13 @@ class PromoMessageOut(BaseModel):
 class PromoMessageCreateIn(BaseModel):
     title: str = Field(..., min_length=1, max_length=255)
     body: str = Field(..., min_length=1, max_length=1000)
-    data: dict = {}
+    data: Annotated[dict, json_size_limit(20_000)] = {}
 
 
 class PromoMessageUpdateIn(BaseModel):
     title: str | None = Field(None, min_length=1, max_length=255)
     body: str | None = Field(None, min_length=1, max_length=1000)
-    data: dict | None = None
+    data: Annotated[dict | None, json_size_limit(20_000)] = None
 
 
 class PromoSendResultOut(BaseModel):
@@ -114,4 +116,4 @@ class PromoScheduleUpdateIn(BaseModel):
     send_hour: int | None = Field(None, ge=0, le=23)
     # Явный null очищает ограничение (снова "любая заготовка") — отличается
     # от простого отсутствия поля в запросе, см. model_dump(exclude_unset=True)
-    message_ids: list[int] | None = None
+    message_ids: list[int] | None = Field(None, max_length=100)

@@ -43,13 +43,27 @@ logger = logging.getLogger(__name__)
 def _schedule_attachment_cleanup(file_urls: list[str]) -> None:
     """Фоновая best-effort зачистка файлов вложений после жёсткого удаления
     чата — CASCADE в БД уже убрал строки, но сами файлы на диске никто не
-    трогал (см. ChatService.delete_chat/operator_delete_chat)."""
+    трогал (см. ChatService.delete_chat/operator_delete_chat).
+
+    Стираются только файлы, на которые больше ничего не ссылается: клиент мог приложить к
+    сообщению ссылку на документ, фото или вложение базы знаний, и удаление чата не должно
+    уносить их у остальных (см. file_references). Если проверить не удалось, не стирается ничего."""
     if not file_urls:
         return
 
     async def _task():
+        from app.database import AsyncSessionLocal
+        from app.services.file_references import unreferenced_urls
         from app.services.upload_service import delete_uploaded_file
-        for url in file_urls:
+
+        try:
+            async with AsyncSessionLocal() as session:
+                to_delete = await unreferenced_urls(session, file_urls)
+        except Exception:
+            logger.exception("Не удалось проверить, нужны ли ещё файлы удалённого чата — файлы оставлены")
+            return
+
+        for url in to_delete:
             try:
                 await asyncio.to_thread(delete_uploaded_file, url)
             except Exception:

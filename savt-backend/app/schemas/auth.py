@@ -40,9 +40,9 @@ class RegisterStartIn(BaseModel):
     password: str = Field(..., min_length=8, max_length=100)
     password_confirm: str = Field(..., min_length=8, max_length=100)
     full_name: str = Field(..., min_length=1, max_length=200)
-    user_type: str = Field(...)
-    organization_name: str | None = Field(None)
-    contact_phone: str | None = Field(None)
+    user_type: str = Field(..., max_length=20)
+    organization_name: str | None = Field(None, max_length=255)
+    contact_phone: str | None = Field(None, max_length=32)
 
     @field_validator("contact_phone")
     @classmethod
@@ -117,7 +117,7 @@ class ResendCodeOut(BaseModel):
 
 # Аутентификация
 class LoginIn(BaseModel):
-    phone: str
+    phone: str = Field(..., max_length=32)
     password: str = Field(..., min_length=8, max_length=100)
 
     @field_validator("phone")
@@ -132,11 +132,11 @@ class AdminLoginIn(BaseModel):
 
 # Токены
 class RefreshIn(BaseModel):
-    refresh_token: str = Field(..., min_length=1)
+    refresh_token: str = Field(..., min_length=1, max_length=512)
 
 
 class LogoutIn(BaseModel):
-    refresh_token: str = Field(..., min_length=1)
+    refresh_token: str = Field(..., min_length=1, max_length=512)
 
 
 class TokenPairOut(BaseModel):
@@ -174,8 +174,8 @@ class UserMeOut(BaseModel):
 
 # Сброс пароля
 class PasswordResetStartIn(BaseModel):
-    phone: str
-    channel: str = Field(...)  # только "telegram"
+    phone: str = Field(..., max_length=32)
+    channel: str = Field(..., max_length=20)  # только "telegram"
 
     @field_validator("phone")
     @classmethod
@@ -195,7 +195,7 @@ class PasswordResetStartOut(BaseModel):
 
 
 class PasswordResetCompleteIn(BaseModel):
-    phone: str
+    phone: str = Field(..., max_length=32)
     code: str = Field(..., min_length=6, max_length=6)
     new_password: str = Field(..., min_length=8, max_length=100)
     new_password_confirm: str = Field(..., min_length=8, max_length=100)
@@ -240,7 +240,7 @@ class UpdateProfileIn(BaseModel):
 # Самостоятельной смены нет и быть не может: SMS отключены, а код уходит в
 # мессенджер самого заявителя и владение новым номером не подтверждает.
 class PhoneChangeRequestCreateIn(BaseModel):
-    new_phone: str
+    new_phone: str = Field(..., max_length=32)
     user_comment: str | None = Field(None, min_length=1, max_length=1000)
 
     @field_validator("new_phone")
@@ -255,13 +255,13 @@ class PhoneChangeRequestCreateIn(BaseModel):
 # взять, кроме как спросить прямо) и без подтверждения через мессенджер —
 # вместо этого заявку вручную одобряет администратор.
 class RegistrationRequestCreateIn(BaseModel):
-    phone: str
+    phone: str = Field(..., max_length=32)
     password: str = Field(..., min_length=8, max_length=100)
     password_confirm: str = Field(..., min_length=8, max_length=100)
     full_name: str = Field(..., min_length=1, max_length=200)
-    user_type: str = Field(...)
-    organization_name: str | None = Field(None)
-    contact_phone: str | None = Field(None)
+    user_type: str = Field(..., max_length=20)
+    organization_name: str | None = Field(None, max_length=255)
+    contact_phone: str | None = Field(None, max_length=32)
     user_comment: str | None = Field(None, min_length=1, max_length=1000)
 
     @field_validator("phone")
@@ -357,7 +357,7 @@ class AdminPhoneChangeRequestOut(PhoneChangeRequestOut):
 # недоступен. Идентифицируется по телефону — заявитель ещё не залогинен
 # (забыл пароль), поэтому эндпоинт подачи без авторизации.
 class PasswordResetRequestCreateIn(BaseModel):
-    phone: str
+    phone: str = Field(..., max_length=32)
     new_password: str = Field(..., min_length=8, max_length=100)
     new_password_confirm: str = Field(..., min_length=8, max_length=100)
     user_comment: str | None = Field(None, min_length=1, max_length=1000)

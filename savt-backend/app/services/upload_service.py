@@ -176,6 +176,11 @@ async def save_attachment_with_meta(file: UploadFile, max_size: int | None = Non
 
 
 async def save_voice(file: UploadFile) -> str:
+    return (await save_voice_with_meta(file))[0]
+
+
+async def save_voice_with_meta(file: UploadFile) -> tuple[str, int]:
+    """Возвращает ссылку на сохранённое голосовое и его размер в байтах."""
     mime = file.content_type or ""
     if mime not in _VOICE_TYPES:
         raise HTTPException(
@@ -184,8 +189,7 @@ async def save_voice(file: UploadFile) -> str:
                    f"Поддерживаются: {', '.join(_VOICE_TYPES.keys())}",
         )
     ext = _VOICE_TYPES[mime]
-    url, _ = await _save(file, "voices", ext, MAX_VOICE_SIZE)
-    return url
+    return await _save(file, "voices", ext, MAX_VOICE_SIZE)
 
 
 def save_local_file(source: Path) -> FileInfo:

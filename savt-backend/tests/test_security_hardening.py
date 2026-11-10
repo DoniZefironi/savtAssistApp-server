@@ -43,6 +43,7 @@ def test_a_sound_production_configuration_has_no_problems():
     ({"cors_origins": "https://helper.savt.by/"}, "https://helper.savt.by/ — адрес с путём"),
     ({"app_env": "dev"}, "APP_ENV"),
     ({"project_folders_mode": "ful"}, "PROJECT_FOLDERS_MODE"),
+    ({"orphan_files_mode": "deletee"}, "ORPHAN_FILES_MODE"),
 ])
 def test_each_weak_setting_is_reported(overrides, fragment):
     problems = config_problems(_settings(**overrides))
@@ -53,6 +54,8 @@ def test_each_weak_setting_is_reported(overrides, fragment):
 def test_both_folder_modes_are_accepted():
     assert config_problems(_settings(project_folders_mode="full")) == []
     assert config_problems(_settings(project_folders_mode="create_only")) == []
+    for mode in ("off", "dry_run", "delete"):
+        assert config_problems(_settings(orphan_files_mode=mode)) == []
 
 
 def test_all_problems_are_listed_at_once():

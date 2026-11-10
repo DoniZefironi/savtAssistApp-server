@@ -92,7 +92,7 @@ class DocumentRequestOut(BaseModel):
 
 
 class ApproveDocumentRequestIn(BaseModel):
-    admin_response: str | None = None
+    admin_response: str | None = Field(None, max_length=1000)
 
 
 class RejectDocumentRequestIn(BaseModel):

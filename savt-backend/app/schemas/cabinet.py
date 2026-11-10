@@ -63,7 +63,7 @@ class CabinetUpdateIn(BaseModel):
     mqtt_password: str | None = Field(None, max_length=200)
     # id SIM во внешнем приложении управления SIM-картами (10.1.0.67:5000) —
     # GUID-строка, не число. null — отвязать текущую SIM от ШУ
-    sim_id: str | None = None
+    sim_id: str | None = Field(None, max_length=64)
 
     @model_validator(mode="after")
     def validate_warranty_dates(self) -> "CabinetUpdateIn":

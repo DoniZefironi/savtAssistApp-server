@@ -6,18 +6,20 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.constants import STAFF_ROLE_NAMES
 from app.core.dependencies import get_current_user, get_current_user_released, get_session
 from app.core.limiter import limiter
 from app.core.signed_urls import SignedUrl, strip_signature, verify_signature
 from app.models.role import Role
 from app.models.user import User
+from app.services import upload_quota
 from app.services.upload_service import (
     MAX_VOICE_SIZE,
     UPLOAD_ROOT,
     attachment_limit_for,
     exceeds_recognition_limit,
-    save_attachment,
-    save_voice,
+    save_attachment_with_meta,
+    save_voice_with_meta,
     transcode_to_ogg_opus,
 )
 
@@ -58,7 +60,7 @@ class UploadOut(BaseModel):
 
 
 class TranscribeIn(BaseModel):
-    file_url: str = Field(..., description="URL голосового файла /static/voice/...")
+    file_url: str = Field(..., max_length=500, description="URL голосового файла /static/voice/...")
 
 
 class TranscribeOut(BaseModel):
@@ -80,12 +82,16 @@ async def upload_attachment(
 ):
     # Размер зависит от роли и вида файла: сотрудникам до 500 МБ, пользователям
     # USER_UPLOAD_MAX_MB, а видео USER_VIDEO_UPLOAD_MAX_MB
-    role = await session.get(Role, user.role_id)
-    role_name = role.name if role else None
-    # Дальше долгое копирование и проверка файла — соединение с БД не держим
-    await session.commit()
+    role_name = await _role_name(session, user)
+    reservation = await _reserve_quota(session, user, role_name, request)
     limit = attachment_limit_for(role_name, file.content_type)
-    return UploadOut(url=await save_attachment(file, limit))
+    try:
+        info = await save_attachment_with_meta(file, limit)
+    except Exception:
+        await upload_quota.release(session, reservation)
+        raise
+    await upload_quota.finalize(session, reservation, info.file_size_bytes)
+    return UploadOut(url=info.url)
 
 # Загрузить ГС
 @router.post("/voice", response_model=UploadOut)
@@ -93,9 +99,37 @@ async def upload_attachment(
 async def upload_voice(
     request: Request,
     file: UploadFile = File(...),
-    _: User = Depends(get_current_user_released),
+    user: User = Depends(get_current_user_released),
+    session: AsyncSession = Depends(get_session),
 ):
-    return UploadOut(url=await save_voice(file))
+    role_name = await _role_name(session, user)
+    reservation = await _reserve_quota(session, user, role_name, request)
+    try:
+        url, size = await save_voice_with_meta(file)
+    except Exception:
+        await upload_quota.release(session, reservation)
+        raise
+    await upload_quota.finalize(session, reservation, size)
+    return UploadOut(url=url)
+
+
+async def _role_name(session: AsyncSession, user: User) -> str | None:
+    role = await session.get(Role, user.role_id)
+    return role.name if role else None
+
+
+async def _reserve_quota(
+    session: AsyncSession, user: User, role_name: str | None, request: Request,
+) -> int | None:
+    """Резервирует место в суточной квоте пользователя (сотрудников квота не касается).
+    Транзакция сессии завершается в любом случае: дальше долгое копирование и проверка файла,
+    соединение с БД на это время не держим."""
+    reservation = None
+    if role_name not in STAFF_ROLE_NAMES:
+        declared = request.headers.get("content-length", "")
+        reservation = await upload_quota.reserve(session, user.id, int(declared) if declared.isdigit() else 0)
+    await session.commit()
+    return reservation
 
 # Распознать ГС → текст (Yandex SpeechKit)
 @router.post("/transcribe", response_model=TranscribeOut)

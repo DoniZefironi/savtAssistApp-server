@@ -109,7 +109,9 @@ class AttachmentIn(BaseModel):
 class MessageCreateIn(BaseModel):
     text: str | None = Field(None, min_length=1, max_length=4000)
     reply_to_message_id: int | None = Field(None, gt=0)
-    attachments: list[AttachmentIn] = []
+    # Предел нужен: каждое вложение — отдельная запись в БД и строка в комментарии Bitrix, а
+    # без предела один запрос мог бы создать их тысячи
+    attachments: list[AttachmentIn] = Field(default=[], max_length=20)
     # Ключ идемпотентности оффлайн-очереди (tempId) — повторная отправка с тем
     # же токеном вернёт уже созданное сообщение вместо дубля. Необязателен:
     # без него (обычный онлайн-запрос) дедупликации нет.

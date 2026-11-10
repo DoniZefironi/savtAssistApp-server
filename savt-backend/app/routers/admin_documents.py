@@ -24,9 +24,9 @@ router = APIRouter(tags=["admin: documents"])
 @router.post("/admin/documents", response_model=DocumentOut, status_code=status.HTTP_201_CREATED)
 async def create_document(
     file: UploadFile = File(...),
-    cabinet_id: str | None = Form(None),
-    project_id: str | None = Form(None),
-    title: str | None = Form(None),
+    cabinet_id: str | None = Form(None, max_length=20),
+    project_id: str | None = Form(None, max_length=20),
+    title: str | None = Form(None, max_length=255),
     requires_approval: bool = Form(False),
     # служебный документ (счёт, договор) — пользователям не показывается вовсе
     is_internal: bool = Form(False),
@@ -104,10 +104,10 @@ async def delete_document(
 @router.post("/admin/photos", response_model=PhotoOut, status_code=status.HTTP_201_CREATED)
 async def create_photo(
     file: UploadFile = File(...),
-    cabinet_id: str | None = Form(None),
-    project_id: str | None = Form(None),
-    caption: str | None = Form(None),
-    sort_order: str = Form("0"),
+    cabinet_id: str | None = Form(None, max_length=20),
+    project_id: str | None = Form(None, max_length=20),
+    caption: str | None = Form(None, max_length=500),
+    sort_order: str = Form("0", max_length=10),
     _: User = Depends(require_role(RoleName.ADMIN)),
     session: AsyncSession = Depends(get_session),
 ):

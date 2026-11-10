@@ -119,6 +119,24 @@ async def _telemetry_history_prune_job() -> None:
             logger.info("Очистка истории телеметрии: удалено %d старых записей", deleted)
 
 
+# ежедневная чистка журнала загрузок (по нему считается суточная квота) — старше месяца записи не нужны
+async def _upload_log_prune_job() -> None:
+    async with AsyncSessionLocal() as session:
+        from app.services.upload_quota import prune_old
+        deleted = await prune_old(session)
+        if deleted:
+            logger.info("Очистка журнала загрузок: удалено %d старых записей", deleted)
+
+
+# ночная уборка файлов в /uploads, на которые больше не ссылается ни одна запись (режим — ORPHAN_FILES_MODE)
+async def _orphan_files_job() -> None:
+    if settings.orphan_files_mode == "off":
+        return
+    async with AsyncSessionLocal() as session:
+        from app.services.orphan_files import run_cleanup
+        await run_cleanup(session)
+
+
 # жизненный цикл приложения, выполняется один раз при старте и один раз при остановке
 # проверка БД, инициализация файрбазе, системный пользователь-бот, регистрация всех фоновых задач, корректное закрытие ресурсов
 @asynccontextmanager
@@ -151,6 +169,10 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(_bot_follow_up_job, "interval", minutes=10)
     # чистка старой телеметрии
     scheduler.add_job(_telemetry_history_prune_job, "cron", hour=3, minute=0)
+    # чистка журнала загрузок
+    scheduler.add_job(_upload_log_prune_job, "cron", hour=3, minute=20)
+    # уборка файлов без ссылок
+    scheduler.add_job(_orphan_files_job, "cron", hour=3, minute=30)
 
     # Проверка расписания рекламных уведомлений — раз в час; сама решает по
     # настройкам из БД (PromoScheduleSettings, управляются из админки), пора

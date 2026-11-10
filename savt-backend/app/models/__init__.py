@@ -52,6 +52,7 @@ from app.models.cabinet_register_state import CabinetRegisterState
 from app.models.reclamation import Reclamation
 from app.models.reclamation_attachment import ReclamationAttachment
 from app.models.reclamation_bitrix_outbox import ReclamationBitrixOutbox
+from app.models.upload_log import UploadLog
 
 __all__ = [
     "Role", "User", "RefreshToken", "PhoneVerificationCode",
@@ -68,4 +69,5 @@ __all__ = [
     "PasswordResetRequest", "PromoMessage", "PromoScheduleSettings",
     "RegisterDefinition", "CabinetRegisterOverride", "CabinetTelemetryEvent",
     "CabinetRegisterState", "Reclamation", "ReclamationAttachment", "ReclamationBitrixOutbox",
+    "UploadLog",
 ]

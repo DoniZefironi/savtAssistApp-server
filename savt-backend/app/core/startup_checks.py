@@ -63,6 +63,12 @@ def config_problems(settings: Settings) -> list[str]:
             "сейчас сервер работает как create_only и существующие папки не синхронизирует"
         )
 
+    if settings.orphan_files_mode not in ("off", "dry_run", "delete"):
+        problems.append(
+            f"ORPHAN_FILES_MODE={settings.orphan_files_mode!r}: допустимо off, dry_run или delete; "
+            "сейчас уборка файлов работает как dry_run и ничего не удаляет"
+        )
+
     if not is_production(settings.app_env):
         problems.append(
             f"APP_ENV={settings.app_env!r}: в боевом окружении должно быть prod "

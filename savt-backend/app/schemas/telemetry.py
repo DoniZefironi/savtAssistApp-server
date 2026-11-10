@@ -1,13 +1,18 @@
 from datetime import datetime
+from typing import Annotated
+
 from pydantic import BaseModel, Field
+
+from app.schemas.limits import dict_items_limit
 
 
 # Входящий вебхук от C#-прокси. registers — {адрес: значение}, как есть с ПЛК.
 # timestamp необязателен: если прокси не прислал время фактического чтения,
-# берём время получения на сервере.
+# берём время получения на сервере. Сообщение несёт около двадцати регистров, предел с большим
+# запасом: адрес регистра — число до 65534 (см. RegisterDefinitionIn)
 class TelemetryWebhookIn(BaseModel):
     topic: str = Field(..., min_length=1, max_length=200)
-    registers: dict[int, int]
+    registers: Annotated[dict[int, int], dict_items_limit(1000)]
     timestamp: datetime | None = None
 
 

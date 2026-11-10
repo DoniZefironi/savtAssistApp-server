@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -16,7 +16,8 @@ router = APIRouter(tags=["qr"])
 
 
 class QrGenerateIn(BaseModel):
-    data: str
+    # В QR помещается около 3 КБ, остальное генератор всё равно не примет
+    data: str = Field(..., min_length=1, max_length=2000)
 
 # Генерация кур кода(не по шкафу)
 @router.post("/qr/generate")

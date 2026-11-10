@@ -81,12 +81,12 @@ class CreateAdminIn(BaseModel):
 # Telegram-подтверждение номера: сам факт, что учётку заводит админ, и есть
 # подтверждение (та же логика, что у одобрения RegistrationRequest).
 class CreateUserIn(BaseModel):
-    phone: str
+    phone: str = Field(..., max_length=32)
     password: str = Field(..., min_length=8, max_length=100)
     full_name: str = Field(..., min_length=1, max_length=200)
-    user_type: str = Field(...)
-    organization_name: str | None = Field(None)
-    contact_phone: str | None = Field(None)
+    user_type: str = Field(..., max_length=20)
+    organization_name: str | None = Field(None, max_length=255)
+    contact_phone: str | None = Field(None, max_length=32)
 
     @field_validator("phone")
     @classmethod

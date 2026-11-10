@@ -1,8 +1,9 @@
 from datetime import date, datetime
-from typing import Any
+from typing import Annotated, Any
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.signed_urls import SignedUrl, SignedUrlOpt, accept_issued_url
+from app.schemas.limits import json_size_limit
 
 
 class ReclamationAttachmentIn(BaseModel):
@@ -41,15 +42,15 @@ class ReclamationCreateIn(BaseModel):
     # (заводской номер пользователь списывает вручную с самого объекта),
     # component -> {"name", "model", "article", "serial_number"} (п.4 ТЗ),
     # software/documentation -> что понадобится по факту
-    object_details: dict[str, Any] | None = None
+    object_details: Annotated[dict[str, Any] | None, json_size_limit(2048)] = None
 
     contract_number: str | None = Field(None, max_length=100)
     order_number: str | None = Field(None, max_length=100)
     ttn_number: str | None = Field(None, max_length=100)
 
-    description: str = Field(..., min_length=1)
-    occurrence_conditions: str | None = None
-    error_codes: str | None = None
+    description: str = Field(..., min_length=1, max_length=5000)
+    occurrence_conditions: str | None = Field(None, max_length=2000)
+    error_codes: str | None = Field(None, max_length=1000)
 
     # предзаполняются на клиенте из профиля, но редактируемые — заявка может
     # подаваться не от своего имени (см. customer_name)
@@ -58,7 +59,8 @@ class ReclamationCreateIn(BaseModel):
     contact_email: str = Field(..., min_length=1, max_length=100)
     customer_name: str | None = Field(None, max_length=255)
 
-    attachments: list[ReclamationAttachmentIn] = []
+    # Предел нужен: каждое вложение — запись в БД, а без предела один запрос создал бы их тысячи
+    attachments: list[ReclamationAttachmentIn] = Field(default=[], max_length=20)
 
 
 class ReclamationListItemOut(BaseModel):
@@ -185,7 +187,7 @@ class ReclamationOutboxUpdateIn(BaseModel):
     на момент сбоя). Произвольный словарь, без строгой схемы под каждую из 6
     операций — это инструмент на крайний случай для администратора, не
     основной путь ввода данных."""
-    payload: dict[str, Any]
+    payload: Annotated[dict[str, Any], json_size_limit(20_000)]
 
 
 class ReclamationOutboxRetryResult(BaseModel):

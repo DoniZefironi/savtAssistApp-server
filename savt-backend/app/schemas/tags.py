@@ -15,4 +15,4 @@ class TagCreateIn(BaseModel):
 
 
 class DocumentTagsIn(BaseModel):
-    tag_ids: list[int] = Field(default=[], description="Пустой список снимает все теги")
+    tag_ids: list[int] = Field(default=[], max_length=100, description="Пустой список снимает все теги")
