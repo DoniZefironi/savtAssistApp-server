@@ -37,6 +37,18 @@ async def hash_password_async(plain_password: str) -> str:
 async def verify_password_async(plain_password: str, hashed_password: str) -> bool:
     return await asyncio.to_thread(verify_password, plain_password, hashed_password)
 
+_dummy_hash: str | None = None
+
+
+async def burn_password_check(plain_password: str) -> None:
+    """Делает ту же работу, что проверка пароля настоящей учётки. Вызывается при входе,
+    когда пользователя с таким логином нет: иначе ответ приходит на ~0,2 с быстрее, и по
+    времени ответа можно узнать, какие номера зарегистрированы."""
+    global _dummy_hash
+    if _dummy_hash is None:
+        _dummy_hash = await hash_password_async(secrets.token_urlsafe(16))
+    await verify_password_async(plain_password, _dummy_hash)
+
 # генерация рефреш токена
 def generate_refresh_token() -> str:
     # 48 случайных байт и кодировка их в base64 

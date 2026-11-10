@@ -98,7 +98,8 @@ async def test_password_reset_request_is_decided_by_staff(api, staff, make_user)
     first = await api.post("/auth/password-reset/request", json={"phone": PHONE, **body, "user_comment": "Потерял Telegram"})
     second = await api.post("/auth/password-reset/request", json={"phone": PHONE_2, **body})
     unknown = await api.post("/auth/password-reset/request", json={"phone": "+375299999999", **body})
-    assert first.status_code == 201 and second.status_code == 201 and unknown.status_code == 404
+    # неизвестный номер отвечает так же, как известный: по ответу нельзя перебирать телефоны
+    assert first.status_code == 201 and second.status_code == 201 and unknown.status_code == 201
 
     listed = (await api.get("/admin/password-reset-requests", headers=staff.o)).json()
     assert {r["user_id"] for r in listed["items"]} >= {client.id, other.id}

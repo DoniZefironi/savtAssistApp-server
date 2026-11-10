@@ -1,6 +1,9 @@
+from datetime import datetime, timezone
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AlreadyExistsError, NotFoundError
+from app.models.password_reset_request import PasswordResetRequest
 from app.repositories.password_reset_request import PasswordResetRequestRepository
 from app.repositories.user import UserRepository
 from app.schemas.auth import (
@@ -11,7 +14,7 @@ from app.schemas.auth import (
 from app.schemas.pagination import PageOut, make_page
 from app.schemas.requests import RejectRequestIn
 from app.services.audit_service import AuditLogger
-from app.services.request_resolution import ensure_pending, resolve_request
+from app.services.request_resolution import ensure_pending, next_fake_request_id, resolve_request
 
 
 class PasswordResetRequestService:
@@ -32,15 +35,27 @@ class PasswordResetRequestService:
     async def submit(self, data: PasswordResetRequestCreateIn) -> PasswordResetRequestOut:
         from app.core.security import hash_password_async
 
+        # Хеш считается всегда, до проверок: время ответа не должно выдавать, что номер есть
+        hashed_password = await hash_password_async(data.new_password)
+
+        # Эндпоинт открыт без авторизации, поэтому ответ один и тот же для любого номера:
+        # иначе по нему можно перебирать телефоны зарегистрированных людей. Заявка, если
+        # пользователя нет или заявка уже ждёт решения, просто не заводится
         user = await self.user_repo.find_by_phone(data.phone)
-        if user is None or not user.is_active:
-            raise NotFoundError("Пользователь с таким номером телефона не найден")
-        if await self.repo.find_pending_for_user(user.id) is not None:
-            raise AlreadyExistsError("У вас уже есть необработанная заявка на сброс пароля")
+        if (
+            user is None
+            or not user.is_active
+            or await self.repo.find_pending_for_user(user.id) is not None
+        ):
+            return PasswordResetRequestOut(
+                id=await next_fake_request_id(self.session, PasswordResetRequest),
+                status="pending",
+                created_at=datetime.now(timezone.utc),
+            )
 
         req = await self.repo.create(
             user_id=user.id,
-            hashed_password=await hash_password_async(data.new_password),
+            hashed_password=hashed_password,
             user_comment=data.user_comment,
         )
         self.audit.log(

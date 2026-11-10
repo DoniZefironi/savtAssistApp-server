@@ -84,15 +84,22 @@ async def test_registration_submit_and_approve_creates_a_working_account(db_sess
     assert item.resolved_by_admin_name == admin.full_name and item.status == "approved"
 
 
-async def test_registration_submit_rejects_duplicates(db_session, env, make_user):
+async def test_registration_submit_ignores_duplicates_without_telling_the_caller(db_session, env, make_user):
+    """Подача открыта без авторизации: ответ одинаков, занят номер или нет. Заявка в этих
+    случаях не заводится, ошибки нет."""
+    from sqlalchemy import select
+    from app.models.registration_request import RegistrationRequest
+
     await make_user(phone="+375291111111")
     svc = RegistrationRequestService(db_session)
 
-    with pytest.raises(AlreadyExistsError):
-        await svc.submit(_registration(phone="+375291111111"))
-    await svc.submit(_registration(phone="+375292222222"))
-    with pytest.raises(AlreadyExistsError):
-        await svc.submit(_registration(phone="+375292222222"))
+    taken = await svc.submit(_registration(phone="+375291111111"))
+    first = await svc.submit(_registration(phone="+375292222222"))
+    repeat = await svc.submit(_registration(phone="+375292222222"))
+
+    assert taken.status == first.status == repeat.status == "pending"
+    rows = (await db_session.execute(select(RegistrationRequest))).scalars().all()
+    assert [r.phone for r in rows] == ["+375292222222"] and rows[0].id == first.id
 
 
 async def test_registration_can_be_resubmitted_after_rejection(db_session, env, make_user):
@@ -223,13 +230,19 @@ async def test_password_reset_submit_rules(db_session, env, make_client):
     blocked = await make_client(is_active=False)
     svc = PasswordResetRequestService(db_session)
 
-    with pytest.raises(NotFoundError):
-        await svc.submit(_reset("+375299999999"))
-    with pytest.raises(NotFoundError):
-        await svc.submit(_reset(blocked.phone))
-    await svc.submit(_reset(active.phone))
-    with pytest.raises(AlreadyExistsError):
-        await svc.submit(_reset(active.phone))
+    from sqlalchemy import select
+    from app.models.password_reset_request import PasswordResetRequest
+
+    # неизвестный, заблокированный и повторный запросы отвечают так же, как настоящий,
+    # но заявку не заводят
+    unknown = await svc.submit(_reset("+375299999999"))
+    refused = await svc.submit(_reset(blocked.phone))
+    real = await svc.submit(_reset(active.phone))
+    repeat = await svc.submit(_reset(active.phone))
+
+    assert {unknown.status, refused.status, real.status, repeat.status} == {"pending"}
+    rows = (await db_session.execute(select(PasswordResetRequest))).scalars().all()
+    assert [r.id for r in rows] == [real.id] and rows[0].user_id == active.id
 
 
 async def test_password_reset_decisions_are_final_and_checked(db_session, env, make_client):

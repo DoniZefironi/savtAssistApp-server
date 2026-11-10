@@ -56,8 +56,28 @@ class PhoneCodeRepository:
         )
         return result.scalar_one_or_none()
 
-    async def increment_attempts(self, code: PhoneVerificationCode) -> None:
-        code.attempts += 1
+    async def claim_attempt(self, code: PhoneVerificationCode) -> bool:
+        """Засчитывает попытку ввода кода одним UPDATE: лимит проверяется и увеличивается
+        атомарно, поэтому параллельные запросы не могут пройти мимо max_attempts.
+        False — лимит уже исчерпан (или код погашен), сверять хеш не нужно.
+
+        Строка блокируется до конца транзакции, параллельные попытки по тому же коду идут
+        по очереди и видят уже увеличенный счётчик."""
+        result = await self.session.execute(
+            update(PhoneVerificationCode)
+            .where(
+                PhoneVerificationCode.id == code.id,
+                PhoneVerificationCode.used_at.is_(None),
+                PhoneVerificationCode.attempts < PhoneVerificationCode.max_attempts,
+            )
+            .values(attempts=PhoneVerificationCode.attempts + 1)
+            .returning(PhoneVerificationCode.attempts)
+        )
+        attempts = result.scalar_one_or_none()
+        if attempts is None:
+            return False
+        code.attempts = attempts
+        return True
 
     async def mark_used(self, code: PhoneVerificationCode) -> None:
         code.used_at = datetime.now(timezone.utc)

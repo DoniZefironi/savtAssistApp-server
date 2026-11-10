@@ -1,6 +1,9 @@
+from datetime import datetime, timezone
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AlreadyExistsError, NotFoundError
+from app.models.registration_request import RegistrationRequest
 from app.repositories.registration_request import RegistrationRequestRepository
 from app.repositories.user import UserRepository
 from app.schemas.auth import (
@@ -12,7 +15,7 @@ from app.schemas.auth import (
 from app.schemas.pagination import PageOut, make_page
 from app.schemas.requests import RejectRequestIn
 from app.services.audit_service import AuditLogger
-from app.services.request_resolution import ensure_pending, resolve_request
+from app.services.request_resolution import ensure_pending, next_fake_request_id, resolve_request
 
 
 class RegistrationRequestService:
@@ -28,14 +31,25 @@ class RegistrationRequestService:
     async def submit(self, data: RegistrationRequestCreateIn) -> RegistrationRequestOut:
         from app.core.security import hash_password_async
 
-        if await self.user_repo.find_by_phone(data.phone) is not None:
-            raise AlreadyExistsError("Пользователь с таким номером телефона уже зарегистрирован")
-        if await self.request_repo.has_pending_for_phone(data.phone):
-            raise AlreadyExistsError("Заявка с этим номером телефона уже рассматривается")
+        # Хеш считается всегда, до проверок: время ответа не должно выдавать, что номер занят
+        hashed_password = await hash_password_async(data.password)
+
+        # Эндпоинт открыт без авторизации, поэтому ответ один и тот же, занят номер или нет:
+        # иначе по нему можно перебирать телефоны зарегистрированных людей. Заявка в этих
+        # случаях просто не заводится
+        if (
+            await self.user_repo.find_by_phone(data.phone) is not None
+            or await self.request_repo.has_pending_for_phone(data.phone)
+        ):
+            return RegistrationRequestOut(
+                id=await next_fake_request_id(self.session, RegistrationRequest),
+                status="pending",
+                created_at=datetime.now(timezone.utc),
+            )
 
         req = await self.request_repo.create(
             phone=data.phone,
-            hashed_password=await hash_password_async(data.password),
+            hashed_password=hashed_password,
             full_name=data.full_name,
             user_type=data.user_type,
             organization_name=data.organization_name,

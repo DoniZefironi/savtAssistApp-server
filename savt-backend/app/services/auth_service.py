@@ -1,3 +1,4 @@
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -14,6 +15,7 @@ from app.core.exceptions import (
     RateLimitError,
 )
 from app.core.security import (
+    burn_password_check,
     create_access_token,
     generate_refresh_token,
     generate_sms_code,
@@ -29,6 +31,8 @@ from app.repositories.user import UserRepository
 from app.services import messenger_service
 from app.models.role import Role
 
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_USER_ROLE_ID = 1
 
@@ -135,13 +139,12 @@ class AuthService:
         if active_code is None:
             raise InvalidCodeError("Код не найден или истёк")
 
-        # Защищаемся от школьников
-        if active_code.attempts >= active_code.max_attempts:
+        # Защищаемся от школьников: попытка засчитывается до сверки, атомарно
+        if not await self.code_repo.claim_attempt(active_code):
             raise InvalidCodeError("Превышено число попыток. Запросите новый код")
 
         # Сравниваем хэш кодов
         if hash_token(code) != active_code.code_hash:
-            await self.code_repo.increment_attempts(active_code)
             await self.session.commit()
             raise InvalidCodeError("Неверный код")
 
@@ -174,7 +177,10 @@ class AuthService:
     ) -> tuple[str, str]:
         user = await self.user_repo.find_by_login(login)
 
-        if user is None or not await verify_password_async(password, user.hashed_password):
+        if user is None:
+            await burn_password_check(password)
+            raise AuthenticationError("Неверный логин или пароль")
+        if not await verify_password_async(password, user.hashed_password):
             raise AuthenticationError("Неверный логин или пароль")
 
         if not user.is_active:
@@ -201,7 +207,10 @@ class AuthService:
         user = await self.user_repo.find_by_phone(phone)
 
         # Проверяем пароль, сравниваем хэши
-        if user is None or not await verify_password_async(password, user.hashed_password):
+        if user is None:
+            await burn_password_check(password)
+            raise AuthenticationError("Неверный телефон или пароль")
+        if not await verify_password_async(password, user.hashed_password):
             raise AuthenticationError("Неверный телефон или пароль")
 
         # Проверяем актиивность аккаунта, может в бане школьник
@@ -362,7 +371,13 @@ class AuthService:
         # токеном привязки в ответе достался бы атакующему, а следом к нему же ушёл
         # бы и код сброса пароля. Если связки
         # нет, ответ снаружи неотличим от «такого номера нет» (см. выше).
-        return await self._start_verification(phone, PURPOSE_PASSWORD_RESET, channel, user.id)
+        try:
+            return await self._start_verification(phone, PURPOSE_PASSWORD_RESET, channel, user.id)
+        except messenger_service.MessengerSendError as exc:
+            # Ответ 503 выдал бы, что номер зарегистрирован и у него есть бот: для
+            # несуществующего номера он никогда не приходит. Снаружи ответ прежний
+            logger.warning("Код сброса пароля не доставлен: %s", exc)
+            return cooldown, None
 
     # Устанавливаем новый пароль
     async def password_reset_complete(
@@ -383,11 +398,10 @@ class AuthService:
         if active_code is None:
             raise InvalidCodeError("Код не найден или истёк")
 
-        if active_code.attempts >= active_code.max_attempts:
+        if not await self.code_repo.claim_attempt(active_code):
             raise InvalidCodeError("Превышено число попыток. Запросите новый код")
 
         if hash_token(code) != active_code.code_hash:
-            await self.code_repo.increment_attempts(active_code)
             await self.session.commit()
             raise InvalidCodeError("Неверный код")
 

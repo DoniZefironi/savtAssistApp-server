@@ -547,3 +547,134 @@ async def test_password_check_does_not_block_the_event_loop(auth, make_user, mon
         task.cancel()
 
     assert ticks >= 15
+
+
+async def test_parallel_wrong_guesses_cannot_exceed_the_attempt_limit():
+    """Настоящие параллельные соединения с коммитом (savepoint-фикстура тут не годится: она
+    одно соединение). Раньше счётчик читался и увеличивался в памяти, и пачка запросов
+    проходила проверку лимита одновременно."""
+    from sqlalchemy import delete
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from sqlalchemy.pool import NullPool
+
+    from app.config import settings
+
+    engine = create_async_engine(settings.database_url, poolclass=NullPool)
+    maker = async_sessionmaker(bind=engine, expire_on_commit=False)
+    phone = "+375290000017"
+    try:
+        async with maker() as s:
+            created = await PhoneCodeRepository(s).create(
+                phone=phone, code_hash=hash_token("123456"), purpose=PURPOSE_REGISTRATION,
+                expires_at=datetime.now(timezone.utc) + timedelta(minutes=10), max_attempts=5,
+            )
+            await s.commit()
+            code_id = created.id
+
+        async def guess():
+            async with maker() as s:
+                code = await s.get(PhoneVerificationCode, code_id)
+                granted = await PhoneCodeRepository(s).claim_attempt(code)
+                await s.commit()
+                return granted
+
+        results = await asyncio.gather(*[guess() for _ in range(20)])
+        assert results.count(True) == 5
+
+        async with maker() as s:
+            assert (await s.get(PhoneVerificationCode, code_id)).attempts == 5
+    finally:
+        async with maker() as s:
+            await s.execute(delete(PhoneVerificationCode).where(PhoneVerificationCode.phone == phone))
+            await s.commit()
+        await engine.dispose()
+
+
+# --- ответы без авторизации не выдают, какие номера зарегистрированы ---
+
+async def test_password_reset_start_hides_a_failed_delivery(auth, db_session, telegram):
+    """503 приходил бы только для существующего номера с подключённым ботом."""
+    user = await _user(db_session, verified=True)
+    await _link(db_session, user)
+    telegram.fail = True
+
+    assert await auth.password_reset_start(PHONE, "telegram") == (60, None)
+
+
+async def _submit_both(db_session, phone):
+    from app.schemas.auth import PasswordResetRequestCreateIn, RegistrationRequestCreateIn
+    from app.services.password_reset_request_service import PasswordResetRequestService
+    from app.services.registration_request_service import RegistrationRequestService
+
+    registered = await RegistrationRequestService(db_session).submit(RegistrationRequestCreateIn(
+        phone=phone, password="password8", password_confirm="password8",
+        full_name="Иванов Иван", user_type="individual",
+    ))
+    reset = await PasswordResetRequestService(db_session).submit(PasswordResetRequestCreateIn(
+        phone=phone, new_password="password9", new_password_confirm="password9",
+    ))
+    return registered, reset
+
+
+async def test_public_requests_answer_the_same_for_any_phone(db_session):
+    from app.models.password_reset_request import PasswordResetRequest
+    from app.models.registration_request import RegistrationRequest
+
+    await _user(db_session, phone="+375291111111", verified=True)
+
+    known = await _submit_both(db_session, "+375291111111")      # номер уже зарегистрирован
+    fresh = await _submit_both(db_session, "+375292222222")      # номера нет, заявка создаётся (регистрация)
+    again = await _submit_both(db_session, "+375292222222")      # заявка по этому номеру уже ждёт решения
+
+    for registered, reset in (known, fresh, again):
+        assert registered.status == "pending" and reset.status == "pending"
+    # номера всегда разные, как у настоящих заявок, — по повтору запроса ничего не узнать
+    ids = [r.id for r in (known[0], fresh[0], again[0])]
+    assert len(set(ids)) == 3 and len({r.id for r in (known[1], fresh[1], again[1])}) == 3
+
+    # настоящие заявки заведены только там, где это имеет смысл
+    registrations = (await db_session.execute(select(RegistrationRequest))).scalars().all()
+    assert [r.phone for r in registrations] == ["+375292222222"]
+    resets = (await db_session.execute(select(PasswordResetRequest))).scalars().all()
+    assert len(resets) == 1
+
+
+async def test_password_is_hashed_even_when_nothing_is_created(db_session, monkeypatch):
+    """Хеш считается до проверок — время ответа не выдаёт, занят номер или нет."""
+    from app.services import password_reset_request_service, registration_request_service  # noqa: F401
+    from app.core import security
+
+    calls = []
+    real = security.hash_password_async
+
+    async def counting(plain):
+        calls.append(plain)
+        return await real(plain)
+
+    monkeypatch.setattr(security, "hash_password_async", counting)
+    await _user(db_session, phone="+375291111111", verified=True)
+    await _submit_both(db_session, "+375291111111")      # заявка не создаётся
+    await _submit_both(db_session, "+375293333333")      # заявка регистрации создаётся
+
+    assert calls.count("password8") == 2   # регистрация: известный и новый номер
+    assert calls.count("password9") == 2   # сброс: известный и неизвестный номер
+
+
+@pytest.mark.parametrize("entry", ["login", "admin_login"])
+async def test_login_checks_a_password_for_an_unknown_user_too(auth, monkeypatch, entry):
+    """Раньше для неизвестного номера bcrypt не считался, и ответ приходил заметно быстрее."""
+    from app.services import auth_service
+
+    burned = []
+
+    async def burn(plain):
+        burned.append(plain)
+
+    monkeypatch.setattr(auth_service, "burn_password_check", burn)
+
+    with pytest.raises(AuthenticationError):
+        if entry == "login":
+            await auth.login("+375290000099", "whatever1", None, None)
+        else:
+            await auth.admin_login("нет-такого", "whatever1", None, None)
+    assert burned == ["whatever1"]
