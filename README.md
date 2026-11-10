@@ -24,19 +24,20 @@ FastAPI-бэкенда (PostgreSQL, Docker). Ядро — шкафы управ�
 
 ## Тестовые пользователи
 
-| Роль     | Логин              | Пароль           |
-|----------|--------------------|------------------|
-| super    | superadmin         | MyStr0ngPass     |
-| admin    | admin              | 123qweASDZXC     |
-| operator | operator           | 123qweASDZXC     |
-| user     | +375291002030      | qweasdzxc        |
+| Роль     | Логин              |
+|----------|--------------------|
+| super    | superadmin         |
+| admin    | admin              |
+| operator | operator           |
+| user     | номер телефона     |
 
-> Эти аккаунты не создаются автоматически миграциями. Администратора и оператора нужно создать через CLI:
+> Пароли тестовых аккаунтов в репозитории не хранятся: каждый разработчик задаёт свой (не короче 8 символов). Аккаунты не создаются автоматически миграциями. Суперадминистратора, администратора и оператора нужно создать через CLI:
 > ```bash
-> docker exec savt-backend-api-1 python -m app.cli create-admin admin 123qweASDZXC
-> docker exec savt-backend-api-1 python -m app.cli create-operator operator 123qweASDZXC
+> docker exec savt-backend-api-1 python -m app.cli create-superadmin superadmin СВОЙ_ПАРОЛЬ
+> docker exec savt-backend-api-1 python -m app.cli create-admin admin СВОЙ_ПАРОЛЬ
+> docker exec savt-backend-api-1 python -m app.cli create-operator operator СВОЙ_ПАРОЛЬ
 > ```
-> Пользователя `+375291002030` — зарегистрировать через `POST /auth/register/start` + `/auth/register/complete`.
+> Пользователя — зарегистрировать через `POST /auth/register/start` + `/auth/register/complete`.
 
 ---
 
