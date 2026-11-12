@@ -183,12 +183,27 @@ def make_client(make_user):
     return _make
 
 
-def _reset(phone, password="newpass88", comment=None):
-    return PasswordResetRequestCreateIn(phone=phone, new_password=password, new_password_confirm=password,
-                                        user_comment=comment)
+def _reset(phone, comment=None):
+    return PasswordResetRequestCreateIn(phone=phone, user_comment=comment)
 
 
-async def test_password_reset_approve_applies_password_and_revokes_sessions(db_session, env, make_client):
+def test_password_reset_request_ignores_a_password_from_the_applicant():
+    """Заявку подают без авторизации на любой номер — будущий пароль заявитель не выбирает."""
+    data = PasswordResetRequestCreateIn.model_validate({
+        "phone": "+375291234567", "new_password": "attacker88", "new_password_confirm": "attacker88",
+    })
+    assert not hasattr(data, "new_password") and "new_password" not in data.model_dump()
+
+
+def test_temporary_passwords_are_random_and_typeable():
+    from app.core.security import generate_temporary_password
+
+    passwords = {generate_temporary_password() for _ in range(200)}
+    assert len(passwords) == 200
+    assert all(len(p) == 12 and p.isalnum() and not set(p) & set("0O1lI") for p in passwords)
+
+
+async def test_password_reset_approve_issues_a_temporary_password_and_revokes_sessions(db_session, env, make_client):
     admin = await make_client("admin")
     user = await make_client(password="oldpass88")
     await AuthService(db_session).login(user.phone, "oldpass88", None, None)
@@ -197,17 +212,44 @@ async def test_password_reset_approve_applies_password_and_revokes_sessions(db_s
     out = await svc.submit(_reset(user.phone, comment="Потерял Telegram"))
     # пока админ не одобрил, старый пароль работает
     await AuthService(db_session).login(user.phone, "oldpass88", None, None)
-    await svc.approve(out.id, "Проверили по телефону", admin.id, "admin")
+    assert user.must_change_password is False
+    temporary = await svc.approve(out.id, "Проверили по телефону", admin.id, "admin")
 
     with pytest.raises(AuthenticationError):
         await AuthService(db_session).login(user.phone, "oldpass88", None, None)
-    await AuthService(db_session).login(user.phone, "newpass88", None, None)
+    await AuthService(db_session).login(user.phone, temporary, None, None)
+    assert user.must_change_password is True
     tokens = (await db_session.execute(select(RefreshToken).where(RefreshToken.user_id == user.id))).scalars().all()
     assert any(t.revoked_at is not None for t in tokens)
     [note] = await _notes(db_session, user)
-    assert note.title == "Пароль изменён" and env.pushes[-1][0] == user.id
+    assert note.title == "Пароль сброшен" and env.pushes[-1][0] == user.id
+    # сам пароль не попадает ни в уведомление, ни в журнал
+    assert temporary not in note.body
     assert len(await _audit(db_session, "password_reset_request.create")) == 1
-    assert len(await _audit(db_session, "password_reset_request.approve")) == 1
+    [approved] = await _audit(db_session, "password_reset_request.approve")
+    assert temporary not in str(approved.payload)
+
+    # свой пароль снимает требование смены
+    await AuthService(db_session).change_password(user, temporary, "ownpass777", "ownpass777")
+    assert user.must_change_password is False
+
+
+async def test_reset_by_telegram_code_clears_the_temporary_password_flag(db_session, env, make_client):
+    from datetime import datetime, timedelta, timezone
+    from app.core.security import hash_token
+    from app.repositories.auth import PhoneCodeRepository
+    from app.services.auth_service import PURPOSE_PASSWORD_RESET
+
+    user = await make_client(password="oldpass88", is_phone_verified=True)
+    user.must_change_password = True
+    await PhoneCodeRepository(db_session).create(
+        phone=user.phone, code_hash=hash_token("123456"), purpose=PURPOSE_PASSWORD_RESET,
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=10), max_attempts=5,
+    )
+
+    await AuthService(db_session).password_reset_complete(user.phone, "123456", "ownpass777", "ownpass777")
+
+    assert user.must_change_password is False
 
 
 async def test_password_reset_reject_notifies_with_reason(db_session, env, make_client):

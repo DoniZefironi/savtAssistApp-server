@@ -165,6 +165,7 @@ async def _user_for_registration(session, pending, phone: str, existing):
 
     if existing is not None:
         existing.hashed_password = pending.hashed_password
+        existing.must_change_password = False
         existing.full_name = pending.full_name
         existing.user_type = pending.user_type
         existing.organization_name = pending.organization_name

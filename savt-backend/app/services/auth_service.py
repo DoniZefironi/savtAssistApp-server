@@ -407,6 +407,7 @@ class AuthService:
 
         await self.code_repo.mark_used(active_code)
         user.hashed_password = await hash_password_async(new_password)
+        user.must_change_password = False
 
         await self.token_repo.revoke_all_for_user(user.id)
 
@@ -469,6 +470,7 @@ class AuthService:
             raise InvalidCodeError("Новый пароль и подтверждение не совпадают")
 
         user.hashed_password = await hash_password_async(new_password)
+        user.must_change_password = False
         await self.token_repo.revoke_all_for_user(user.id)
         await self.session.commit()
 

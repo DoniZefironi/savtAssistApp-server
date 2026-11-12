@@ -1,5 +1,5 @@
 from typing import AsyncGenerator
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 import jwt
@@ -47,8 +47,22 @@ def _decode_or_401(credentials: HTTPAuthorizationCredentials | None) -> dict:
         )
 
 
+# С временным паролем (выдан администратором по заявке на сброс) можно только посмотреть
+# профиль и сменить пароль
+_ALLOWED_WITH_TEMPORARY_PASSWORD = {("GET", "/auth/me"), ("POST", "/auth/password-change")}
+PASSWORD_CHANGE_REQUIRED_DETAIL = "Требуется смена пароля: задайте новый пароль в профиле"
+
+
+def _require_password_changed(user: User, request: Request) -> None:
+    if not user.must_change_password:
+        return
+    if (request.method, request.url.path) in _ALLOWED_WITH_TEMPORARY_PASSWORD:
+        return
+    raise HTTPException(status_code=403, detail=PASSWORD_CHANGE_REQUIRED_DETAIL)
+
+
 async def _active_user_from_token(
-    credentials: HTTPAuthorizationCredentials | None, session: AsyncSession,
+    credentials: HTTPAuthorizationCredentials | None, session: AsyncSession, request: Request,
 ) -> User:
     payload = _decode_or_401(credentials)
 
@@ -62,17 +76,20 @@ async def _active_user_from_token(
     if user is None or not user.is_active:
         raise HTTPException(status_code=401, detail="Пользователь недоступен")
 
+    _require_password_changed(user, request)
     return user
 
 
 async def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_security),
     session: AsyncSession = Depends(get_session),
 ) -> User:
-    return await _active_user_from_token(credentials, session)
+    return await _active_user_from_token(credentials, session, request)
 
 
 async def get_current_user_released(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_security),
     session: AsyncSession = Depends(get_session),
 ) -> User:
@@ -80,12 +97,13 @@ async def get_current_user_released(
     распознавание речи). Транзакция чтения завершается сразу, и соединение возвращается в
     пул: иначе оно было бы занято всё время копирования файла и проверки антивирусом, а
     пул небольшой. Если обработчику снова понадобится БД, соединение берётся заново."""
-    user = await _active_user_from_token(credentials, session)
+    user = await _active_user_from_token(credentials, session, request)
     await session.commit()
     return user
 
 
 async def get_current_user_or_guest(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_security),
     session: AsyncSession = Depends(get_session),
 ) -> User | None:
@@ -101,6 +119,7 @@ async def get_current_user_or_guest(
     user = await UserRepository(session).get_by_id(user_id)
     if user is None or not user.is_active:
         raise HTTPException(status_code=401, detail="Пользователь недоступен")
+    _require_password_changed(user, request)
     return user
 
 

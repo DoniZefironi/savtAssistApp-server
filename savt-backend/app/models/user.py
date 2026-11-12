@@ -44,6 +44,11 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default="true"
     )
+    # пароль временный (выдан администратором по заявке на сброс): пока флаг стоит, доступны
+    # только профиль и смена пароля, см. app/core/dependencies.py
+    must_change_password: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
+    )
     
     # время создания
     created_at: Mapped[datetime] = mapped_column(

@@ -213,6 +213,7 @@ async def me(
         role=role.name if role else "user",
         is_phone_verified=user.is_phone_verified,
         is_verified=user.is_verified,
+        must_change_password=user.must_change_password,
         email=user.email,
         user_type=user.user_type,
         organization_name=user.organization_name
@@ -301,6 +302,7 @@ async def update_profile(
         role=role.name if role else "user",
         is_phone_verified=user.is_phone_verified,
         is_verified=user.is_verified,
+        must_change_password=user.must_change_password,
         email=user.email,
         user_type=user.user_type,
         organization_name=user.organization_name,
@@ -325,6 +327,7 @@ async def delete_email(
         role=role.name if role else "user",
         is_phone_verified=user.is_phone_verified,
         is_verified=user.is_verified,
+        must_change_password=user.must_change_password,
         email=user.email,
         user_type=user.user_type,
         organization_name=user.organization_name,

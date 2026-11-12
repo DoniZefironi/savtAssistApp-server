@@ -9,8 +9,8 @@ async def test_list_has_user_verification_and_registration_date(db_session, make
     verified = await make_user(full_name="Подтверждённый Пётр", is_verified=True)
     unverified = await make_user(full_name="Неподтверждённый Иван", is_verified=False)
     db_session.add_all([
-        PasswordResetRequest(user_id=verified.id, hashed_password="x"),
-        PasswordResetRequest(user_id=unverified.id, hashed_password="x"),
+        PasswordResetRequest(user_id=verified.id),
+        PasswordResetRequest(user_id=unverified.id),
     ])
     await db_session.flush()
 

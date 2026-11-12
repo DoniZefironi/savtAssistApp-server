@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.constants import RoleName
 from app.core.dependencies import get_role_from_token, get_session, require_role
 from app.models.user import User
-from app.schemas.auth import AdminPasswordResetRequestOut
+from app.schemas.auth import AdminPasswordResetRequestOut, PasswordResetApprovedOut
 from app.schemas.pagination import PageOut
 from app.schemas.requests import AdminResponseIn, RejectRequestIn
 from app.services.password_reset_request_service import PasswordResetRequestService
@@ -30,10 +30,10 @@ async def list_requests(
     )
 
 
-# Одобрить — пароль меняется сразу на предложенный заявителем, все сессии
-# отзываются. Администратор перед этим обязан сам убедиться, что заявку подаёт
-# владелец аккаунта — система это подтвердить не может (см. сервис)
-@router.post("/{request_id}/approve", status_code=status.HTTP_204_NO_CONTENT)
+# Одобрить — сервер выдаёт временный пароль и отзывает все сессии. Пароль приходит
+# в ответе один раз: администратор сообщает его владельцу аккаунта по проверенному
+# каналу, убедившись, что говорит именно с ним (система это подтвердить не может)
+@router.post("/{request_id}/approve", response_model=PasswordResetApprovedOut)
 async def approve_request(
     request_id: int,
     payload: AdminResponseIn,
@@ -41,7 +41,10 @@ async def approve_request(
     actor_role: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):
-    await PasswordResetRequestService(session).approve(request_id, payload.admin_response, actor.id, actor_role)
+    temporary_password = await PasswordResetRequestService(session).approve(
+        request_id, payload.admin_response, actor.id, actor_role,
+    )
+    return PasswordResetApprovedOut(temporary_password=temporary_password)
 
 
 @router.post("/{request_id}/reject", status_code=status.HTTP_204_NO_CONTENT)

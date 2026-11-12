@@ -37,6 +37,14 @@ async def hash_password_async(plain_password: str) -> str:
 async def verify_password_async(plain_password: str, hashed_password: str) -> bool:
     return await asyncio.to_thread(verify_password, plain_password, hashed_password)
 
+# Без похожих символов (0/O, 1/l/I): пароль диктуют по телефону и набирают вручную
+_TEMP_PASSWORD_ALPHABET = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def generate_temporary_password(length: int = 12) -> str:
+    return "".join(secrets.choice(_TEMP_PASSWORD_ALPHABET) for _ in range(length))
+
+
 _dummy_hash: str | None = None
 
 

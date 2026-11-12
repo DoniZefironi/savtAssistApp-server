@@ -22,7 +22,12 @@ class PasswordResetRequestService:
     нет привязанного Telegram и кто поэтому не может пройти обычный
     AuthService.password_reset_* (там channel только "telegram"). Та же логика
     доверия, что у PhoneChangeService: систему не спрашивают, владеет ли
-    заявитель аккаунтом — это вне приложения проверяет администратор."""
+    заявитель аккаунтом — это вне приложения проверяет администратор.
+
+    Заявитель будущий пароль не выбирает: подать заявку на чужой номер может кто угодно,
+    и одобрение по правдоподобному комментарию отдавало бы ему аккаунт. При одобрении
+    сервер выдаёт временный пароль, администратор сообщает его владельцу по проверенному
+    каналу, а при первом входе пароль приходится сменить."""
 
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -33,11 +38,6 @@ class PasswordResetRequestService:
     # --- Заявитель (без авторизации — он не может войти, в этом и проблема) ---
 
     async def submit(self, data: PasswordResetRequestCreateIn) -> PasswordResetRequestOut:
-        from app.core.security import hash_password_async
-
-        # Хеш считается всегда, до проверок: время ответа не должно выдавать, что номер есть
-        hashed_password = await hash_password_async(data.new_password)
-
         # Эндпоинт открыт без авторизации, поэтому ответ один и тот же для любого номера:
         # иначе по нему можно перебирать телефоны зарегистрированных людей. Заявка, если
         # пользователя нет или заявка уже ждёт решения, просто не заводится
@@ -53,11 +53,7 @@ class PasswordResetRequestService:
                 created_at=datetime.now(timezone.utc),
             )
 
-        req = await self.repo.create(
-            user_id=user.id,
-            hashed_password=hashed_password,
-            user_comment=data.user_comment,
-        )
+        req = await self.repo.create(user_id=user.id, user_comment=data.user_comment)
         self.audit.log(
             "password_reset_request.create", "password_reset_request", req.id, user.id, "user", {},
         )
@@ -100,12 +96,12 @@ class PasswordResetRequestService:
         ]
         return make_page(items, total, page, size)
 
-    # Одобрение применяет пароль, предложенный заявителем при подаче заявки,
-    # и отзывает все текущие сессии — та же гигиена, что у самостоятельного
-    # сброса (AuthService.password_reset_complete)
+    # Одобрение выдаёт временный пароль и отзывает все текущие сессии. Пароль
+    # возвращается администратору один раз (в базе только хеш) и требует смены
+    # при первом входе
     async def approve(
         self, request_id: int, admin_response: str | None, admin_id: int, actor_role: str
-    ) -> None:
+    ) -> str:
         req = await self.repo.get_by_id(request_id)
         if req is None:
             raise NotFoundError("Заявка не найдена")
@@ -115,7 +111,11 @@ class PasswordResetRequestService:
         if user is None:
             raise NotFoundError("Пользователь не найден")
 
-        user.hashed_password = req.hashed_password
+        from app.core.security import generate_temporary_password, hash_password_async
+
+        temporary_password = generate_temporary_password()
+        user.hashed_password = await hash_password_async(temporary_password)
+        user.must_change_password = True
 
         from app.repositories.auth import RefreshTokenRepository
         await RefreshTokenRepository(self.session).revoke_all_for_user(user.id)
@@ -132,10 +132,12 @@ class PasswordResetRequestService:
         await NotificationService(self.session).send(
             user_id=req.user_id,
             type_="request_status",
-            title="Пароль изменён",
-            body="Ваш пароль сброшен администратором — используйте новый пароль для входа",
+            title="Пароль сброшен",
+            body="Администратор сбросил пароль. Временный пароль он сообщит вам лично, "
+                 "после входа его нужно сменить",
             data={"type": "password_reset", "request_id": str(request_id)},
         )
+        return temporary_password
 
     async def reject(
         self, request_id: int, data: RejectRequestIn, admin_id: int, actor_role: str

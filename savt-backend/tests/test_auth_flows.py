@@ -384,7 +384,7 @@ async def _own_stuff(db_session, user):
         Notification(user_id=user.id, type="chat_message", title="Привет", body="текст"),
         NotificationSettings(user_id=user.id),
         UserFavorite(user_id=user.id, entity_type="document", entity_id=1),
-        PasswordResetRequest(user_id=user.id, hashed_password="hash-of-new-password"),
+        PasswordResetRequest(user_id=user.id),
     ])
     await _link(db_session, user)
     await _code(db_session, user.phone, PURPOSE_PASSWORD_RESET)
@@ -610,9 +610,7 @@ async def _submit_both(db_session, phone):
         phone=phone, password="password8", password_confirm="password8",
         full_name="Иванов Иван", user_type="individual",
     ))
-    reset = await PasswordResetRequestService(db_session).submit(PasswordResetRequestCreateIn(
-        phone=phone, new_password="password9", new_password_confirm="password9",
-    ))
+    reset = await PasswordResetRequestService(db_session).submit(PasswordResetRequestCreateIn(phone=phone))
     return registered, reset
 
 
@@ -639,9 +637,9 @@ async def test_public_requests_answer_the_same_for_any_phone(db_session):
     assert len(resets) == 1
 
 
-async def test_password_is_hashed_even_when_nothing_is_created(db_session, monkeypatch):
-    """Хеш считается до проверок — время ответа не выдаёт, занят номер или нет."""
-    from app.services import password_reset_request_service, registration_request_service  # noqa: F401
+async def test_registration_password_is_hashed_even_when_nothing_is_created(db_session, monkeypatch):
+    """Хеш считается до проверок — время ответа не выдаёт, занят номер или нет. В заявке на
+    сброс пароля хешировать нечего: пароля в ней нет."""
     from app.core import security
 
     calls = []
@@ -656,8 +654,7 @@ async def test_password_is_hashed_even_when_nothing_is_created(db_session, monke
     await _submit_both(db_session, "+375291111111")      # заявка не создаётся
     await _submit_both(db_session, "+375293333333")      # заявка регистрации создаётся
 
-    assert calls.count("password8") == 2   # регистрация: известный и новый номер
-    assert calls.count("password9") == 2   # сброс: известный и неизвестный номер
+    assert calls == ["password8", "password8"]
 
 
 @pytest.mark.parametrize("entry", ["login", "admin_login"])

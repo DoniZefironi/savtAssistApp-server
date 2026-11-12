@@ -18,12 +18,8 @@ class PasswordResetRequestRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def create(
-        self, user_id: int, hashed_password: str, user_comment: str | None
-    ) -> PasswordResetRequest:
-        obj = PasswordResetRequest(
-            user_id=user_id, hashed_password=hashed_password, user_comment=user_comment,
-        )
+    async def create(self, user_id: int, user_comment: str | None) -> PasswordResetRequest:
+        obj = PasswordResetRequest(user_id=user_id, user_comment=user_comment)
         self.session.add(obj)
         await self.session.flush()
         return obj

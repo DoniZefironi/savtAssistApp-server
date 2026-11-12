@@ -169,6 +169,8 @@ class UserMeOut(BaseModel):
     role: str
     is_phone_verified: bool
     is_verified: bool
+    # пароль временный: до смены (POST /auth/password-change) остальные запросы отвечают 403
+    must_change_password: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -356,10 +358,11 @@ class AdminPhoneChangeRequestOut(PhoneChangeRequestOut):
 # самостоятельный сброс (PasswordResetStartIn, только channel=telegram)
 # недоступен. Идентифицируется по телефону — заявитель ещё не залогинен
 # (забыл пароль), поэтому эндпоинт подачи без авторизации.
+# Пароля в заявке нет: подать её может кто угодно на любой номер, поэтому будущий пароль
+# заявитель не выбирает. Поля new_password/new_password_confirm от прежних версий
+# приложения просто игнорируются
 class PasswordResetRequestCreateIn(BaseModel):
     phone: str = Field(..., max_length=32)
-    new_password: str = Field(..., min_length=8, max_length=100)
-    new_password_confirm: str = Field(..., min_length=8, max_length=100)
     user_comment: str | None = Field(None, min_length=1, max_length=1000)
 
     @field_validator("phone")
@@ -367,17 +370,17 @@ class PasswordResetRequestCreateIn(BaseModel):
     def validate_phone(cls, v: str) -> str:
         return _normalize_phone(v)
 
-    @model_validator(mode='after')
-    def validate_passwords_match(self) -> 'PasswordResetRequestCreateIn':
-        if self.new_password != self.new_password_confirm:
-            raise ValueError('Пароли не совпадают')
-        return self
-
 
 class PasswordResetRequestOut(BaseModel):
     id: int
     status: str
     created_at: datetime
+
+
+# Ответ на одобрение заявки: временный пароль показывается администратору один раз, в базе
+# хранится только его хеш
+class PasswordResetApprovedOut(BaseModel):
+    temporary_password: str
 
 
 class AdminPasswordResetRequestOut(BaseModel):

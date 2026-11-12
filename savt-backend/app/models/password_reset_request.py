@@ -11,13 +11,12 @@ class PasswordResetRequest(Base):
     недоступен в принципе. Та же логика, что у PhoneChangeRequest: система не
     может подтвердить, что заявку подаёт владелец аккаунта — это делает вручную
     администратор вне приложения (например, звонком), одобрение здесь лишь
-    фиксирует его решение."""
+    фиксирует его решение. Пароля в заявке нет: при одобрении сервер сам выдаёт временный,
+    и администратор передаёт его владельцу аккаунта по проверенному каналу."""
     __tablename__ = "password_reset_requests"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    # новый пароль, предложенный заявителем — применяется как есть при одобрении
-    hashed_password: Mapped[str] = mapped_column(String(255))
     # обоснование от пользователя (потерял Telegram, сменил телефон и т.п.)
     user_comment: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(20), server_default="pending", index=True)

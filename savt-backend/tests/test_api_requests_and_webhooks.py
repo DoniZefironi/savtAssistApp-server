@@ -93,9 +93,10 @@ async def test_registration_request_is_decided_by_staff(api, staff):
 async def test_password_reset_request_is_decided_by_staff(api, staff, make_user):
     client = await make_user(phone=PHONE, password="oldpass88")
     other = await make_user(phone=PHONE_2, password="oldpass88")
+    # пароль в заявке не передаётся; поля прежних версий приложения игнорируются
     body = {"new_password": "newpass99", "new_password_confirm": "newpass99"}
 
-    first = await api.post("/auth/password-reset/request", json={"phone": PHONE, **body, "user_comment": "Потерял Telegram"})
+    first = await api.post("/auth/password-reset/request", json={"phone": PHONE, "user_comment": "Потерял Telegram"})
     second = await api.post("/auth/password-reset/request", json={"phone": PHONE_2, **body})
     unknown = await api.post("/auth/password-reset/request", json={"phone": "+375299999999", **body})
     # неизвестный номер отвечает так же, как известный: по ответу нельзя перебирать телефоны
@@ -103,11 +104,39 @@ async def test_password_reset_request_is_decided_by_staff(api, staff, make_user)
 
     listed = (await api.get("/admin/password-reset-requests", headers=staff.o)).json()
     assert {r["user_id"] for r in listed["items"]} >= {client.id, other.id}
-    assert (await api.post(f"/admin/password-reset-requests/{first.json()['id']}/approve", headers=staff.o,
-                           json={"admin_response": "Проверили"})).status_code == 204
+    approved = await api.post(f"/admin/password-reset-requests/{first.json()['id']}/approve", headers=staff.o,
+                              json={"admin_response": "Проверили"})
+    assert approved.status_code == 200
+    temporary = approved.json()["temporary_password"]
     assert (await api.post(f"/admin/password-reset-requests/{second.json()['id']}/reject", headers=staff.o,
                            json={"admin_response": "Не подтвердили"})).status_code == 204
-    assert (await api.post("/auth/login", json={"phone": PHONE, "password": "newpass99"})).status_code == 200
+
+    # пароль из заявки не применился, старый не работает, вход — только по временному
+    for wrong in ("newpass99", "oldpass88"):
+        assert (await api.post("/auth/login", json={"phone": PHONE, "password": wrong})).status_code == 401
+    login = await api.post("/auth/login", json={"phone": PHONE, "password": temporary})
+    assert login.status_code == 200
+    bearer = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    # с временным паролем доступны только профиль и смена пароля
+    me = await api.get("/auth/me", headers=bearer)
+    assert me.status_code == 200 and me.json()["must_change_password"] is True
+    for method, path in (("GET", "/chats"), ("PATCH", "/auth/me"), ("DELETE", "/auth/me"), ("GET", "/kb/articles")):
+        blocked = await api.request(method, path, headers=bearer, json={} if method == "PATCH" else None)
+        assert blocked.status_code == 403 and "смена пароля" in blocked.json()["detail"], (method, path)
+
+    changed = await api.post("/auth/password-change", headers=bearer, json={
+        "password": temporary, "new_password": "ownpass777", "new_password_confirm": "ownpass777",
+    })
+    assert changed.status_code == 200
+    login = await api.post("/auth/login", json={"phone": PHONE, "password": "ownpass777"})
+    bearer = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    assert (await api.get("/auth/me", headers=bearer)).json()["must_change_password"] is False
+    assert (await api.get("/chats", headers=bearer)).status_code == 200
+
+    # второй пользователь (заявка отклонена) ничем не ограничен
+    other_login = await api.post("/auth/login", json={"phone": PHONE_2, "password": "oldpass88"})
+    assert other_login.status_code == 200
 
 
 async def test_password_reset_by_code_endpoints_do_not_leak(api, make_user):

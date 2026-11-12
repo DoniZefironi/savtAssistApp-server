@@ -120,8 +120,8 @@ async def test_phone_change_search_by_status_and_new_phone(db_session, make_user
 async def test_password_reset_search_by_name_and_status(db_session, make_user):
     a = await make_user(full_name="Сидоров Семён", phone="+375290000011")
     b = await make_user(full_name="Петров Пётр", phone="+375290000012")
-    req_a = PasswordResetRequest(user_id=a.id, hashed_password="x", status="pending")
-    req_b = PasswordResetRequest(user_id=b.id, hashed_password="x", status="approved")
+    req_a = PasswordResetRequest(user_id=a.id, status="pending")
+    req_b = PasswordResetRequest(user_id=b.id, status="approved")
     db_session.add_all([req_a, req_b])
     await db_session.flush()
     repo = PasswordResetRequestRepository(db_session)
