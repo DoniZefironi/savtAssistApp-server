@@ -377,7 +377,7 @@ def test_firebase_initialization(monkeypatch, tmp_path):
 
 # --- привязки мессенджера ---
 
-async def test_messenger_links_upsert_and_delete(db_session, make_user):
+async def test_messenger_links_upsert(db_session, make_user):
     user = await make_user()
     repo = MessengerLinkRepository(db_session)
 
@@ -385,7 +385,3 @@ async def test_messenger_links_upsert_and_delete(db_session, make_user):
     again = await repo.upsert(user.id, "telegram", "200")
     assert first.id == again.id and again.external_chat_id == "200"
     assert (await repo.find_by_chat("telegram", "200")).user_id == user.id
-
-    await repo.delete_by_user_and_channel(user.id, "telegram")
-    await repo.delete_by_user_and_channel(user.id, "telegram")       # повторно — не ошибка
-    assert await repo.find_by_chat("telegram", "200") is None

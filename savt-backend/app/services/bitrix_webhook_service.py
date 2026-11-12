@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from app.config import settings
 from app.database import AsyncSessionLocal
 from app.schemas.chat import MessageCreateIn
+from app.utils.log_safe import form_keys
 
 _log = logging.getLogger(__name__)
 
@@ -98,7 +99,7 @@ async def handle_task_comment_webhook(form: dict) -> None:
     message_id = _extract(form, "[message_id]")
 
     if not task_id or not message_id:
-        _log.info("Bitrix webhook: не удалось извлечь task_id/message_id из payload: %s", form)
+        _log.info("Bitrix webhook: не удалось извлечь task_id/message_id, поля формы: %s", form_keys(form))
         return
 
     from app.services import bitrix_service
@@ -149,7 +150,7 @@ async def handle_task_comment_webhook(form: dict) -> None:
             await ChatService(session).send_message(
                 chat.id, bitrix_user_id, MessageCreateIn(text=message_text), sync_to_bitrix=False,
             )
-            _log.info("Bitrix webhook: сообщение переслано в чат %s заявки %s: %s", chat.id, req.id, message_text)
+            _log.info("Bitrix webhook: сообщение переслано в чат %s заявки %s (%s симв.)", chat.id, req.id, len(message_text or ""))
         except Exception:
             # Например, чат уже архивирован (заявка закрыта) — комментарий в Bitrix
             # продолжили писать уже после закрытия. Просто не пересылаем, не роняем вебхук.
@@ -164,7 +165,7 @@ async def handle_task_update_webhook(form: dict) -> None:
     (sync_single_task_status) — мгновенная реакция вместо ожидания планового опроса."""
     task_id = _extract(form, "[id]")
     if not task_id:
-        _log.info("Bitrix task webhook: не удалось извлечь id задачи из payload: %s", form)
+        _log.info("Bitrix task webhook: не удалось извлечь id задачи, поля формы: %s", form_keys(form))
         return
 
     from app.services.service_request_service import sync_single_task_status
@@ -330,7 +331,7 @@ async def handle_deal_event(form: dict) -> None:
     сама сделка дотягивается запросом (get_deal), дальше см. upsert_project_from_deal."""
     deal_id = _extract(form, "[id]")
     if not deal_id:
-        _log.info("Bitrix deal webhook: не удалось извлечь ID сделки из payload: %s", form)
+        _log.info("Bitrix deal webhook: не удалось извлечь ID сделки, поля формы: %s", form_keys(form))
         return
 
     from app.services import bitrix_service
@@ -363,7 +364,7 @@ async def handle_reclamation_webhook(form: dict) -> None:
 
     item_id = _extract(form, "[id]")
     if not item_id:
-        _log.info("Reclamation webhook: не удалось извлечь id элемента из payload: %s", form)
+        _log.info("Reclamation webhook: не удалось извлечь id элемента, поля формы: %s", form_keys(form))
         return
 
     _log.info("Reclamation webhook: применяю элемент id=%s", item_id)
@@ -385,7 +386,7 @@ async def handle_reclamation_delete_webhook(form: dict) -> None:
 
     item_id = _extract(form, "[id]")
     if not item_id:
-        _log.info("Reclamation delete webhook: не удалось извлечь id элемента: %s", form)
+        _log.info("Reclamation delete webhook: не удалось извлечь id элемента, поля формы: %s", form_keys(form))
         return
 
     _log.info("Reclamation delete webhook: элемент id=%s удалён", item_id)

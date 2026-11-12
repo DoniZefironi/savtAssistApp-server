@@ -49,9 +49,3 @@ class MessengerLinkRepository:
         self.session.add(obj)
         await self.session.flush()
         return obj
-
-    async def delete_by_user_and_channel(self, user_id: int, channel: str) -> None:
-        existing = await self.find_by_user_and_channel(user_id, channel)
-        if existing is not None:
-            await self.session.delete(existing)
-            await self.session.flush()

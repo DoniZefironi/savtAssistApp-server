@@ -2,6 +2,8 @@ import logging
 
 import phonenumbers
 
+from app.utils.log_safe import mask_phone, telegram_update_summary
+
 _log = logging.getLogger(__name__)
 
 
@@ -33,7 +35,7 @@ async def handle_telegram_update(payload: dict) -> None:
     message = payload.get("message") or {}
     chat_id = (message.get("chat") or {}).get("id")
     if chat_id is None:
-        _log.info("Telegram webhook: нет chat_id, payload: %s", payload)
+        _log.info("Telegram webhook: нет chat_id (%s)", telegram_update_summary(payload))
         return
 
     contact = message.get("contact")
@@ -43,12 +45,12 @@ async def handle_telegram_update(payload: dict) -> None:
 
     text = (message.get("text") or "").strip()
     if not text.startswith("/start"):
-        _log.info("Telegram webhook: не /start и не контакт, payload: %s", payload)
+        _log.info("Telegram webhook: не /start и не контакт (%s)", telegram_update_summary(payload))
         return
 
     parts = text.split(maxsplit=1)
     if len(parts) < 2:
-        _log.info("Telegram webhook: /start без токена, payload: %s", payload)
+        _log.info("Telegram webhook: /start без токена (%s)", telegram_update_summary(payload))
         return
 
     await _begin_link(parts[1].strip(), str(chat_id))
@@ -113,7 +115,7 @@ def _sender_phone_or_rejection(message: dict, contact: dict) -> tuple[str | None
 
     phone = _normalize_phone(contact.get("phone_number"))
     if phone is None:
-        _log.warning("Telegram webhook: не удалось разобрать номер %s", contact.get("phone_number"))
+        _log.warning("Telegram webhook: не удалось разобрать номер %s", mask_phone(contact.get("phone_number")))
         return None, ("bad_phone", "Не удалось разобрать ваш номер. Обратитесь в поддержку.")
     return phone, None
 
@@ -149,7 +151,7 @@ async def _account_conflict(session, external_chat_id: str, phone: str):
 
     existing = await user_repo.find_by_phone(phone)
     if existing is not None and existing.is_phone_verified:
-        _log.info("Telegram webhook: номер %s уже зарегистрирован", phone)
+        _log.info("Telegram webhook: номер %s уже зарегистрирован", mask_phone(phone))
         return None, (
             "phone_already_registered",
             f"Номер {phone} уже зарегистрирован. Войдите в приложение по этому "

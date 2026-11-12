@@ -85,6 +85,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 # logging.getLogger("sqlalchemy.engine.Engine") - получает тот логгер, в который пишет sqlalchemy
 # .propagate = False - запрещает этому логгеру передавать записи в корневой логгер
 logging.getLogger("sqlalchemy.engine.Engine").propagate = False
+# httpx на уровне INFO пишет полный адрес каждого исходящего запроса, а в адресах Telegram
+# и Bitrix зашиты секреты (токен бота, ключ вебхука). Ошибки запросов пишут сами сервисы
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 # создание логгера
 logger = logging.getLogger(__name__)
 

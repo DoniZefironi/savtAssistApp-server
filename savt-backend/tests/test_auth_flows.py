@@ -601,6 +601,24 @@ async def test_password_reset_start_hides_a_failed_delivery(auth, db_session, te
     assert await auth.password_reset_start(PHONE, "telegram") == (60, None)
 
 
+async def test_a_failed_delivery_keeps_the_telegram_link(auth, db_session, telegram):
+    """Связка заводится только при регистрации: удалённую восстановить негде, и человек
+    навсегда остался бы без сброса пароля через Telegram из-за одного сетевого сбоя."""
+    user = await _user(db_session, verified=True)
+    await _link(db_session, user)
+    telegram.fail = True
+
+    with pytest.raises(messenger_service.MessengerSendError):
+        await auth.deliver_code_after_link(user.id, PHONE, PURPOSE_PASSWORD_RESET, "telegram", "9001")
+    links = (await db_session.execute(select(MessengerLink).where(MessengerLink.user_id == user.id))).scalars().all()
+    assert [link.external_chat_id for link in links] == ["9001"]
+
+    # сбой прошёл — код доходит по той же связке
+    telegram.fail = False
+    await auth.deliver_code_after_link(user.id, PHONE, PURPOSE_PASSWORD_RESET, "telegram", "9001")
+    assert [chat for chat, _ in telegram.codes] == ["9001"]
+
+
 async def _submit_both(db_session, phone):
     from app.schemas.auth import PasswordResetRequestCreateIn, RegistrationRequestCreateIn
     from app.services.password_reset_request_service import PasswordResetRequestService

@@ -558,11 +558,8 @@ class AuthService:
             expires_at=expires_at,
             max_attempts=settings.sms_code_max_attempts,
         )
-        try:
-            await messenger_service.send_verification_code(channel, external_chat_id, code)
-        except messenger_service.MessengerSendError:
-            # Бот заблокирован/чат недоступен — чистим связку, чтобы следующий
-            # запрос кода заново запустил рукопожатие, а не бился в ту же стену
-            await self.messenger_link_repo.delete_by_user_and_channel(user_id, channel)
-            raise
+        # Сбой отправки (MessengerSendError) уходит наверх как есть, связка с ботом при этом
+        # остаётся: заводится она только при регистрации, восстановить её потом негде, а сбой
+        # бывает и обычным сетевым. Код без коммита не сохраняется
+        await messenger_service.send_verification_code(channel, external_chat_id, code)
         await self.session.commit()
