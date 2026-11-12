@@ -586,7 +586,8 @@ class ChatService:
         msg.text = text
         msg.edited_at = datetime.now(timezone.utc)
         await self.session.commit()
-        result = await self._build_message_out(msg, None)
+        # Править можно только своё сообщение, так что отправитель — сам редактирующий
+        result = await self._build_message_out(msg, await self._get_user(user_id))
         await publish_message_updated(chat_id, result.model_dump(mode="json"))
         return result
 
@@ -728,6 +729,9 @@ class ChatService:
         chat.bot_active = False
         chat.operator_requested = False
         await self.session.commit()
+        # У остальных операторов и у владельца чата плашка «ожидает оператора» и признак
+        # «отвечает бот» обновляются по этому событию, без него — только после перезагрузки
+        await publish_chat_updated(chat_id, chat_summary_dict(chat))
 
     async def operator_return_to_bot(self, chat_id: int) -> None:
         chat = await self.chat_repo.get_by_id(chat_id)
@@ -749,6 +753,7 @@ class ChatService:
         chat.operator_insist_count = 0
         chat.bot_down_intake_step = 0
         await self.session.commit()
+        await publish_chat_updated(chat_id, chat_summary_dict(chat))
 
     async def get_chat_attachments(
         self, chat_id: int, user_id: int, attachment_type: str | None = None

@@ -101,6 +101,10 @@ async def test_edit_message(svc, events, make_user, make_chat, add_message):
 
     assert out.text == "Новый" and out.edited_at is not None
     assert [e[0] for e in events] == ["publish_message_updated"]
+    # имя отправителя есть и в ответе, и в событии: иначе у собеседника подпись
+    # сообщения пропадала до перезагрузки чата
+    assert user.full_name and out.sender_name == user.full_name
+    assert user.full_name in str(events[0])
 
 
 async def test_edit_message_restrictions(svc, make_user, make_chat, add_message):
@@ -594,12 +598,15 @@ async def test_operator_delete_and_clear(svc, db_session, cleanups, make_user, m
 
 # --- бот и оператор ---
 
-async def test_operator_takes_chat_and_returns_it_to_bot(svc, make_user, make_chat):
+async def test_operator_takes_chat_and_returns_it_to_bot(svc, events, make_user, make_chat):
     user = await make_user()
     chat = await make_chat(user, "support", operator_requested=True)
 
     await svc.operator_take_chat(chat.id)
     assert chat.bot_active is False and chat.operator_requested is False
+    # остальные операторы и владелец чата узнают об этом по событию, а не после перезагрузки
+    assert [e[0] for e in events] == ["publish_chat_updated"]
+    assert "'bot_active': False" in str(events[-1]) and "'operator_requested': False" in str(events[-1])
 
     chat.bot_offered_operator, chat.operator_insist_count, chat.bot_no_count = True, 3, 2
     chat.bot_down_intake_step = 1
@@ -608,6 +615,7 @@ async def test_operator_takes_chat_and_returns_it_to_bot(svc, make_user, make_ch
     assert chat.bot_active is True
     assert (chat.bot_no_count, chat.operator_insist_count, chat.bot_down_intake_step) == (0, 0, 0)
     assert chat.bot_offered_operator is False and chat.operator_requested is False
+    assert [e[0] for e in events] == ["publish_chat_updated"] * 2 and "'bot_active': True" in str(events[-1])
     for call in (svc.operator_take_chat, svc.operator_return_to_bot):
         with pytest.raises(NotFoundError):
             await call(999999)
