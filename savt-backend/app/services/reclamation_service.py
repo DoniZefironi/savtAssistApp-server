@@ -328,9 +328,9 @@ def _sync_to_bitrix(
             )
 
             try:
-                from app.core.signed_urls import sign_url
+                from app.core.signed_urls import sign_url_long
                 item_id = await bitrix_service.create_reclamation_item(
-                    description, None, None, sign_url(attachment_url), None,
+                    description, None, None, sign_url_long(attachment_url), None,
                     object_serial_number, contract_info, component_info,
                 )
                 if not item_id:
@@ -659,7 +659,7 @@ async def _outbox_item_id(session, row) -> tuple[Reclamation | None, str]:
 
 
 async def _retry_create(session, row) -> None:
-    from app.core.signed_urls import sign_url
+    from app.core.signed_urls import sign_url_long
     from app.services import bitrix_service
 
     rec = await session.get(Reclamation, row.reclamation_id)
@@ -670,7 +670,7 @@ async def _retry_create(session, row) -> None:
     payload = row.payload
     item_id = await bitrix_service.create_reclamation_item(
         payload["description"], payload.get("deal_id"),
-        payload.get("company_id"), sign_url(payload.get("attachment_url")),
+        payload.get("company_id"), sign_url_long(payload.get("attachment_url")),
         payload.get("project_name"), payload.get("object_serial_number"),
         payload.get("contract_info"), payload.get("component_info"),
     )
@@ -680,13 +680,13 @@ async def _retry_create(session, row) -> None:
 
 
 async def _retry_status(session, row) -> None:
-    from app.core.signed_urls import sign_url
+    from app.core.signed_urls import sign_url_long
     from app.services import bitrix_service
 
     rec, bitrix_item_id = await _outbox_item_id(session, row)
     saved_deadline = row.payload.get("deadline")
     pushed_stage = await bitrix_service.update_reclamation_stage(
-        bitrix_item_id, row.payload["status"], sign_url(row.payload.get("confirmation_file_url")),
+        bitrix_item_id, row.payload["status"], sign_url_long(row.payload.get("confirmation_file_url")),
         date.fromisoformat(saved_deadline) if saved_deadline else None,
     )
     if pushed_stage:

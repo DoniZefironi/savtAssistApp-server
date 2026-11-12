@@ -203,3 +203,34 @@ async def test_background_cycle_replays_every_row(db_session, make_reclamation, 
     assert len(_calls(mock_bitrix, "add_reclamation_comment")) == 1
     assert len(_calls(mock_bitrix, "update_reclamation_assignee")) == 1
     assert await _rows(db_session, first) == [] and await _rows(db_session, second) == []
+
+
+# --- ссылки на файлы в Bitrix живут долго ---
+
+def _expires_in_years(url):
+    import time
+    from urllib.parse import parse_qs, urlsplit
+
+    return (int(parse_qs(urlsplit(url).query)["expires"][0]) - time.time()) / (365 * 86400)
+
+
+async def test_links_sent_to_bitrix_are_long_lived(db_session, make_reclamation, mock_bitrix, monkeypatch):
+    """Ссылку в карточке Bitrix уже не обновить, а к карточке возвращаются и через год —
+    суточная подпись, как в ответах API, там бесполезна."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "static_link_secret", "s" * 40)
+    rec = await make_reclamation()
+    row = await _row(db_session, rec, "create", {
+        "description": "Не работает кнопка", "attachment_url": "/static/reclamations/a.jpg",
+    })
+    assert await _retry(db_session, row) is True
+    [(args, _)] = _calls(mock_bitrix, "create_reclamation_item")
+    assert args[3].startswith("/static/reclamations/a.jpg?md5=") and _expires_in_years(args[3]) > 4
+
+    row = await _row(db_session, rec, "status", {
+        "status": "resolved", "confirmation_file_url": "/static/reclamations/act.pdf",
+    })
+    assert await _retry(db_session, row) is True
+    [(args, _)] = _calls(mock_bitrix, "update_reclamation_stage")
+    assert args[2].startswith("/static/reclamations/act.pdf?md5=") and _expires_in_years(args[2]) > 4

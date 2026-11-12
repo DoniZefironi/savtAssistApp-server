@@ -27,7 +27,9 @@ class Settings(BaseSettings):
 
     static_link_ttl_seconds: int = 86400
 
-    static_link_external_ttl_seconds: int = 7776000
+    # ссылки в Bitrix (комментарии задач, карточки рекламаций): их там не обновить, а к
+    # задаче возвращаются и через год — поэтому 5 лет
+    static_link_external_ttl_seconds: int = 157680000
 
     cors_origins: str = "*"
 

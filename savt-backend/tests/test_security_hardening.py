@@ -141,6 +141,8 @@ def test_only_signatures_issued_by_us_are_genuine(monkeypatch):
 
     assert was_issued(sign_url(path))
     assert was_issued(sign_url(path, ttl_seconds=-3600))             # срок вышел, но ссылку выдали мы
+    assert was_issued(sign_url(path, ttl_seconds=-29 * 86400))       # ещё в пределах запаса
+    assert not was_issued(sign_url(path, ttl_seconds=-31 * 86400))   # слишком старая: вечно не обновляется
     assert not was_issued(path)                                      # без подписи
     assert not was_issued(None) and not was_issued("")
     assert not was_issued(sign_url("/static/documents/b.pdf").replace("b.pdf", "a.pdf"))   # подпись от другого файла

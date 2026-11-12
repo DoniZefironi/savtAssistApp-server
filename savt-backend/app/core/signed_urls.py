@@ -29,6 +29,9 @@ _log = logging.getLogger(__name__)
 
 STATIC_PREFIX = "/static/"
 
+# Сколько после истечения срока ссылку ещё можно вернуть серверу как вложение (см. was_issued)
+RETURN_GRACE_SECONDS = 30 * 24 * 3600
+
 
 def strip_signature(url: str | None) -> str | None:
     """Возвращает голый путь без query-параметров подписи.
@@ -107,11 +110,15 @@ def verify_signature(url: str | None) -> bool:
 
 
 def was_issued(url: str | None) -> bool:
-    """Подпись настоящая, то есть эту ссылку выдали мы. Срок действия не смотрится: клиент
-    вправе вернуть ссылку позже, например отправить сообщение из оффлайн-очереди через несколько
-    суток после загрузки файла. Нужна на входе: подпись снимается (strip_signature), и без этой
-    проверки в сообщение можно было бы вписать любой /static/-путь, а сервер подписал бы его в
-    ответе, выдав ссылку на чужой файл тому, кто знает или угадал его имя."""
+    """Подпись настоящая, то есть эту ссылку выдали мы, и срок её действия истёк не раньше
+    чем RETURN_GRACE_SECONDS назад. Запас нужен, потому что клиент вправе вернуть ссылку
+    позже: например, отправить сообщение из оффлайн-очереди через несколько суток после
+    загрузки файла. Без предела любая когда-либо выданная ссылка обновлялась бы вечно:
+    достаточно приложить её к своему сообщению, и сервер подпишет её заново.
+
+    Нужна на входе: подпись снимается (strip_signature), и без этой проверки в сообщение
+    можно было бы вписать любой /static/-путь, а сервер подписал бы его в ответе, выдав
+    ссылку на чужой файл тому, кто знает или угадал его имя."""
     secret = settings.static_link_secret
     if not secret:
         return True
@@ -124,6 +131,8 @@ def was_issued(url: str | None) -> bool:
     try:
         expires = int(expires_param)
     except ValueError:
+        return False
+    if expires + RETURN_GRACE_SECONDS < int(time.time()):
         return False
     return hmac.compare_digest(md5_param, _expected_signature(expires, parsed.path, secret))
 
@@ -139,7 +148,8 @@ def accept_issued_url(url: str | None) -> str | None:
 
 def sign_url_long(url: str | None) -> str | None:
     """Подпись с увеличенным сроком — для ссылок, уходящих во внешние системы
-    (комментарии Bitrix-задач), где их открывают спустя дни после отправки."""
+    (комментарии Bitrix-задач, карточки рекламаций): там ссылку уже не обновить, а
+    открывают её и спустя год."""
     return sign_url(url, ttl_seconds=settings.static_link_external_ttl_seconds)
 
 
