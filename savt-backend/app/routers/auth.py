@@ -11,6 +11,7 @@ from app.schemas.auth import (
     GuestTokenOut,
     LoginIn,
     LogoutIn,
+    DeleteAccountIn,
     PasswordChange,
     PasswordResetCompleteIn,
     PasswordResetRequestCreateIn,
@@ -333,13 +334,18 @@ async def delete_email(
         organization_name=user.organization_name,
     )
 
-# Удаление аккаунта
+# Удаление аккаунта. Требует текущий пароль: действие необратимо, а токен может оказаться
+# в чужих руках (разблокированный телефон, утечка). Лимит — чтобы через этот запрос
+# нельзя было подбирать пароль
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("5/minute")
 async def delete_account(
+    request: Request,
+    payload: DeleteAccountIn,
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    await AuthService(session).delete_account(current_user)
+    await AuthService(session).delete_account(current_user, payload.password)
 
 # Смена номера телефона — заявка администратору.
 #

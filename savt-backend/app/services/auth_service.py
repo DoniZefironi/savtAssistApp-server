@@ -306,10 +306,12 @@ class AuthService:
     # Удаление аккаунта — анонимизация, см. app/services/account_deletion.py.
     # Сотрудников это не касается: их учётки удаляет администратор, а то
     # единственный суперадмин мог бы одним запросом оставить систему без владельца
-    async def delete_account(self, user: User) -> None:
+    async def delete_account(self, user: User, password: str) -> None:
         role = await self.session.get(Role, user.role_id)
         if role is not None and role.name != RoleName.USER.value:
             raise PermissionDeniedError("Учётную запись сотрудника удаляет администратор")
+        if not await verify_password_async(password, user.hashed_password):
+            raise AuthenticationError("Неверный пароль")
         from app.services.account_deletion import anonymize_user
         await anonymize_user(self.session, user)
 

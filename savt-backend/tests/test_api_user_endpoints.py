@@ -127,8 +127,15 @@ async def test_phone_change_request_lifecycle(api, person):
     assert (await api.get("/auth/change-phone/request", headers=person.headers)).json() is None
 
 
-async def test_account_deletion_closes_the_session(api, person):
-    assert (await api.delete("/auth/me", headers=person.headers)).status_code == 204
+async def test_account_deletion_needs_the_password_and_closes_the_session(api, person):
+    # без пароля и с неверным паролем аккаунт остаётся
+    assert (await api.delete("/auth/me", headers=person.headers)).status_code == 422
+    wrong = await api.request("DELETE", "/auth/me", headers=person.headers, json={"password": "wrong-password"})
+    assert wrong.status_code == 401 and wrong.json() == {"detail": "Неверный пароль"}
+    assert (await api.get("/auth/me", headers=person.headers)).status_code == 200
+
+    deleted = await api.request("DELETE", "/auth/me", headers=person.headers, json={"password": "password8"})
+    assert deleted.status_code == 204
 
     assert (await api.get("/auth/me", headers=person.headers)).status_code in (401, 403)
     assert (await api.post("/auth/login", json={"phone": PHONE_A, "password": "password8"})).status_code == 401

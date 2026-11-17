@@ -421,7 +421,7 @@ async def test_deleted_account_is_anonymized_and_personal_data_is_erased(auth, d
     chat, message = await _own_stuff(db_session, user)
     user_id = user.id
 
-    await auth.delete_account(user)
+    await auth.delete_account(user, "password8")
 
     kept = await db_session.get(User, user_id)
     assert kept is not None  # запись остаётся — на неё ссылаются заявки
@@ -454,7 +454,7 @@ async def test_service_history_survives_without_a_person(auth, db_session, make_
     await db_session.flush()
     user_id = user.id
 
-    await auth.delete_account(user)
+    await auth.delete_account(user, "password8")
 
     assert (await db_session.get(ServiceRequest, request.id)).user_id == user_id
     await db_session.refresh(reclamation)
@@ -467,7 +467,7 @@ async def test_deleted_account_cannot_sign_in_and_the_number_is_free_again(auth,
     user = await _user(db_session, verified=True)
     user_id = user.id
 
-    await auth.delete_account(user)
+    await auth.delete_account(user, "password8")
 
     with pytest.raises(AuthenticationError):
         await auth.login(PHONE, "password8", None, None)
@@ -482,7 +482,7 @@ async def test_deleted_users_are_hidden_from_the_admin_list(auth, db_session):
     from app.repositories.user import UserRepository
     user = await _user(db_session, verified=True)
     user_id = user.id
-    await auth.delete_account(user)
+    await auth.delete_account(user, "password8")
 
     items, _ = await UserRepository(db_session).admin_search(role="user")
 
@@ -495,7 +495,7 @@ async def test_staff_cannot_delete_their_own_account(auth, db_session, make_user
     staff = await make_user(role, phone=None, login=f"{role}-1")
 
     with pytest.raises(PermissionDeniedError):
-        await auth.delete_account(staff)
+        await auth.delete_account(staff, "password8")
 
     assert staff.is_active is True and staff.login == f"{role}-1"
 
@@ -693,3 +693,15 @@ async def test_login_checks_a_password_for_an_unknown_user_too(auth, monkeypatch
         else:
             await auth.admin_login("нет-такого", "whatever1", None, None)
     assert burned == ["whatever1"]
+
+
+async def test_account_is_not_deleted_without_the_right_password(auth, db_session):
+    """Одного токена мало: удаление необратимо."""
+    user = await _user(db_session, verified=True)
+    chat, _ = await _own_stuff(db_session, user)
+
+    with pytest.raises(AuthenticationError, match="Неверный пароль"):
+        await auth.delete_account(user, "wrong-password")
+
+    assert user.is_active is True and user.phone == PHONE and user.full_name == "Иванов Иван"
+    assert await db_session.get(Chat, chat.id) is not None

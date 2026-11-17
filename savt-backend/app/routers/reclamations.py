@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleName
 from app.core.dependencies import get_current_user, get_role_from_token, get_session, require_role
+from app.models.reclamation import Reclamation
 from app.models.user import User
 from app.schemas.pagination import PageOut
 from app.schemas.reclamation import (
@@ -16,6 +17,7 @@ from app.schemas.reclamation import (
     ReclamationOutboxRetryResult,
     ReclamationOutboxUpdateIn,
 )
+from app.services.creation_rate_limit import ensure_creation_allowed
 from app.services.reclamation_service import ReclamationService
 
 router = APIRouter(tags=["reclamations"])
@@ -31,8 +33,10 @@ _OBJECT_TYPE_PATTERN = "^(cabinet|line|component|software|documentation)$"
 async def create_reclamation(
     payload: ReclamationCreateIn,
     current_user: User = Depends(get_current_user),
+    role_name: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):
+    await ensure_creation_allowed(session, Reclamation, current_user.id, role_name)
     return await ReclamationService(session).create(current_user.id, payload)
 
 

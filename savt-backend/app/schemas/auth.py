@@ -402,6 +402,11 @@ class AdminPasswordResetRequestOut(BaseModel):
 
 
 # смена пароля
+# Удаление аккаунта необратимо, поэтому одного токена мало: нужен текущий пароль
+class DeleteAccountIn(BaseModel):
+    password: str = Field(..., min_length=1, max_length=100)
+
+
 class PasswordChange(BaseModel):
     password: str = Field(..., min_length=8, max_length=100)
     new_password: str = Field(..., min_length=8, max_length=100)

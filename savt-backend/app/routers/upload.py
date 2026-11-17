@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
@@ -22,6 +23,8 @@ from app.services.upload_service import (
     save_voice_with_meta,
     transcode_to_ogg_opus,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
@@ -154,7 +157,13 @@ async def transcribe_voice(
         else:
             text = await yandex_service.transcribe_voice_long(audio_bytes, format="oggopus")
     except RuntimeError as e:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
+        # Текст ошибки — ответ Яндекса или сведения о нашей настройке (какой сервис не
+        # подключён). Клиенту он не нужен, подробности остаются в логе
+        logger.warning("Распознавание речи не выполнено: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Не удалось распознать голосовое сообщение. Попробуйте позже",
+        )
     return TranscribeOut(text=text)
 
 

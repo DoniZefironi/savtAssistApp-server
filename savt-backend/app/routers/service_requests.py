@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import RoleName
 from app.core.dependencies import get_current_user, get_role_from_token, get_session, require_role
+from app.models.service_request import ServiceRequest
 from app.models.user import User
 from app.schemas.pagination import PageOut
 from app.schemas.service_requests import (
@@ -11,6 +12,7 @@ from app.schemas.service_requests import (
     ServiceRequestOut,
     ServiceRequestStatusIn,
 )
+from app.services.creation_rate_limit import ensure_creation_allowed
 from app.services.service_request_service import ServiceRequestService
 
 router = APIRouter(tags=["service requests"])
@@ -25,8 +27,10 @@ _REQUEST_TYPE_PATTERN = "^(repair|diagnostics|remote_adjustment|onsite_adjustmen
 async def create_request(
     payload: ServiceRequestCreateIn,
     current_user: User = Depends(get_current_user),
+    role_name: str = Depends(get_role_from_token),
     session: AsyncSession = Depends(get_session),
 ):
+    await ensure_creation_allowed(session, ServiceRequest, current_user.id, role_name)
     return await ServiceRequestService(session).create(current_user.id, payload)
 
 

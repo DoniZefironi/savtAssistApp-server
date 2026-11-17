@@ -440,6 +440,20 @@ async def test_transcribe_returns_the_text(api, make_user, speech):
     assert speech.short == [b"opus:raw"] and speech.long == []
 
 
+async def test_recognition_failure_does_not_expose_the_provider_error(api, make_user, speech, caplog):
+    """В тексте ошибки — ответ Яндекса и сведения о нашей настройке; клиенту это не отдаётся."""
+    speech.error = RuntimeError('Yandex STT 401: {"error_code":"UNAUTHORIZED","folder":"b1g-secret-folder"}')
+    user = await make_user()
+
+    with caplog.at_level("WARNING"):
+        response = await api.post("/upload/transcribe", headers=_auth(user),
+                                  json={"file_url": sign_url("/static/voices/v.ogg")})
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Не удалось распознать голосовое сообщение. Попробуйте позже"}
+    assert "b1g-secret-folder" in caplog.text          # причина осталась в логе
+
+
 async def test_long_recordings_use_the_long_recognition(api, make_user, speech, monkeypatch):
     monkeypatch.setattr(yandex_service, "MAX_SYNC_STT_BYTES", 3)
     user = await make_user()
@@ -494,5 +508,5 @@ async def test_recognition_failure_is_a_503_and_bad_links_are_refused(api, make_
     failed = await api.post("/upload/transcribe", headers=_auth(user), json={"file_url": sign_url("/static/voices/v.ogg")})
     unsigned = await api.post("/upload/transcribe", headers=_auth(user), json={"file_url": "/static/voices/v.ogg"})
 
-    assert failed.status_code == 503 and "SpeechKit" in failed.json()["detail"]
+    assert failed.status_code == 503 and "SpeechKit" not in failed.json()["detail"]
     assert unsigned.status_code == 403
