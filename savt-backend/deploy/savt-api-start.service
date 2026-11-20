@@ -1,0 +1,17 @@
+[Unit]
+Description=Start SAVT Assist API when the project NAS is reachable
+Wants=network-online.target docker.service
+After=network-online.target docker.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/savtAssistApp-server/savt-backend
+ExecStart=/usr/bin/python3 /usr/local/libexec/savt-api-start.py
+TimeoutStartSec=120s
+Restart=on-failure
+RestartSec=20s
+
+[Install]
+WantedBy=multi-user.target

@@ -151,6 +151,27 @@ docker exec -it savt-backend-db-1 psql -U postgres -d savt
 
 > После изменения кода на проде нужен пересбор: `docker compose build && docker compose up -d` (код копируется в образ, а не монтируется). См. выше, почему не одной командой `up -d --build`.
 
+### Автозапуск API после перезагрузки сервера
+
+Если NAS недоступен, Docker может оставить `api` в состоянии `Exited` после загрузки сервера.
+Юнит `savt-api-start.service` повторяет запуск через 20 секунд после неудачной попытки.
+Он берёт адрес NAS из конфигурации Compose, проверяет SMB на порту 445 и запускает только `api` из имеющегося образа. Успех проверяется в `http://127.0.0.1:8080/backend/health`, где API должен подтвердить связь с PostgreSQL.
+
+Установка на сервере с systemd, Docker Compose и Python 3.9 или новее:
+
+```bash
+cd /opt/savtAssistApp-server/savt-backend
+sudo install -D -m 0644 deploy/savt-api-start.py /usr/local/libexec/savt-api-start.py
+sudo install -m 0644 deploy/savt-api-start.service /etc/systemd/system/savt-api-start.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now --no-block savt-api-start.service
+systemctl status savt-api-start.service --no-pager
+journalctl -u savt-api-start.service -n 30 --no-pager
+```
+
+Если API уже здоров, проверка завершается сразу, а юнит показывает `active (exited)`.
+При проблеме с запуском см. `journalctl -u docker.service`. Ошибки CIFS в журнале Docker могут содержать пароль NAS.
+
 ### `telemetry-proxy` — отдельный .NET-сервис в этом же docker-compose
 
 Слушает MQTT-брокеры контроллеров ШУ (аварии/сообщения, карта регистров —
