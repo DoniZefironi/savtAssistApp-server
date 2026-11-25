@@ -97,6 +97,21 @@ async def test_answers_from_the_current_published_faq(api, db_session, ai):
     assert prompt == {"question": QUESTION, "materials": [f"FAQ: {QUESTION}\n{ANSWER}"]}
 
 
+async def test_phone_prompt_explains_where_to_find_app_sections(api, db_session, ai):
+    await _faq(db_session)
+    ai.complete.return_value = (
+        "В мобильном приложении Savt Assist откройте карточку вашего шкафа и перейдите в раздел «Документы»."
+    )
+
+    response = await api.post(PATH, headers=HEADERS, json={"question": QUESTION})
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "answered", "answer": ai.complete.return_value}
+    system = ai.complete.call_args.args[0]
+    assert "явно назови мобильное приложение Savt Assist" in system
+    assert "Упоминай приложение только когда ответ" in system
+
+
 @pytest.mark.parametrize("question", [
     "Как подключать шкаф?",
     "Подскажите, как правильно подключить шкаф управления к питанию",

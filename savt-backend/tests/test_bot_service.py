@@ -513,6 +513,21 @@ async def test_system_prompt_defines_the_no_answer_marker():
     assert bot_service._NO_ANSWER_MARKER in bot_service._SYSTEM_PROMPT
 
 
+async def test_chat_navigation_prompt_assumes_the_user_is_in_the_app(db_session, env, make_user, make_chat, say, bot_id):
+    user = await make_user()
+    chat = await make_chat(user, "support")
+    question = "Где найти инструкцию по подключению шкафа?"
+    env.answer = "Откройте карточку шкафа и перейдите в раздел «Документы»."
+    await say(chat, user, question)
+
+    await bot_service.handle_message(db_session, chat.id, question)
+
+    [completion] = env.completions
+    assert "Пользователь уже в чате Savt Assist." in completion.system
+    assert "без повторения названия приложения" in completion.system
+    assert await _bot_texts(db_session, chat, bot_id) == [env.answer]
+
+
 async def test_accepting_the_no_answer_offer_hands_the_chat_over(db_session, env, make_user, make_chat, say, bot_id):
     user, operator = await make_user(), await make_user("operator")
     chat = await make_chat(user, "support")
