@@ -4,7 +4,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.background import spawn
@@ -399,6 +399,7 @@ async def _extract_text(file_url: str) -> str:
 # Лимит Yandex — 10 запросов в секунду на весь аккаунт. Часть нужна боту (поиск и ответы в чатах),
 # поэтому индексация берёт около 5 в секунду
 _EMBED_PAUSE_SECONDS = 0.2
+_KB_INDEX_LOCK_NAMESPACE = 7303
 
 
 async def _release_connection(session: AsyncSession) -> None:
@@ -420,18 +421,30 @@ async def _upsert_chunks(
     # большого файла), соединение с БД свободно, а старые записи не заблокированы и при сбое
     # Yandex остаются на месте
     await _release_connection(session)
+    rows = [(chunk, meta) for chunk in chunks]
+    vectors = await _embed_chunks(rows)
+    await _replace_chunks(session, source_type, source_id, rows, vectors)
+
+
+async def _embed_chunks(rows: list[tuple[str, dict]]) -> list[list[float]]:
     vectors = []
-    for chunk in chunks:
+    for chunk, _ in rows:
         vectors.append(await yandex_service.embed_document(chunk))
         await asyncio.sleep(_EMBED_PAUSE_SECONDS)
+    return vectors
 
+
+async def _replace_chunks(
+    session: AsyncSession, source_type: str, source_id: int,
+    rows: list[tuple[str, dict]], vectors: list[list[float]],
+) -> None:
     await session.execute(
         delete(Embedding).where(
             Embedding.source_type == source_type,
             Embedding.source_id == source_id,
         )
     )
-    for i, (chunk, vector) in enumerate(zip(chunks, vectors)):
+    for i, ((chunk, meta), vector) in enumerate(zip(rows, vectors, strict=True)):
         session.add(Embedding(
             source_type=source_type,
             source_id=source_id,
@@ -450,22 +463,33 @@ async def index_faq_entry(session: AsyncSession, entry: FaqEntry) -> None:
 
 
 async def index_kb_article(session: AsyncSession, article: KbArticle) -> None:
-    parts = []
-    if article.title:
-        parts.append(article.title)
-    if article.content:
-        parts.append(article.content)
+    article_id, title, content = article.id, article.title, article.content
+    text = "\n\n".join(part for part in (title, content) if part and part.strip())
+    body_meta = {"title": title, "kb_part": "body"}
+    rows = [(chunk, body_meta) for chunk in _chunks(text)]
 
-    attachments = (await session.execute(
-        select(KbArticleAttachment).where(KbArticleAttachment.article_id == article.id)
-    )).scalars().all()
-    file_urls = [att.file_url for att in attachments]
+    attachment_stmt = select(KbArticleAttachment.id, KbArticleAttachment.file_url).where(
+        KbArticleAttachment.article_id == article_id,
+        KbArticleAttachment.requires_approval.is_(False),
+    ).order_by(KbArticleAttachment.id)
+    attachments = (await session.execute(attachment_stmt)).all()
     await _release_connection(session)
-    for file_url in file_urls:
-        parts.append(await _extract_text(file_url))
+    for attachment_id, file_url in attachments:
+        chunks = _chunks(await _extract_text(file_url))
+        if not chunks:
+            body_meta["extraction_failed"] = True
+        meta = {"title": title, "kb_part": "attachment", "attachment_id": attachment_id, "file_url": file_url}
+        rows.extend((chunk, meta) for chunk in chunks)
 
-    text = "\n\n".join(p for p in parts if p.strip())
-    await _upsert_chunks(session, "kb_article", article.id, _chunks(text), {"title": article.title})
+    vectors = await _embed_chunks(rows)
+    # Пока извлекали текст, мог завершиться более новый прогон или измениться статья.
+    await session.execute(select(func.pg_advisory_xact_lock(_KB_INDEX_LOCK_NAMESPACE, article_id)))
+    current = (await session.execute(
+        select(KbArticle.title, KbArticle.content).where(KbArticle.id == article_id)
+    )).one_or_none()
+    if current != (title, content) or (await session.execute(attachment_stmt)).all() != attachments:
+        return
+    await _replace_chunks(session, "kb_article", article_id, rows, vectors)
 
 
 async def index_document(session: AsyncSession, doc: Document) -> None:
@@ -596,12 +620,11 @@ async def reindex_all(
         rows = (await session.execute(
             select(Embedding.source_type, Embedding.source_id, Embedding.meta)
         )).all()
-        # Документы с extraction_failed=True в already НЕ попадают — иначе
-        # обычный "переиндексировать новое" (force=False) навсегда пропускал бы
-        # документ, у которого когда-то не извлёкся текст (см. index_document)
+        # Смешанный индекс КБ и материалы со сбоем извлечения пересчитываем без force.
         already = {
             (source_type, source_id) for source_type, source_id, meta in rows
-            if not (source_type == "document" and (meta or {}).get("extraction_failed"))
+            if not (meta or {}).get("extraction_failed")
+            and (source_type != "kb_article" or (meta or {}).get("kb_part") == "body")
         }
     else:
         already = set()

@@ -430,18 +430,31 @@ async def test_kb_article_text_and_readable_attachments_are_indexed(db_session, 
     created = await KbArticleService(db_session).create(
         KbArticleCreateIn(category_id=category.id, title="Запуск насоса", description="Шаг первый"))
     (fakes.root / "documents" / "scheme.jpg").write_bytes(_png())
+    scheme = KbArticleAttachment(
+        article_id=created.id, file_url="/static/documents/scheme.jpg", file_size_bytes=1,
+        doc_type="photo", mime_type="image/jpeg", title="Схема",
+    )
+    (fakes.root / "documents" / "restricted.pdf").write_bytes(_pdf_with_text("Restricted cabinet manual"))
     db_session.add_all([
-        KbArticleAttachment(article_id=created.id, file_url="/static/documents/scheme.jpg", file_size_bytes=1,
-                            doc_type="photo", mime_type="image/jpeg", title="Схема"),
+        scheme,
         KbArticleAttachment(article_id=created.id, file_url="/static/documents/gone.pdf", file_size_bytes=1,
                             doc_type="pdf", mime_type="application/pdf", title="Нет файла"),
+        KbArticleAttachment(article_id=created.id, file_url="/static/documents/restricted.pdf", file_size_bytes=1,
+                            doc_type="pdf", mime_type="application/pdf", title="Закрытый", requires_approval=True),
     ])
     await db_session.flush()
 
     await bot_indexer.index_kb_article(db_session, await db_session.get(KbArticle, created.id))
 
-    [row] = await _embeddings(db_session, "kb_article", created.id)
-    assert "Запуск насоса" in row.content and "Шаг первый" in row.content and "Текст со скана" in row.content
+    body, attachment = await _embeddings(db_session, "kb_article", created.id)
+    assert body.content == "Запуск насоса\n\nШаг первый"
+    assert body.meta == {"title": "Запуск насоса", "kb_part": "body", "extraction_failed": True}
+    assert attachment.content == "Текст со скана"
+    assert attachment.meta == {
+        "title": "Запуск насоса", "kb_part": "attachment",
+        "attachment_id": scheme.id, "file_url": scheme.file_url,
+    }
+    assert fakes.embedded == [body.content, attachment.content]
 
 
 async def test_document_indexing_variants(db_session, fakes, make_document):
@@ -500,6 +513,24 @@ async def test_old_embeddings_are_kept_when_new_ones_cannot_be_made(db_session, 
 
 
 # --- переиндексация ---
+
+async def test_reindex_replaces_legacy_kb_chunks_without_force(db_session, fakes):
+    category = await KbCategoryService(db_session).create(KbCategoryCreateIn(name="Проверка индекса"))
+    article = await KbArticleService(db_session).create(
+        KbArticleCreateIn(category_id=category.id, title="Описание", description="Текст статьи"))
+    db_session.add(Embedding(
+        source_type="kb_article", source_id=article.id, content="Смешанный чанк",
+        embedding=VECTOR, meta={"title": "Описание"},
+    ))
+    await db_session.flush()
+
+    first = await bot_indexer.reindex_all(db_session, scope="kb_article")
+    second = await bot_indexer.reindex_all(db_session, scope="kb_article")
+
+    assert first["kb_article"] == 1 and second["skipped"] == 1
+    [body] = await _embeddings(db_session, "kb_article", article.id)
+    assert body.content == "Описание\n\nТекст статьи" and body.meta["kb_part"] == "body"
+
 
 async def test_reindex_skips_what_is_done_unless_forced(db_session, fakes, make_document):
     await _faq(db_session)
