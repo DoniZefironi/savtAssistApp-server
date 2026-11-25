@@ -184,6 +184,7 @@ GET    /favorites  authenticated
 POST   /favorites  authenticated
 DELETE /favorites/{entity_type}/{entity_id}  authenticated
 GET    /health  public
+POST   /internal/telephony/answer-question  telephony_service
 POST   /internal/telephony/resolve-object  telephony_service
 GET    /kb/articles  user_or_guest
 GET    /kb/articles/{article_id}  user_or_guest

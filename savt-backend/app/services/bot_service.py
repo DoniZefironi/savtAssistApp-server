@@ -1,8 +1,7 @@
 import re
 from datetime import datetime, timedelta, timezone
 
-from pgvector.sqlalchemy import Vector
-from sqlalchemy import cast, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -12,6 +11,7 @@ from app.models.embedding import Embedding
 from app.models.message import Message
 from app.services import yandex_service
 from app.services.chat_service import chat_summary_dict
+from app.services.knowledge_search import general_knowledge_query, knowledge_query_vector
 from app.services.realtime_events import publish_chat_updated, publish_message_created
 
 _BOT_NAME = "Ася"
@@ -451,7 +451,7 @@ async def _retrieve_context(
 ) -> list[dict]:
     from sqlalchemy import or_
     from app.models.document import Document as DocumentModel
-    vec = cast(await yandex_service.embed_query(query), Vector(256))
+    vec = await knowledge_query_vector(query)
 
     # Подзапрос: ID документов с ограниченным или служебным доступом (не давать боту).
     # is_internal сюда попадает для подстраховки — сами эмбеддинги для таких
@@ -463,8 +463,7 @@ async def _retrieve_context(
 
     # Общий пул: только FAQ и KB (без документов конкретных ШУ/проектов)
     general_stmt = (
-        select(Embedding.content, Embedding.source_type, Embedding.meta)
-        .where(Embedding.source_type.in_(["faq", "kb_article"]))
+        general_knowledge_query(Embedding.content, Embedding.source_type, Embedding.meta)
         .order_by(Embedding.embedding.op("<=>")(vec))
         .limit(k)
     )

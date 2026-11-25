@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 ObjectKind = Literal["project", "cabinet"]
@@ -23,3 +23,14 @@ class ObjectMatchOut(BaseModel):
 class ResolveObjectOut(BaseModel):
     status: Literal["found", "ambiguous", "not_found"]
     match: ObjectMatchOut | None = None
+
+
+class AnswerQuestionIn(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    question: str = Field(min_length=1, max_length=2000, strict=True)
+
+
+class AnswerQuestionOut(BaseModel):
+    status: Literal["answered", "needs_operator"]
+    answer: str | None = None
