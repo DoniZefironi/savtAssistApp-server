@@ -20,6 +20,7 @@ ROLES = ["user", "operator", "admin", "superadmin"]
 PUBLIC = "public"
 USER_OR_GUEST = "user_or_guest"
 AUTHENTICATED = "authenticated"
+TELEPHONY_SERVICE = "telephony_service"
 
 
 def _walk(dependant):
@@ -38,6 +39,8 @@ def classify(route: APIRoute) -> str:
         module = getattr(call, "__module__", "")
         if module != "app.core.dependencies":
             continue
+        if name == "require_telephony_secret":
+            return TELEPHONY_SERVICE
         if name == "checker":
             roles = set(inspect.getclosurevars(call).nonlocals["expanded"])
             allowed = roles if allowed is None else allowed & roles

@@ -1,9 +1,11 @@
+from hmac import compare_digest
 from typing import AsyncGenerator
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 import jwt
 
+from app.config import settings
 from app.core.constants import RoleName
 from app.core.security import decode_access_token
 from app.database import AsyncSessionLocal
@@ -13,6 +15,14 @@ from app.models.role import Role
 
 # извлечение Beaere-токен из заголовка авторизации
 _security = HTTPBearer(auto_error=False)
+
+
+def require_telephony_secret(
+    supplied: str | None = Header(None, alias="X-Telephony-Secret"),
+) -> None:
+    secret = settings.telephony_api_secret
+    if not secret or not supplied or not compare_digest(supplied.encode(), secret.encode()):
+        raise HTTPException(status_code=403, detail="Invalid X-Telephony-Secret")
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

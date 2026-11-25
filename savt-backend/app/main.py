@@ -60,6 +60,7 @@ from app.routers import admin_projects as admin_projects_router
 from app.routers import bitrix_webhooks as bitrix_webhooks_router
 from app.routers import messenger_webhooks as messenger_webhooks_router
 from app.routers import admin_phone_change_requests as admin_phone_change_requests_router
+from app.routers import telephony as telephony_router
 from app.routers import telemetry_webhooks as telemetry_webhooks_router
 from app.routers import admin_telemetry as admin_telemetry_router
 from app.routers import admin_sim as admin_sim_router
@@ -317,6 +318,7 @@ app.include_router(admin_projects_router.router)
 app.include_router(bitrix_webhooks_router.router)
 app.include_router(messenger_webhooks_router.router)
 app.include_router(admin_phone_change_requests_router.router)
+app.include_router(telephony_router.router)
 app.include_router(telemetry_webhooks_router.router)
 app.include_router(admin_telemetry_router.router)
 app.include_router(admin_sim_router.router)

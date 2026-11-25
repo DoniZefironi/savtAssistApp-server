@@ -107,6 +107,7 @@ class Settings(BaseSettings):
     bitrix_field_shipment_actual: str = ""
 
     telemetry_webhook_secret: str = ""
+    telephony_api_secret: str = ""
 
     telemetry_history_retention_days: int = 14
 

@@ -100,6 +100,7 @@ FastAPI-бэкенда (PostgreSQL, Docker). Ядро — шкафы управ�
 | `SMS_CODE_MAX_ATTEMPTS` | Максимум попыток ввода кода подтверждения (по умолч. `5`) |
 | `SMS_CODE_RESEND_COOLDOWN_SECONDS` | Кулдаун повторной отправки кода в секундах (по умолч. `60`) |
 | `TELEMETRY_WEBHOOK_SECRET` | Свой случайный секрет — сверяется с заголовком `X-Telemetry-Secret` и во входящем `POST /webhooks/telemetry`, и в `GET /webhooks/telemetry/targets`. Общий для `api` и `telemetry-proxy` (см. «Работа с Docker» → `telemetry-proxy`) — одно и то же значение уходит в оба сервиса |
+| `TELEPHONY_API_SECRET` | Отдельный секрет SavtAssist и SIP-сервиса. Проверяется по `X-Telephony-Secret` в `POST /internal/telephony/resolve-object`. Пустое значение закрывает доступ |
 | `TELEMETRY_HISTORY_RETENTION_DAYS` | Сколько дней хранить сырую историю сообщений телеметрии (по умолч. `14`) — старше удаляется фоновой задачей раз в сутки. Не влияет на текущее состояние регистров (`GET /cabinets/{id}/telemetry`), оно не история и не чистится по возрасту, см. «Рут `admin: telemetry`» |
 | `SIM_SERVICE_BASE_URL` | Адрес стороннего приложения управления SIM-картами (по умолч. `http://10.1.0.67:5000`), не наш код |
 | `SIM_SERVICE_LOGIN` / `SIM_SERVICE_PASSWORD` | Служебный аккаунт для входа в это приложение — у него своя JWT-авторизация (`POST /api/User/login`), сервер логинится сам и кэширует токен в памяти процесса, см. `app/services/sim_service.py`. Пустой `SIM_SERVICE_LOGIN` — интеграция выключена, `sim`/`GET /admin/sim` тихо отдают пусто, без ошибок |
@@ -361,6 +362,20 @@ cp -r build/web/. /opt/savtAssistApp-server/savt-backend/mobile-web/
 - Адрес API в приложении должен указывать на `https://helper.savt.by`.
 
 ---
+
+## Внутренний API телефонии
+
+`POST /internal/telephony/resolve-object` принимает `{"number":"25_125_2"}` и необязательный `kind` со значением `project` или `cabinet`. Номер передаётся строкой и сравнивается точно, с сохранением ведущих нулей и всех частей. Поиск учитывает активные проекты и шкафы. Связь шкафа с проектом определяется по `Cabinet.project_id`.
+
+SIP-сервис передаёт `X-Telephony-Secret` с тем же случайным значением, что задано в `TELEPHONY_API_SECRET` на сервере SavtAssist. Для отдельного хоста используйте HTTPS. При отсутствующем или неверном секрете API возвращает `403`.
+
+Штатные ответы возвращаются с HTTP `200`:
+
+- `found` с `match`, где есть `kind`, `cabinet_id`, `cabinet_number`, `project_id`, `project_number` и `bitrix_deal_id`. ID сделки передаётся строкой. У проекта поля шкафа равны `null`. У шкафа без активного связанного проекта поля проекта и сделки равны `null`. При отсутствии сделки `bitrix_deal_id` равен `null`.
+- `ambiguous` с `match: null`, если найдено несколько записей, в том числе в одном справочнике.
+- `not_found` с `match: null`, если ничего не найдено.
+
+При сбое поиска SIP-сервис получает ошибку API и может продолжить звонок по резервному сценарию.
 
 ## Вебхуки внешних интеграций
 
