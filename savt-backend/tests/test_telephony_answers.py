@@ -21,11 +21,15 @@ ANSWER = "Инструкция находится в разделе «Докум
 VECTOR = [1.0] + [0.0] * (EMBEDDING_DIM - 1)
 
 
+def _model_answer(answer, evidence=ANSWER):
+    return json.dumps({"answer": answer, "evidence": evidence}, ensure_ascii=False)
+
+
 @pytest.fixture
 def ai(monkeypatch):
     monkeypatch.setattr(settings, "telephony_api_secret", HEADERS["X-Telephony-Secret"])
     embed = AsyncMock(return_value=VECTOR)
-    complete = AsyncMock(return_value=ANSWER)
+    complete = AsyncMock(return_value=_model_answer(ANSWER))
     monkeypatch.setattr(yandex_service, "embed_query", embed)
     monkeypatch.setattr(yandex_service, "complete", complete)
     monkeypatch.setattr(yandex_service, "embed_document", AsyncMock(return_value=VECTOR))
@@ -33,11 +37,11 @@ def ai(monkeypatch):
     return SimpleNamespace(embed=embed, complete=complete)
 
 
-async def _faq(db_session, *, published=True):
+async def _faq(db_session, *, published=True, question=QUESTION, answer=ANSWER):
     category = FaqCategory(name="Инструкции")
     db_session.add(category)
     await db_session.flush()
-    entry = FaqEntry(category_id=category.id, question=QUESTION, answer=ANSWER, is_published=published)
+    entry = FaqEntry(category_id=category.id, question=question, answer=answer, is_published=published)
     db_session.add(entry)
     await db_session.flush()
     db_session.add(Embedding(
@@ -99,14 +103,15 @@ async def test_answers_from_the_current_published_faq(api, db_session, ai):
 
 async def test_phone_prompt_explains_where_to_find_app_sections(api, db_session, ai):
     await _faq(db_session)
-    ai.complete.return_value = (
+    answer = (
         "В мобильном приложении Savt Assist откройте карточку вашего шкафа и перейдите в раздел «Документы»."
     )
+    ai.complete.return_value = _model_answer(answer)
 
     response = await api.post(PATH, headers=HEADERS, json={"question": QUESTION})
 
     assert response.status_code == 200
-    assert response.json() == {"status": "answered", "answer": ai.complete.return_value}
+    assert response.json() == {"status": "answered", "answer": answer}
     system = ai.complete.call_args.args[0]
     assert "явно назови мобильное приложение Savt Assist" in system
     assert "Упоминай приложение только когда ответ" in system
@@ -249,6 +254,36 @@ async def test_model_falls_back_when_materials_do_not_answer_the_question(api, d
     ai.complete.assert_awaited_once()
 
 
+@pytest.mark.parametrize(
+    ("answer", "evidence"),
+    [
+        ("Установите аватарку через вложения.", "В настройках профиля можно поменять имя."),
+        ("В настройках профиля можно поменять имя.", "В настройках профиля можно поменять имя."),
+        ("Установите аватарку через вложения.", "Загрузите аватарку в настройках профиля."),
+    ],
+)
+async def test_nearby_profile_answer_does_not_ground_avatar_action(api, db_session, ai, answer, evidence):
+    await _faq(db_session, question="Как поменять имя?", answer="В настройках профиля можно поменять имя.")
+    ai.complete.return_value = _model_answer(answer, evidence)
+
+    response = await api.post(PATH, headers=HEADERS, json={"question": "Как поставить аватарку?"})
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "needs_operator", "answer": None}
+
+
+async def test_avatar_answer_with_source_evidence_is_returned(api, db_session, ai):
+    question = "Как поставить аватарку?"
+    answer = "Откройте настройки профиля и загрузите фото профиля."
+    await _faq(db_session, question=question, answer=answer)
+    ai.complete.return_value = _model_answer(answer, answer)
+
+    response = await api.post(PATH, headers=HEADERS, json={"question": question})
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "answered", "answer": answer}
+
+
 async def test_no_secret_is_rejected_before_search(api, ai):
     response = await api.post(PATH, json={"question": QUESTION})
 
@@ -268,10 +303,11 @@ async def test_search_or_model_failure_returns_5xx(api, db_session, ai, stage):
     assert response.json() == {"detail": "Не удалось ответить на вопрос"}
 
 
-async def test_non_voice_model_output_returns_5xx(api, db_session, ai):
+async def test_non_voice_model_output_is_not_confirmed(api, db_session, ai):
     await _faq(db_session)
     ai.complete.return_value = "Первое. Второе. Третье. Четвёртое."
 
     response = await api.post(PATH, headers=HEADERS, json={"question": QUESTION})
 
-    assert response.status_code == 503
+    assert response.status_code == 200
+    assert response.json() == {"status": "needs_operator", "answer": None}
